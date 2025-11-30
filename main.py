@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from PyQt6.QtCore import Qt, QTimer, QRectF, QPoint, QEvent
+from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, QPoint, QEvent
 from PyQt6.QtGui import QPainter, QPen, QBrush, QFont, QColor, QCursor
 from PyQt6.QtWidgets import (
     QApplication,
@@ -586,6 +586,8 @@ class ChordWindow(QMainWindow):
         flags |= Qt.WindowType.FramelessWindowHint
         self.setWindowFlags(flags)
 
+        self.setWindowTitle("MIDI Piano Jaramillo — Acordes")
+
         self._drag_offset: Optional[QPoint] = None
 
         # Contenedor blanco puro
@@ -1154,6 +1156,20 @@ class ControlWindow(QMainWindow):
                 }
                 for c in self.custom_chords
             ],
+            "window_geometries": {
+                "controls": self._geometry_payload_for(self),
+                "keyboard": self._geometry_payload_for(self.piano_window),
+                "chords": self._geometry_payload_for(self.chord_window),
+            },
+        }
+
+    def _geometry_payload_for(self, window: QMainWindow) -> Dict[str, int]:
+        rect = window.geometry()
+        return {
+            "x": int(rect.x()),
+            "y": int(rect.y()),
+            "w": int(rect.width()),
+            "h": int(rect.height()),
         }
 
     def _write_preferences(self, show_message: bool):
@@ -1284,6 +1300,8 @@ class ControlWindow(QMainWindow):
             except Exception:
                 pass
 
+        self._restore_window_geometries(prefs)
+
         capture_window_ms = prefs.get("capture_window_ms")
         if isinstance(capture_window_ms, int) and 50 <= capture_window_ms <= 10000:
             self.capture_window_ms = capture_window_ms
@@ -1333,6 +1351,65 @@ class ControlWindow(QMainWindow):
 
         # Aplicar rango con las preferencias cargadas
         self.range_changed()
+
+    def _restore_window_geometries(self, prefs: Dict):
+        geoms = prefs.get("window_geometries") if isinstance(prefs, dict) else None
+        if not isinstance(geoms, dict):
+            return
+
+        def rect_from_payload(payload: Dict) -> Optional[QRect]:
+            if not isinstance(payload, dict):
+                return None
+            try:
+                x = int(payload.get("x"))
+                y = int(payload.get("y"))
+                w = int(payload.get("w"))
+                h = int(payload.get("h"))
+            except Exception:
+                return None
+            if w <= 0 or h <= 0:
+                return None
+            return QRect(x, y, w, h)
+
+        self._apply_geometry_if_valid(self, rect_from_payload(geoms.get("controls")))
+        self._apply_geometry_if_valid(self.piano_window, rect_from_payload(geoms.get("keyboard")))
+        self._apply_geometry_if_valid(self.chord_window, rect_from_payload(geoms.get("chords")))
+
+    def _apply_geometry_if_valid(self, window: QMainWindow, rect: Optional[QRect]):
+        if rect is None:
+            return
+
+        adjusted = self._clamp_rect_to_visible_area(rect)
+        window.setGeometry(adjusted)
+
+    def _clamp_rect_to_visible_area(self, rect: QRect) -> QRect:
+        screens = QApplication.screens() or []
+        available_rects = [s.availableGeometry() for s in screens if s is not None]
+        if not available_rects:
+            return rect
+
+        def intersection_area(a: QRect, b: QRect) -> int:
+            inter = a.intersected(b)
+            return max(0, inter.width()) * max(0, inter.height())
+
+        best_rect = available_rects[0]
+        best_area = intersection_area(rect, best_rect)
+        for avail in available_rects[1:]:
+            area = intersection_area(rect, avail)
+            if area > best_area:
+                best_area = area
+                best_rect = avail
+
+        target = best_rect
+        width = min(rect.width(), target.width())
+        height = min(rect.height(), target.height())
+        max_x = target.left() + target.width() - width
+        max_y = target.top() + target.height() - height
+
+        x = max(target.left(), min(rect.x(), max_x))
+        y = max(target.top(), min(rect.y(), max_y))
+
+        return QRect(x, y, width, height)
 
     # --- callbacks UI ---
 
