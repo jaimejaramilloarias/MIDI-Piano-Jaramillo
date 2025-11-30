@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from PyQt6.QtCore import Qt, QTimer, QRectF, QPoint
+from PyQt6.QtCore import Qt, QTimer, QRectF, QPoint, QEvent
 from PyQt6.QtGui import QPainter, QPen, QBrush, QFont, QColor, QCursor
 from PyQt6.QtWidgets import (
     QApplication,
@@ -589,9 +589,9 @@ class ChordWindow(QMainWindow):
         self._drag_offset: Optional[QPoint] = None
 
         # Contenedor blanco puro
-        central = QWidget()
-        central.setStyleSheet("background: #ffffff;")
-        self.setCentralWidget(central)
+        self.background_color = QColor(Qt.GlobalColor.white)
+        self.central = QWidget()
+        self.setCentralWidget(self.central)
 
         self.main_label = QLabel("")
         self.main_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -605,7 +605,7 @@ class ChordWindow(QMainWindow):
         layout.setSpacing(8)
         layout.addWidget(self.main_label, stretch=0)
         layout.addWidget(self.alt_label, stretch=0)
-        central.setLayout(layout)
+        self.central.setLayout(layout)
 
         # Fuente por defecto
         self.set_font_from_family_size("Avenir Next", 80)
@@ -614,6 +614,8 @@ class ChordWindow(QMainWindow):
         self.set_chord_color(QColor(Qt.GlobalColor.black))
 
         self.resize(740, 200)
+
+        self.set_background_color(self.background_color)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -653,6 +655,12 @@ class ChordWindow(QMainWindow):
         stylesheet = f"color: {color.name()};"
         self.main_label.setStyleSheet(stylesheet)
         self.alt_label.setStyleSheet(stylesheet)
+
+    def set_background_color(self, color: QColor):
+        if not color.isValid():
+            return
+        self.background_color = color
+        self.central.setStyleSheet(f"background: {color.name()};")
 
     def update_chord(self, notas):
         info = analizar_cifrado_alternativos(notas)
@@ -705,9 +713,12 @@ class ControlWindow(QMainWindow):
         self.capture_window_ms: int = 500
         self._learn_button_default_text = "Midi learn: nuevo cifrado"
         self.chord_text_color = QColor(Qt.GlobalColor.black)
+        self.chord_bg_color = QColor(Qt.GlobalColor.white)
         self.capture_timer = QTimer()
         self.capture_timer.setSingleShot(True)
         self.capture_timer.timeout.connect(self._finish_capture_window)
+
+        self._setup_window_menu()
 
         self._load_external_chord_dictionary()
 
@@ -725,6 +736,9 @@ class ControlWindow(QMainWindow):
 
         # Color de cifrado
         self.chord_color_button = QPushButton("Color cifrado…")
+
+        # Color de fondo para la ventana de acordes
+        self.chord_bg_button = QPushButton("Fondo acordes…")
 
         # Fuente y tamaño para la ventana de acordes
         self.font_combo = QFontComboBox()
@@ -786,6 +800,11 @@ class ControlWindow(QMainWindow):
         row3b.addWidget(self.chord_color_button)
         top_layout.addLayout(row3b)
 
+        row3c = QHBoxLayout()
+        row3c.addWidget(QLabel("Fondo de acordes:"))
+        row3c.addWidget(self.chord_bg_button)
+        top_layout.addLayout(row3c)
+
         # Fila 4: fuente acordes
         row4 = QHBoxLayout()
         row4.addWidget(QLabel("Fuente acordes:"))
@@ -843,6 +862,7 @@ class ControlWindow(QMainWindow):
         self.octaves_spin.valueChanged.connect(self.range_changed)
         self.color_button.clicked.connect(self.choose_color)
         self.chord_color_button.clicked.connect(self.choose_chord_color)
+        self.chord_bg_button.clicked.connect(self.choose_chord_background)
         self.font_combo.currentFontChanged.connect(self.font_changed)
         self.font_size_spin.valueChanged.connect(self.font_size_changed)
         self.always_on_top.toggled.connect(self.toggle_on_top)
@@ -853,6 +873,7 @@ class ControlWindow(QMainWindow):
         # Timer para leer MIDI
 
         self.timer = QTimer()
+        self.timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.timer.timeout.connect(self.poll_midi)
         self.timer.start(10)
 
@@ -861,6 +882,100 @@ class ControlWindow(QMainWindow):
         self.load_preferences()
         self._apply_chord_font()
         self._refresh_learned_chords_ui()
+
+    # --- menú de ventanas ---
+
+    def _setup_window_menu(self):
+        menu = self.menuBar().addMenu("Ventana")
+
+        self.controls_action = menu.addAction("Ocultar Controles")
+        self.controls_action.setCheckable(True)
+        self.controls_action.setChecked(True)
+        self.controls_action.triggered.connect(
+            lambda checked: self._toggle_window_visibility(self, checked)
+        )
+
+        self.keyboard_action = menu.addAction("Ocultar Teclado")
+        self.keyboard_action.setCheckable(True)
+        self.keyboard_action.setChecked(True)
+        self.keyboard_action.triggered.connect(
+            lambda checked: self._toggle_window_visibility(self.piano_window, checked)
+        )
+
+        self.chord_action = menu.addAction("Ocultar Acordes")
+        self.chord_action.setCheckable(True)
+        self.chord_action.setChecked(True)
+        self.chord_action.triggered.connect(
+            lambda checked: self._toggle_window_visibility(self.chord_window, checked)
+        )
+
+        menu.addSeparator()
+        show_all = menu.addAction("Mostrar todas")
+        show_all.triggered.connect(self.show_all_windows)
+
+        for win in (self, self.piano_window, self.chord_window):
+            win.installEventFilter(self)
+
+        QTimer.singleShot(0, self._update_window_actions)
+
+    def _window_is_visible(self, window: QMainWindow) -> bool:
+        if not window.isVisible():
+            return False
+        return not bool(window.windowState() & Qt.WindowState.WindowMinimized)
+
+    def _bring_to_front(self, window: QMainWindow):
+        window.show()
+        window.setWindowState(window.windowState() & ~Qt.WindowState.WindowMinimized)
+        window.raise_()
+        window.activateWindow()
+
+    def _toggle_window_visibility(self, window: QMainWindow, checked: bool):
+        if checked:
+            self._bring_to_front(window)
+        else:
+            window.hide()
+        self._update_window_actions()
+
+    def show_all_windows(self):
+        for win in (self, self.piano_window, self.chord_window):
+            self._bring_to_front(win)
+        self._update_window_actions()
+
+    def _update_window_actions(self):
+        controls_visible = self._window_is_visible(self)
+        keyboard_visible = self._window_is_visible(self.piano_window)
+        chords_visible = self._window_is_visible(self.chord_window)
+
+        self.controls_action.blockSignals(True)
+        self.controls_action.setChecked(controls_visible)
+        self.controls_action.setText(
+            "Ocultar Controles" if controls_visible else "Mostrar Controles"
+        )
+        self.controls_action.blockSignals(False)
+
+        self.keyboard_action.blockSignals(True)
+        self.keyboard_action.setChecked(keyboard_visible)
+        self.keyboard_action.setText(
+            "Ocultar Teclado" if keyboard_visible else "Mostrar Teclado"
+        )
+        self.keyboard_action.blockSignals(False)
+
+        self.chord_action.blockSignals(True)
+        self.chord_action.setChecked(chords_visible)
+        self.chord_action.setText(
+            "Ocultar Acordes" if chords_visible else "Mostrar Acordes"
+        )
+        self.chord_action.blockSignals(False)
+
+    def eventFilter(self, source, event):
+        if source in (self, self.piano_window, self.chord_window):
+            if event.type() in (
+                QEvent.Type.WindowStateChange,
+                QEvent.Type.Hide,
+                QEvent.Type.Show,
+            ):
+                QTimer.singleShot(0, self._update_window_actions)
+        return super().eventFilter(source, event)
 
     # --- helpers ---
 
@@ -1022,6 +1137,8 @@ class ControlWindow(QMainWindow):
             "font_family": self.font_combo.currentFont().family(),
             "font_size": int(self.font_size_spin.value()),
             "always_on_top": bool(self.always_on_top.isChecked()),
+            "chord_text_color": self.chord_text_color.name(),
+            "chord_background": self.chord_bg_color.name(),
             "base_chords": [
                 {
                     "nombre": c.get("nombre", ""),
@@ -1146,6 +1263,26 @@ class ControlWindow(QMainWindow):
         font_size = prefs.get("font_size")
         if isinstance(font_size, int) and 10 <= font_size <= 160:
             self.font_size_spin.setValue(int(font_size))
+
+        chord_text = prefs.get("chord_text_color")
+        if isinstance(chord_text, str):
+            try:
+                color = QColor(chord_text)
+                if color.isValid():
+                    self.chord_text_color = color
+                    self.chord_window.set_chord_color(color)
+            except Exception:
+                pass
+
+        chord_bg = prefs.get("chord_background")
+        if isinstance(chord_bg, str):
+            try:
+                color = QColor(chord_bg)
+                if color.isValid():
+                    self.chord_bg_color = color
+                    self.chord_window.set_background_color(color)
+            except Exception:
+                pass
 
         capture_window_ms = prefs.get("capture_window_ms")
         if isinstance(capture_window_ms, int) and 50 <= capture_window_ms <= 10000:
@@ -1279,6 +1416,15 @@ class ControlWindow(QMainWindow):
         if color.isValid():
             self.chord_text_color = color
             self.chord_window.set_chord_color(color)
+            self._write_preferences(False)
+
+    def choose_chord_background(self):
+        color = QColorDialog.getColor(
+            self.chord_bg_color, self, "Seleccionar fondo de la ventana de acordes"
+        )
+        if color.isValid():
+            self.chord_bg_color = color
+            self.chord_window.set_background_color(color)
             self._write_preferences(False)
 
     def _apply_chord_font(self):
