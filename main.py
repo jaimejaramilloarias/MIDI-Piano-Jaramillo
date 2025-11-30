@@ -20,6 +20,7 @@ from PyQt6.QtWidgets import (
     QFontComboBox,
     QColorDialog,
     QInputDialog,
+    QFileDialog,
 )
 import mido
 
@@ -126,7 +127,10 @@ BASE_CHORD_PATTERNS = [
     {'nombre':'13(b5)#9', 'obligatorias':[0,4,6,10,3,9], 'opcionales':[2,7]},
    ]
 
-CHORD_PATTERNS = list(BASE_CHORD_PATTERNS)
+for _pattern in BASE_CHORD_PATTERNS:
+    _pattern.setdefault("is_custom", False)
+
+CHORD_PATTERNS = [dict(ptn) for ptn in BASE_CHORD_PATTERNS]
 
 DETECT_NOTE_NAMES = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B']
 
@@ -167,65 +171,55 @@ def analizar_cifrado_alternativos(notas):
 
             num_oblig = len(oblig)
             opcionales_presentes = sum(1 for ivl in opc if ivl in interval_set)
-            es_grave_fundamental = (bass_pc == root_pc)
 
             matches.append({
                 "root": root_pc,
                 "nombre": ptn["nombre"],
                 "numOblig": num_oblig,
                 "opcionalesPresentes": opcionales_presentes,
-                "esGraveFundamental": es_grave_fundamental,
+                "esGraveFundamental": (bass_pc == root_pc),
                 "obligatorias": oblig,
                 "opcionales": opc,
+                "is_custom": bool(ptn.get("is_custom", False)),
             })
 
     if not matches:
         return {"principal": "", "alternativos": []}
 
-    graves = [m for m in matches if m["esGraveFundamental"]]
-    candidatos = graves or matches
-
-    max_oblig = max(m["numOblig"] for m in candidatos)
-    completos = [m for m in candidatos if m["numOblig"] == max_oblig]
-
-    max_opc = max(m["opcionalesPresentes"] for m in completos)
-    mas_opc = [m for m in completos if m["opcionalesPresentes"] == max_opc]
-
-    min_oblig = min(m["numOblig"] for m in mas_opc)
-    simples = [m for m in mas_opc if m["numOblig"] == min_oblig]
-
     def sort_key(m):
         return (
-            0 if m["esGraveFundamental"] else 1,  # primero los que tienen bajo fundamental
+            0 if m.get("is_custom") else 1,
+            0 if m["esGraveFundamental"] else 1,
             -m["numOblig"],
             -m["opcionalesPresentes"],
             m["nombre"],
         )
 
-    simples.sort(key=sort_key)
-
-    resultados = []
-    for x in simples:
-        root_name = DETECT_NOTE_NAMES[x["root"]]
-        nombre = root_name + x["nombre"]
-        if not x["esGraveFundamental"]:
-            es_solo_triada_o_sep = all(ivl not in (2, 5, 9) for ivl in x["obligatorias"]) and \
-                                   all(ivl not in (2, 5, 9) for ivl in x["opcionales"])
+    def nombre_para_match(m):
+        root_name = DETECT_NOTE_NAMES[m["root"]]
+        nombre = root_name + m["nombre"]
+        if not m["esGraveFundamental"]:
+            es_solo_triada_o_sep = all(ivl not in (2, 5, 9) for ivl in m["obligatorias"]) and \
+                                   all(ivl not in (2, 5, 9) for ivl in m["opcionales"])
             if es_solo_triada_o_sep:
-                bass_int = (bass_pc - x["root"] + 12) % 12
+                bass_int = (bass_pc - m["root"] + 12) % 12
                 if bass_int in (3, 4, 7, 10):
                     bass_name = DETECT_NOTE_NAMES[bass_pc]
                     nombre = nombre + "/" + bass_name
-        resultados.append(nombre)
+        return nombre
 
-    if not resultados:
-        return {"principal": "", "alternativos": []}
+    bass_matches = [m for m in matches if m["esGraveFundamental"]]
+    ordered_bass = sorted(bass_matches, key=sort_key)
+    ordered_all = sorted(matches, key=sort_key)
 
-    principal = resultados[0]
+    principal_match = ordered_bass[0] if ordered_bass else ordered_all[0]
+    principal = nombre_para_match(principal_match)
+
     alternativos = []
-    for n in resultados[1:]:
-        if n not in alternativos:
-            alternativos.append(n)
+    for m in ordered_bass[1:] + [m for m in ordered_all if m is not principal_match]:
+        nombre = nombre_para_match(m)
+        if nombre != principal and nombre not in alternativos:
+            alternativos.append(nombre)
         if len(alternativos) >= 4:
             break
 
@@ -586,14 +580,13 @@ class ChordWindow(QMainWindow):
         self.main_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         self.alt_label = QLabel("")
-        self.alt_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        self.alt_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.alt_label.setStyleSheet("color: #000000;")
 
         layout = QHBoxLayout()
         layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(12)
+        layout.setSpacing(8)
         layout.addWidget(self.main_label, stretch=0)
-        layout.addStretch(1)
         layout.addWidget(self.alt_label, stretch=0)
         central.setLayout(layout)
 
@@ -656,9 +649,9 @@ class ChordWindow(QMainWindow):
 
         self.main_label.setText(principal)
 
-        # Alternativos a la derecha
+        # Alternativos a la derecha, pegados al principal
         if alternativos:
-            self.alt_label.setText("   ·   ".join(alternativos))
+            self.alt_label.setText("  ·  ".join(alternativos))
         else:
             self.alt_label.setText("")
 
@@ -721,6 +714,7 @@ class ControlWindow(QMainWindow):
         self.always_on_top.setCheckable(True)
 
         self.save_button = QPushButton("Guardar preferencias")
+        self.export_button = QPushButton("Exportar diccionario…")
 
         # Rellenar combo de nota inicial:
         #  - A0
@@ -777,6 +771,7 @@ class ControlWindow(QMainWindow):
         row5 = QHBoxLayout()
         row5.addWidget(self.always_on_top)
         row5.addWidget(self.save_button)
+        row5.addWidget(self.export_button)
         row5.addStretch()
         top_layout.addLayout(row5)
 
@@ -814,6 +809,7 @@ class ControlWindow(QMainWindow):
         self.font_size_spin.valueChanged.connect(self.font_size_changed)
         self.always_on_top.toggled.connect(self.toggle_on_top)
         self.save_button.clicked.connect(self.save_preferences)
+        self.export_button.clicked.connect(self.export_chord_dictionary)
         self.learn_button.clicked.connect(self.start_learning_mode)
 
         # Timer para leer MIDI
@@ -881,6 +877,46 @@ class ControlWindow(QMainWindow):
 
     def save_preferences(self):
         self._write_preferences(True)
+
+    def export_chord_dictionary(self):
+        default_path = str(Path.home() / "diccionario_acordes.json")
+        file_path, _ = QFileDialog.getSaveFileName(
+            self,
+            "Exportar diccionario de acordes",
+            default_path,
+            "JSON (*.json)",
+        )
+        if not file_path:
+            return
+
+        payload = []
+        for ptn in CHORD_PATTERNS:
+            oblig = [int(ivl) for ivl in ptn.get("obligatorias", [])]
+            opcionales = [int(ivl) for ivl in ptn.get("opcionales", [])]
+            payload.append(
+                {
+                    "nombre": ptn.get("nombre", ""),
+                    "root_pc": 0,
+                    "root_name": DETECT_NOTE_NAMES[0],
+                    "obligatorias": oblig,
+                    "opcionales": opcionales,
+                    "fuente": "aprendido" if ptn.get("is_custom") else "base",
+                }
+            )
+
+        try:
+            Path(file_path).write_text(
+                json.dumps({"chords": payload}, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        except Exception as e:
+            QMessageBox.warning(self, "Error", f"No se pudo exportar el diccionario:\n{e}")
+        else:
+            QMessageBox.information(
+                self,
+                "Exportación lista",
+                f"Diccionario exportado en:\n{file_path}",
+            )
 
     def load_preferences(self):
         if not self.CONFIG_PATH.exists():
@@ -1093,7 +1129,7 @@ class ControlWindow(QMainWindow):
 
     def _register_custom_chord(self, name: str, intervals: List[int], persist: bool = True):
         unique_intervals = sorted({int(ivl) % 12 for ivl in intervals} | {0})
-        pattern = {"nombre": name, "obligatorias": unique_intervals, "opcionales": []}
+        pattern = {"nombre": name, "obligatorias": unique_intervals, "opcionales": [], "is_custom": True}
         CHORD_PATTERNS.append(pattern)
         self.custom_chords.append(pattern)
         self._refresh_learned_chords_ui()
