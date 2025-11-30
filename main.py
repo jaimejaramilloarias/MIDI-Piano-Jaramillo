@@ -2,7 +2,7 @@
 import sys
 import json
 from pathlib import Path
-from typing import List, Set
+from typing import Dict, List, Set, Tuple
 
 from PyQt6.QtCore import Qt, QTimer, QRectF, QPoint
 from PyQt6.QtGui import QPainter, QPen, QBrush, QFont, QColor, QCursor
@@ -133,6 +133,23 @@ for _pattern in BASE_CHORD_PATTERNS:
 CHORD_PATTERNS = [dict(ptn) for ptn in BASE_CHORD_PATTERNS]
 
 DETECT_NOTE_NAMES = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B']
+
+
+def _normalize_intervals(intervals: List[int]) -> List[int]:
+    normalized = sorted({int(ivl) % 12 for ivl in intervals} | {0})
+    return normalized
+
+
+def _signature_from_lists(obligatorias: List[int], opcionales: List[int]) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
+    oblig_norm = tuple(_normalize_intervals(obligatorias))
+    opc_norm = tuple(sorted({int(ivl) % 12 for ivl in opcionales}))
+    return oblig_norm, opc_norm
+
+
+DEFAULT_BASE_SIGNATURES = {
+    _signature_from_lists(ptn.get("obligatorias", []), ptn.get("opcionales", []))
+    for ptn in BASE_CHORD_PATTERNS
+}
 
 
 def analizar_cifrado_alternativos(notas):
@@ -680,6 +697,8 @@ class ControlWindow(QMainWindow):
         self.sustain_on: bool = False
         self._midi_backend_error_shown: bool = False
         self.custom_chords: list[dict] = []
+        self.additional_base_chords: list[dict] = []
+        self._additional_base_signatures: set[Tuple[Tuple[int, ...], Tuple[int, ...]]] = set()
         self.learning_chord: bool = False
         self.learning_waiting_first_note: bool = False
         self.learning_capture_notes: set[int] = set()
@@ -689,6 +708,8 @@ class ControlWindow(QMainWindow):
         self.capture_timer = QTimer()
         self.capture_timer.setSingleShot(True)
         self.capture_timer.timeout.connect(self._finish_capture_window)
+
+        self._load_external_chord_dictionary()
 
         # Widgets
         self.input_combo = QComboBox()
@@ -843,6 +864,135 @@ class ControlWindow(QMainWindow):
 
     # --- helpers ---
 
+    def _pattern_signature(self, pattern: Dict) -> Tuple[Tuple[int, ...], Tuple[int, ...]]:
+        oblig = pattern.get("obligatorias", []) if isinstance(pattern, dict) else []
+        opc = pattern.get("opcionales", []) if isinstance(pattern, dict) else []
+        return _signature_from_lists(list(oblig), list(opc))
+
+    def _find_pattern_by_signature(
+        self, signature: Tuple[Tuple[int, ...], Tuple[int, ...]], include_custom: bool = True
+    ) -> Dict | None:
+        for ptn in CHORD_PATTERNS:
+            if not include_custom and ptn.get("is_custom"):
+                continue
+            if self._pattern_signature(ptn) == signature:
+                return ptn
+        return None
+
+    def _remember_additional_base(self, name: str, obligatorias: List[int], opcionales: List[int]):
+        signature = _signature_from_lists(obligatorias, opcionales)
+        payload = {
+            "nombre": name,
+            "obligatorias": list(_normalize_intervals(obligatorias)),
+            "opcionales": list(sorted({int(ivl) % 12 for ivl in opcionales})),
+        }
+        if signature in self._additional_base_signatures:
+            for stored in self.additional_base_chords:
+                if self._pattern_signature(stored) == signature:
+                    stored.update(payload)
+                    break
+        else:
+            self._additional_base_signatures.add(signature)
+            self.additional_base_chords.append(payload)
+
+    def _add_base_chord(
+        self,
+        name: str,
+        obligatorias: List[int],
+        opcionales: List[int] | None = None,
+        *,
+        source: str = "",
+        allow_overwrite: bool = False,
+        prompt_on_conflict: bool = False,
+        record_extra: bool = False,
+    ) -> Dict | None:
+        opcionales = opcionales or []
+        oblig_norm = _normalize_intervals(obligatorias)
+        opc_norm = sorted({int(ivl) % 12 for ivl in opcionales})
+        signature = _signature_from_lists(oblig_norm, opc_norm)
+
+        existing_base = self._find_pattern_by_signature(signature, include_custom=False)
+        if existing_base is not None:
+            if allow_overwrite:
+                if prompt_on_conflict:
+                    res = QMessageBox.question(
+                        self,
+                        "Duplicado",
+                        (
+                            "Ya existe un acorde con esos intervalos en la base.\n\n"
+                            f"Actual: «{existing_base.get('nombre', '(sin nombre)')}».\n"
+                            f"Nuevo: «{name}».\n\n¿Sobrescribirlo?"
+                        ),
+                    )
+                    if res != QMessageBox.StandardButton.Yes:
+                        return None
+                existing_base.update(
+                    {
+                        "nombre": name,
+                        "obligatorias": oblig_norm,
+                        "opcionales": opc_norm,
+                        "is_custom": False,
+                    }
+                )
+                if record_extra:
+                    self._remember_additional_base(name, oblig_norm, opc_norm)
+                return existing_base
+            if source:
+                print(f"Acorde duplicado ignorado desde {source}: {name} {signature}")
+            return existing_base
+
+        pattern = {
+            "nombre": name,
+            "obligatorias": oblig_norm,
+            "opcionales": opc_norm,
+            "is_custom": False,
+        }
+        CHORD_PATTERNS.append(pattern)
+        if record_extra:
+            self._remember_additional_base(name, oblig_norm, opc_norm)
+        return pattern
+
+    def _import_dictionary_from_path(self, path: Path, record_extra: bool = False):
+        if not path.exists():
+            return
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+        except Exception as e:
+            print(f"No se pudo leer {path}: {e}")
+            return
+
+        chords = data.get("chords") if isinstance(data, dict) else None
+        if not isinstance(chords, list):
+            return
+
+        for chord in chords:
+            if not isinstance(chord, dict):
+                continue
+            name = chord.get("nombre") or ""
+            oblig = chord.get("obligatorias") or []
+            opc = chord.get("opcionales") or []
+            try:
+                if not oblig:
+                    continue
+                self._add_base_chord(
+                    name,
+                    [int(ivl) for ivl in oblig],
+                    [int(ivl) for ivl in opc],
+                    source=str(path),
+                    allow_overwrite=False,
+                    record_extra=record_extra,
+                )
+            except Exception:
+                continue
+
+    def _load_external_chord_dictionary(self):
+        project_dict = Path(__file__).resolve().parent / "diccionario_acordes.json"
+        config_dict = Path.home() / "diccionario_acordes.json"
+
+        # Preferir el diccionario de la carpeta de configuración (editable por el usuario).
+        self._import_dictionary_from_path(config_dict, record_extra=True)
+        self._import_dictionary_from_path(project_dict, record_extra=False)
+
     def _select_combo_value(self, combo: QComboBox, value: int):
         for i in range(combo.count()):
             if combo.itemData(i) == value:
@@ -872,6 +1022,14 @@ class ControlWindow(QMainWindow):
             "font_family": self.font_combo.currentFont().family(),
             "font_size": int(self.font_size_spin.value()),
             "always_on_top": bool(self.always_on_top.isChecked()),
+            "base_chords": [
+                {
+                    "nombre": c.get("nombre", ""),
+                    "obligatorias": list(_normalize_intervals(c.get("obligatorias", []))),
+                    "opcionales": list(sorted({int(ivl) % 12 for ivl in c.get("opcionales", [])})),
+                }
+                for c in self.additional_base_chords
+            ],
             "custom_chords": [
                 {
                     "nombre": c.get("nombre", ""),
@@ -996,6 +1154,26 @@ class ControlWindow(QMainWindow):
 
         on_top = bool(prefs.get("always_on_top", False))
         self.always_on_top.setChecked(on_top)
+
+        base_chords = prefs.get("base_chords")
+        if isinstance(base_chords, list):
+            for item in base_chords:
+                name = item.get("nombre") if isinstance(item, dict) else None
+                oblig = item.get("obligatorias") if isinstance(item, dict) else None
+                opc = item.get("opcionales") if isinstance(item, dict) else []
+                if (
+                    isinstance(name, str)
+                    and name is not None
+                    and isinstance(oblig, list)
+                    and all(isinstance(x, int) for x in oblig)
+                ):
+                    self._add_base_chord(
+                        name,
+                        [int(x) for x in oblig],
+                        [int(x) for x in opc] if isinstance(opc, list) else [],
+                        allow_overwrite=True,
+                        record_extra=True,
+                    )
 
         midi_name = prefs.get("midi_in_name") or ""
         if midi_name:
@@ -1140,15 +1318,44 @@ class ControlWindow(QMainWindow):
             name = chord.get("nombre", "")
             intervals = chord.get("obligatorias", [])
             label = QLabel(f"{name} — intervalos: {intervals}")
+            edit_btn = QPushButton("Editar")
+            edit_btn.clicked.connect(lambda _=False, i=idx: self._edit_custom_chord_name(i))
+            move_btn = QPushButton("Mover a base")
+            move_btn.clicked.connect(lambda _=False, i=idx: self._move_custom_to_base(i))
             delete_btn = QPushButton("Eliminar")
             delete_btn.clicked.connect(lambda _=False, i=idx: self._delete_custom_chord(i))
             row.addWidget(label)
             row.addStretch()
+            row.addWidget(edit_btn)
+            row.addWidget(move_btn)
             row.addWidget(delete_btn)
 
             container = QWidget()
             container.setLayout(row)
             self.learned_chords_layout.addWidget(container)
+
+    def _edit_custom_chord_name(self, index: int):
+        if index < 0 or index >= len(self.custom_chords):
+            return
+        pattern = self.custom_chords[index]
+        current_name = pattern.get("nombre", "")
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Editar cifrado",
+            "Nuevo nombre para el acorde:",
+            text=current_name,
+        )
+        if not ok:
+            return
+        new_name = new_name.strip()
+        if not new_name:
+            QMessageBox.warning(self, "Editar cifrado", "El nombre no puede estar vacío.")
+            return
+        if new_name == current_name:
+            return
+        pattern["nombre"] = new_name
+        self._refresh_learned_chords_ui()
+        self._write_preferences(False)
 
     def _register_custom_chord(self, name: str, intervals: List[int], persist: bool = True):
         unique_intervals = sorted({int(ivl) % 12 for ivl in intervals} | {0})
@@ -1175,6 +1382,55 @@ class ControlWindow(QMainWindow):
         self._refresh_learned_chords_ui()
         if persist:
             self._write_preferences(False)
+
+    def _move_custom_to_base(self, index: int):
+        if index < 0 or index >= len(self.custom_chords):
+            return
+        pattern = self.custom_chords[index]
+        oblig = pattern.get("obligatorias", [])
+        opc = pattern.get("opcionales", [])
+        signature = _signature_from_lists(oblig, opc)
+        existing_base = self._find_pattern_by_signature(signature, include_custom=False)
+
+        if existing_base is not None and existing_base is not pattern:
+            res = QMessageBox.question(
+                self,
+                "Duplicado",
+                (
+                    "Ya existe un acorde en la base con esos intervalos.\n\n"
+                    f"Actual: «{existing_base.get('nombre', '(sin nombre)')}».\n"
+                    f"Nuevo: «{pattern.get('nombre', '(sin nombre)')}».\n\n¿Sobrescribirlo?"
+                ),
+            )
+            if res != QMessageBox.StandardButton.Yes:
+                return
+            existing_base.update(
+                {
+                    "nombre": pattern.get("nombre", ""),
+                    "obligatorias": _normalize_intervals(oblig),
+                    "opcionales": sorted({int(ivl) % 12 for ivl in opc}),
+                    "is_custom": False,
+                }
+            )
+            try:
+                CHORD_PATTERNS.remove(pattern)
+            except ValueError:
+                pass
+        else:
+            pattern["is_custom"] = False
+            if pattern not in CHORD_PATTERNS:
+                CHORD_PATTERNS.append(pattern)
+        self._remember_additional_base(
+            pattern.get("nombre", ""),
+            pattern.get("obligatorias", []),
+            pattern.get("opcionales", []),
+        )
+        try:
+            self.custom_chords.pop(index)
+        except IndexError:
+            return
+        self._refresh_learned_chords_ui()
+        self._write_preferences(False)
 
     def _delete_custom_chord(self, index: int):
         if index < 0 or index >= len(self.custom_chords):
