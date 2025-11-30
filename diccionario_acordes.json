@@ -1,0 +1,1406 @@
+{
+  "chords": [
+    {
+      "nombre": "",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        7
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        7
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "+",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        8
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "º",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        6
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "sus4",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        5,
+        7
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "sus2",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        2,
+        7
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "(b5)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        6
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "add2",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        2,
+        4,
+        7
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m(add2)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        2,
+        3,
+        7
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m(add4)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        5,
+        7
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "6",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        7,
+        9
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "7",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        7,
+        10
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "∆",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        7,
+        11
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m6",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        7,
+        9
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m7",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        7,
+        10
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m∆",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        7,
+        11
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "+7",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        8,
+        10
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "+∆",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        8,
+        11
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "º7",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        6,
+        9
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m7(b5)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        6,
+        10
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "º∆",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        6,
+        11
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "7sus4",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        5,
+        7,
+        10
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "7sus2",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        2,
+        7,
+        10
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "∆sus4",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        5,
+        7,
+        11
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "∆sus2",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        2,
+        7,
+        11
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "7(b5)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        6,
+        10
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "∆(b5)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        6,
+        11
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "6(9)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        2,
+        4,
+        7,
+        9
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "7(b9)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        7,
+        10,
+        1
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "9",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        10,
+        2
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "7(#9)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        10,
+        3
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "∆9",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        11,
+        2
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "∆(#9)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        11,
+        3
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m6(9)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        9,
+        2
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m9",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        10,
+        2
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m∆9",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        11,
+        2
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "+7(b9)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        8,
+        10,
+        1
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "+9",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        8,
+        10,
+        2
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "+7(#9)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        8,
+        10,
+        3
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "+∆9",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        8,
+        11,
+        2
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "+∆(#9)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        8,
+        11,
+        3
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "º7(9)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        6,
+        9,
+        2
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "ø9",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        6,
+        10,
+        2
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "º∆9",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        6,
+        11,
+        2
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "9sus4",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        5,
+        7,
+        10,
+        2
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "7sus4(b9)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        5,
+        7,
+        10,
+        1
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "sus4(addb2)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        5,
+        1
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "7sus2(b9)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        2,
+        10,
+        1
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "∆9sus4",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        5,
+        11,
+        2
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "7(b5)b9",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        6,
+        10,
+        1
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "9(b5)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        6,
+        10,
+        2
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "7(b5)#9",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        6,
+        10,
+        3
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "6(9)#11",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        9,
+        2,
+        6,
+        7
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "7(b9)#11",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        10,
+        1,
+        6
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "9(#11)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        10,
+        2,
+        6
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "7(#9)#11",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        10,
+        3,
+        6
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "∆9(#11)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        11,
+        2,
+        6
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "∆(#9)#11",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        11,
+        3,
+        6
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m11",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        10,
+        5
+      ],
+      "opcionales": [
+        2,
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m9(#11)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        7,
+        10,
+        2,
+        6
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m∆11",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        11,
+        5
+      ],
+      "opcionales": [
+        7,
+        2
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m∆#11",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        11,
+        6
+      ],
+      "opcionales": [
+        7,
+        2,
+        5
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "+7(b9)#11",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        8,
+        10,
+        1,
+        6
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "+9(#11)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        8,
+        10,
+        2,
+        6
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "+7(#9)#11",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        8,
+        10,
+        3,
+        6
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "+∆9(#11)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        8,
+        11,
+        2,
+        6
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "+∆(#9)#11",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        8,
+        11,
+        3,
+        6
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "º7(11)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        6,
+        9,
+        5
+      ],
+      "opcionales": [
+        2
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "ø11",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        2,
+        3,
+        6,
+        10,
+        5
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "º∆11",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        6,
+        11,
+        5
+      ],
+      "opcionales": [
+        2
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "13(b9)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        10,
+        1,
+        9
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "13",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        2,
+        4,
+        9,
+        10
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "13(#9)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        10,
+        3,
+        9
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "7(b9)b13",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        10,
+        1,
+        8
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "9(b13)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        10,
+        2,
+        8
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "7(#9)b13",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        10,
+        3,
+        8
+      ],
+      "opcionales": [
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "∆13",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        2,
+        4,
+        7,
+        11,
+        9
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "∆13(#11)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        7,
+        11,
+        6,
+        9
+      ],
+      "opcionales": [
+        2
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "13(#11)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        7,
+        10,
+        6,
+        9
+      ],
+      "opcionales": [
+        2
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "∆13(#9)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        11,
+        3,
+        9
+      ],
+      "opcionales": [
+        2
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m13",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        10,
+        9
+      ],
+      "opcionales": [
+        7,
+        2,
+        5
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "m∆13",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        11,
+        9
+      ],
+      "opcionales": [
+        7,
+        2,
+        5
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "º7(b13)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        3,
+        6,
+        9,
+        8
+      ],
+      "opcionales": [
+        2,
+        5
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "13sus4",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        2,
+        5,
+        7,
+        10,
+        9
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "13sus4(b9)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        5,
+        7,
+        10,
+        1,
+        9
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "13(b5)b9",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        6,
+        10,
+        1,
+        9
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "13(b5)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        6,
+        10,
+        9
+      ],
+      "opcionales": [
+        2,
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "13(b5)#9",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        6,
+        10,
+        3,
+        9
+      ],
+      "opcionales": [
+        2,
+        7
+      ],
+      "fuente": "base"
+    },
+    {
+      "nombre": "∆(no5)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
+        11
+      ],
+      "opcionales": [],
+      "fuente": "aprendido"
+    },
+    {
+      "nombre": "∆(no3)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        7,
+        11
+      ],
+      "opcionales": [],
+      "fuente": "aprendido"
+    },
+    {
+      "nombre": "13(b9)#11",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        1,
+        4,
+        6,
+        7,
+        9,
+        10
+      ],
+      "opcionales": [],
+      "fuente": "aprendido"
+    },
+    {
+      "nombre": "cuartal",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        5,
+        10
+      ],
+      "opcionales": [],
+      "fuente": "aprendido"
+    },
+    {
+      "nombre": "∆(b5)no3",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        6,
+        11
+      ],
+      "opcionales": [],
+      "fuente": "aprendido"
+    },
+    {
+      "nombre": "+∆(no3)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        8,
+        11
+      ],
+      "opcionales": [],
+      "fuente": "aprendido"
+    },
+    {
+      "nombre": "6(no3)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        7,
+        9
+      ],
+      "opcionales": [],
+      "fuente": "aprendido"
+    },
+    {
+      "nombre": "7(b5)no3",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        6,
+        10
+      ],
+      "opcionales": [],
+      "fuente": "aprendido"
+    },
+    {
+      "nombre": "11(b5)no3",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        5,
+        6,
+        10
+      ],
+      "opcionales": [],
+      "fuente": "aprendido"
+    },
+    {
+      "nombre": "+∆(#11)",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        6,
+        8,
+        11
+      ],
+      "opcionales": [],
+      "fuente": "aprendido"
+    }
+  ]
+}
