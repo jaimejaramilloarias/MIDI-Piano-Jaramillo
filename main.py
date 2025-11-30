@@ -2,7 +2,7 @@
 import sys
 import json
 from pathlib import Path
-from typing import Dict, List, Set, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from PyQt6.QtCore import Qt, QTimer, QRectF, QPoint
 from PyQt6.QtGui import QPainter, QPen, QBrush, QFont, QColor, QCursor
@@ -293,9 +293,9 @@ class PianoWidget(QWidget):
         self.setAutoFillBackground(False)
 
         # Para arrastrar y redimensionar la ventana desde el propio teclado
-        self._drag_offset: QPoint | None = None
+        self._drag_offset: Optional[QPoint] = None
         self._resizing = False
-        self._resize_start_pos: QPoint | None = None
+        self._resize_start_pos: Optional[QPoint] = None
         self._resize_start_size = None
         self._resize_margin = 16  # píxeles desde la esquina inferior derecha
 
@@ -586,7 +586,7 @@ class ChordWindow(QMainWindow):
         flags |= Qt.WindowType.FramelessWindowHint
         self.setWindowFlags(flags)
 
-        self._drag_offset: QPoint | None = None
+        self._drag_offset: Optional[QPoint] = None
 
         # Contenedor blanco puro
         central = QWidget()
@@ -871,7 +871,7 @@ class ControlWindow(QMainWindow):
 
     def _find_pattern_by_signature(
         self, signature: Tuple[Tuple[int, ...], Tuple[int, ...]], include_custom: bool = True
-    ) -> Dict | None:
+    ) -> Optional[Dict]:
         for ptn in CHORD_PATTERNS:
             if not include_custom and ptn.get("is_custom"):
                 continue
@@ -899,13 +899,13 @@ class ControlWindow(QMainWindow):
         self,
         name: str,
         obligatorias: List[int],
-        opcionales: List[int] | None = None,
+        opcionales: Optional[List[int]] = None,
         *,
         source: str = "",
         allow_overwrite: bool = False,
         prompt_on_conflict: bool = False,
         record_extra: bool = False,
-    ) -> Dict | None:
+    ) -> Optional[Dict]:
         opcionales = opcionales or []
         oblig_norm = _normalize_intervals(obligatorias)
         opc_norm = sorted({int(ivl) % 12 for ivl in opcionales})
