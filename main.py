@@ -19,6 +19,7 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QFontComboBox,
     QColorDialog,
+    QInputDialog,
 )
 import mido
 
@@ -34,7 +35,7 @@ MAX_NOTE = 108  # C8
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
-CHORD_PATTERNS = [
+BASE_CHORD_PATTERNS = [
     {'nombre':'', 'obligatorias':[0,4,7], 'opcionales':[]},
     {'nombre':'m', 'obligatorias':[0,3,7], 'opcionales':[]},
     {'nombre':'+', 'obligatorias':[0,4,8], 'opcionales':[]},
@@ -124,6 +125,8 @@ CHORD_PATTERNS = [
     {'nombre':'13(b5)', 'obligatorias':[0,4,6,10,9], 'opcionales':[2,7]},
     {'nombre':'13(b5)#9', 'obligatorias':[0,4,6,10,3,9], 'opcionales':[2,7]},
    ]
+
+CHORD_PATTERNS = list(BASE_CHORD_PATTERNS)
 
 DETECT_NOTE_NAMES = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B']
 
@@ -566,7 +569,13 @@ class ChordWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MIDI Piano Jaramillo - Acordes")
+
+        # Ventana sin marco
+        flags = self.windowFlags()
+        flags |= Qt.WindowType.FramelessWindowHint
+        self.setWindowFlags(flags)
+
+        self._drag_offset: QPoint | None = None
 
         # Contenedor blanco puro
         central = QWidget()
@@ -578,7 +587,7 @@ class ChordWindow(QMainWindow):
 
         self.alt_label = QLabel("")
         self.alt_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-        self.alt_label.setStyleSheet("color: #666666;")
+        self.alt_label.setStyleSheet("color: #000000;")
 
         layout = QHBoxLayout()
         layout.setContentsMargins(14, 10, 14, 10)
@@ -591,7 +600,29 @@ class ChordWindow(QMainWindow):
         # Fuente por defecto
         self.set_font_from_family_size("Avenir Next", 80)
 
+        # Color por defecto
+        self.set_chord_color(QColor(Qt.GlobalColor.black))
+
         self.resize(740, 200)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_offset is not None and (event.buttons() & Qt.MouseButton.LeftButton):
+            new_top_left = event.globalPosition().toPoint() - self._drag_offset
+            self.move(new_top_left)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_offset = None
+        super().mouseReleaseEvent(event)
 
     def set_font_from_family_size(self, family: str, size: int):
         """Actualiza la fuente del cifrado principal y alternativo."""
@@ -605,6 +636,13 @@ class ChordWindow(QMainWindow):
         alt_font = QFont(family, alt_size)
         alt_font.setWeight(QFont.Weight.Normal)
         self.alt_label.setFont(alt_font)
+
+    def set_chord_color(self, color: QColor):
+        if not color.isValid():
+            return
+        stylesheet = f"color: {color.name()};"
+        self.main_label.setStyleSheet(stylesheet)
+        self.alt_label.setStyleSheet(stylesheet)
 
     def update_chord(self, notas):
         info = analizar_cifrado_alternativos(notas)
@@ -648,6 +686,10 @@ class ControlWindow(QMainWindow):
         self.sustained_notes: set[int] = set()
         self.sustain_on: bool = False
         self._midi_backend_error_shown: bool = False
+        self.custom_chords: list[dict] = []
+        self.learning_chord: bool = False
+        self._learn_button_default_text = "Midi learn: nuevo cifrado"
+        self.chord_text_color = QColor(Qt.GlobalColor.black)
 
         # Widgets
         self.input_combo = QComboBox()
@@ -658,10 +700,11 @@ class ControlWindow(QMainWindow):
         self.octaves_spin.setRange(1, 7)
         self.octaves_spin.setValue(3)
 
-        # Colores (presets) + selector de color del sistema
-        self.color_combo = QComboBox()
-        self.color_combo.addItems(["Cian", "Azul", "Verde", "Rojo", "Naranja", "Morado"])
+        # Selector de color del sistema
         self.color_button = QPushButton("Elegir color…")
+
+        # Color de cifrado
+        self.chord_color_button = QPushButton("Color cifrado…")
 
         # Fuente y tamaño para la ventana de acordes
         self.font_combo = QFontComboBox()
@@ -713,9 +756,14 @@ class ControlWindow(QMainWindow):
         # Fila 3: color
         row3 = QHBoxLayout()
         row3.addWidget(QLabel("Color base notas:"))
-        row3.addWidget(self.color_combo)
         row3.addWidget(self.color_button)
         top_layout.addLayout(row3)
+
+        # Fila 4: color de cifrado
+        row3b = QHBoxLayout()
+        row3b.addWidget(QLabel("Color del cifrado:"))
+        row3b.addWidget(self.chord_color_button)
+        top_layout.addLayout(row3b)
 
         # Fila 4: fuente acordes
         row4 = QHBoxLayout()
@@ -732,6 +780,22 @@ class ControlWindow(QMainWindow):
         row5.addStretch()
         top_layout.addLayout(row5)
 
+        # Fila 6: Midi learn
+        self.learn_button = QPushButton("Midi learn: nuevo cifrado")
+        row6 = QHBoxLayout()
+        row6.addWidget(self.learn_button)
+        row6.addStretch()
+        top_layout.addLayout(row6)
+
+        # Lista de acordes aprendidos
+        top_layout.addWidget(QLabel("Acordes aprendidos:"))
+        self.learned_chords_container = QWidget()
+        self.learned_chords_layout = QVBoxLayout()
+        self.learned_chords_layout.setContentsMargins(0, 0, 0, 0)
+        self.learned_chords_layout.setSpacing(6)
+        self.learned_chords_container.setLayout(self.learned_chords_layout)
+        top_layout.addWidget(self.learned_chords_container)
+
         central = QWidget()
         central.setLayout(top_layout)
         self.setCentralWidget(central)
@@ -744,12 +808,13 @@ class ControlWindow(QMainWindow):
         self.input_combo.currentIndexChanged.connect(self.change_input)
         self.start_combo.currentIndexChanged.connect(self.range_changed)
         self.octaves_spin.valueChanged.connect(self.range_changed)
-        self.color_combo.currentIndexChanged.connect(self.color_changed)
         self.color_button.clicked.connect(self.choose_color)
+        self.chord_color_button.clicked.connect(self.choose_chord_color)
         self.font_combo.currentFontChanged.connect(self.font_changed)
         self.font_size_spin.valueChanged.connect(self.font_size_changed)
         self.always_on_top.toggled.connect(self.toggle_on_top)
         self.save_button.clicked.connect(self.save_preferences)
+        self.learn_button.clicked.connect(self.start_learning_mode)
 
         # Timer para leer MIDI
 
@@ -759,9 +824,9 @@ class ControlWindow(QMainWindow):
 
         # Inicializar dispositivos y preferencias
         self.refresh_inputs()
-        self.color_changed()
         self.load_preferences()
         self._apply_chord_font()
+        self._refresh_learned_chords_ui()
 
     # --- helpers ---
 
@@ -773,28 +838,49 @@ class ControlWindow(QMainWindow):
 
     # --- preferencias persistentes ---
 
-    def save_preferences(self):
-        prefs = {
+    def _preferences_payload(self):
+        return {
             "midi_in_name": self.input_combo.currentData() or "",
             "start_note": int(self.start_combo.currentData() or MIN_NOTE),
             "octaves": int(self.octaves_spin.value()),
-            "color": self.color_combo.currentText(),
             "base_color_rgba": [
                 int(self.piano.base_color.red()),
                 int(self.piano.base_color.green()),
                 int(self.piano.base_color.blue()),
                 int(self.piano.base_color.alpha()),
             ],
+            "chord_color_rgba": [
+                int(self.chord_text_color.red()),
+                int(self.chord_text_color.green()),
+                int(self.chord_text_color.blue()),
+                int(self.chord_text_color.alpha()),
+            ],
             "font_family": self.font_combo.currentFont().family(),
             "font_size": int(self.font_size_spin.value()),
             "always_on_top": bool(self.always_on_top.isChecked()),
+            "custom_chords": [
+                {
+                    "nombre": c.get("nombre", ""),
+                    "intervalos": list(c.get("obligatorias", [])),
+                }
+                for c in self.custom_chords
+            ],
         }
+
+    def _write_preferences(self, show_message: bool):
         try:
-            self.CONFIG_PATH.write_text(json.dumps(prefs, indent=2), encoding="utf-8")
+            self.CONFIG_PATH.write_text(
+                json.dumps(self._preferences_payload(), indent=2), encoding="utf-8"
+            )
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"No se pudieron guardar las preferencias:\n{e}")
+            if show_message:
+                QMessageBox.warning(self, "Error", f"No se pudieron guardar las preferencias:\n{e}")
         else:
-            QMessageBox.information(self, "OK", "Preferencias guardadas correctamente.")
+            if show_message:
+                QMessageBox.information(self, "OK", "Preferencias guardadas correctamente.")
+
+    def save_preferences(self):
+        self._write_preferences(True)
 
     def load_preferences(self):
         if not self.CONFIG_PATH.exists():
@@ -812,10 +898,6 @@ class ControlWindow(QMainWindow):
         if isinstance(octaves, int) and 1 <= octaves <= 7:
             self.octaves_spin.setValue(octaves)
 
-        color = prefs.get("color")
-        if isinstance(color, str) and color in [self.color_combo.itemText(i) for i in range(self.color_combo.count())]:
-            self.color_combo.setCurrentText(color)
-
         rgba = prefs.get("base_color_rgba")
         if (
             isinstance(rgba, list)
@@ -825,6 +907,20 @@ class ControlWindow(QMainWindow):
             try:
                 self.piano.base_color = QColor(rgba[0], rgba[1], rgba[2], rgba[3])
                 self.piano.update()
+            except Exception:
+                pass
+
+        chord_rgba = prefs.get("chord_color_rgba")
+        if (
+            isinstance(chord_rgba, list)
+            and len(chord_rgba) == 4
+            and all(isinstance(x, int) for x in chord_rgba)
+        ):
+            try:
+                self.chord_text_color = QColor(
+                    chord_rgba[0], chord_rgba[1], chord_rgba[2], chord_rgba[3]
+                )
+                self.chord_window.set_chord_color(self.chord_text_color)
             except Exception:
                 pass
 
@@ -847,6 +943,19 @@ class ControlWindow(QMainWindow):
             idx = self.input_combo.findData(midi_name)
             if idx >= 0:
                 self.input_combo.setCurrentIndex(idx)
+
+        custom = prefs.get("custom_chords")
+        if isinstance(custom, list):
+            for item in custom:
+                name = item.get("nombre") if isinstance(item, dict) else None
+                intervals = item.get("intervalos") if isinstance(item, dict) else None
+                if (
+                    isinstance(name, str)
+                    and name
+                    and isinstance(intervals, list)
+                    and all(isinstance(x, int) for x in intervals)
+                ):
+                    self._register_custom_chord(name, intervals, persist=False)
 
         # Aplicar rango con las preferencias cargadas
         self.range_changed()
@@ -921,15 +1030,19 @@ class ControlWindow(QMainWindow):
             return
         self.piano.set_range_from_start_and_octaves(int(start), int(octaves))
 
-    def color_changed(self):
-        name = self.color_combo.currentText()
-        self.piano.set_base_color_name(name)
-
     def choose_color(self):
         color = QColorDialog.getColor(self.piano.base_color, self, "Seleccionar color de notas")
         if color.isValid():
             self.piano.base_color = color
             self.piano.update()
+            self._write_preferences(False)
+
+    def choose_chord_color(self):
+        color = QColorDialog.getColor(self.chord_text_color, self, "Seleccionar color del cifrado")
+        if color.isValid():
+            self.chord_text_color = color
+            self.chord_window.set_chord_color(color)
+            self._write_preferences(False)
 
     def _apply_chord_font(self):
         family = self.font_combo.currentFont().family()
@@ -950,6 +1063,102 @@ class ControlWindow(QMainWindow):
             flags &= ~Qt.WindowType.WindowStaysOnTopHint
         self.piano_window.setWindowFlags(flags)
         self.piano_window.show()
+
+    def _refresh_learned_chords_ui(self):
+        while self.learned_chords_layout.count():
+            item = self.learned_chords_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        if not self.custom_chords:
+            label = QLabel("No hay acordes aprendidos.")
+            self.learned_chords_layout.addWidget(label)
+            return
+
+        for idx, chord in enumerate(self.custom_chords):
+            row = QHBoxLayout()
+            name = chord.get("nombre", "")
+            intervals = chord.get("obligatorias", [])
+            label = QLabel(f"{name} — intervalos: {intervals}")
+            delete_btn = QPushButton("Eliminar")
+            delete_btn.clicked.connect(lambda _=False, i=idx: self._delete_custom_chord(i))
+            row.addWidget(label)
+            row.addStretch()
+            row.addWidget(delete_btn)
+
+            container = QWidget()
+            container.setLayout(row)
+            self.learned_chords_layout.addWidget(container)
+
+    def _register_custom_chord(self, name: str, intervals: List[int], persist: bool = True):
+        unique_intervals = sorted({int(ivl) % 12 for ivl in intervals} | {0})
+        pattern = {"nombre": name, "obligatorias": unique_intervals, "opcionales": []}
+        CHORD_PATTERNS.append(pattern)
+        self.custom_chords.append(pattern)
+        self._refresh_learned_chords_ui()
+        if persist:
+            self._write_preferences(False)
+
+    def _delete_custom_chord(self, index: int):
+        if index < 0 or index >= len(self.custom_chords):
+            return
+        pattern = self.custom_chords.pop(index)
+        try:
+            CHORD_PATTERNS.remove(pattern)
+        except ValueError:
+            pass
+        self._refresh_learned_chords_ui()
+        self._write_preferences(False)
+
+    def start_learning_mode(self):
+        if self.learning_chord:
+            self.learning_chord = False
+            self.learn_button.setText(self._learn_button_default_text)
+            QMessageBox.information(
+                self,
+                "Midi learn",
+                "Modo aprendizaje cancelado.",
+            )
+            return
+        self.learning_chord = True
+        self.learn_button.setText("Midi learn: esperando acorde…")
+        QMessageBox.information(
+            self,
+            "Midi learn",
+            "Toca el acorde en tu teclado MIDI. Luego se te pedirá escribir el cifrado.",
+        )
+
+    def _complete_learning_with_notes(self, notas):
+        self.learning_chord = False
+        self.learn_button.setText(self._learn_button_default_text)
+        if not notas:
+            QMessageBox.warning(self, "Midi learn", "No se detectaron notas para aprender.")
+            return
+
+        ordenadas = sorted(set(int(n) for n in notas))
+        if len(ordenadas) < 2:
+            QMessageBox.warning(
+                self, "Midi learn", "El cifrado necesita al menos dos notas del acorde."
+            )
+            return
+
+        root_note = ordenadas[0]
+        intervals = [(n - root_note) % 12 for n in ordenadas]
+
+        name, ok = QInputDialog.getText(
+            self,
+            "Midi learn: nuevo cifrado",
+            "Escribe el nombre/cifrado del acorde:",
+        )
+        if not ok:
+            return
+        name = name.strip()
+        if not name:
+            QMessageBox.warning(self, "Midi learn", "El nombre del cifrado no puede estar vacío.")
+            return
+
+        self._register_custom_chord(name, intervals, persist=True)
 
     # --- MIDI polling ---
 
@@ -1003,6 +1212,8 @@ class ControlWindow(QMainWindow):
             if changed:
                 notas_para_acorde = set(self.active_notes) | set(self.sustained_notes)
                 self.chord_window.update_chord(notas_para_acorde)
+                if self.learning_chord and notas_para_acorde:
+                    self._complete_learning_with_notes(notas_para_acorde)
         except Exception:
             # no queremos que un error de MIDI tumbe la interfaz
             pass
