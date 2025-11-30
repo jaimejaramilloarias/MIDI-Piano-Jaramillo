@@ -681,8 +681,14 @@ class ControlWindow(QMainWindow):
         self._midi_backend_error_shown: bool = False
         self.custom_chords: list[dict] = []
         self.learning_chord: bool = False
+        self.learning_waiting_first_note: bool = False
+        self.learning_capture_notes: set[int] = set()
+        self.capture_window_ms: int = 500
         self._learn_button_default_text = "Midi learn: nuevo cifrado"
         self.chord_text_color = QColor(Qt.GlobalColor.black)
+        self.capture_timer = QTimer()
+        self.capture_timer.setSingleShot(True)
+        self.capture_timer.timeout.connect(self._finish_capture_window)
 
         # Widgets
         self.input_combo = QComboBox()
@@ -782,6 +788,17 @@ class ControlWindow(QMainWindow):
         row6.addStretch()
         top_layout.addLayout(row6)
 
+        # Fila 7: duración ventana de captura para Midi learn
+        capture_row = QHBoxLayout()
+        capture_row.addWidget(QLabel("Ventana captura (ms):"))
+        self.capture_window_spin = QSpinBox()
+        self.capture_window_spin.setRange(100, 5000)
+        self.capture_window_spin.setSingleStep(50)
+        self.capture_window_spin.setValue(self.capture_window_ms)
+        capture_row.addWidget(self.capture_window_spin)
+        capture_row.addStretch()
+        top_layout.addLayout(capture_row)
+
         # Lista de acordes aprendidos
         top_layout.addWidget(QLabel("Acordes aprendidos:"))
         self.learned_chords_container = QWidget()
@@ -851,6 +868,7 @@ class ControlWindow(QMainWindow):
                 int(self.chord_text_color.blue()),
                 int(self.chord_text_color.alpha()),
             ],
+            "capture_window_ms": int(self.capture_window_spin.value()),
             "font_family": self.font_combo.currentFont().family(),
             "font_size": int(self.font_size_spin.value()),
             "always_on_top": bool(self.always_on_top.isChecked()),
@@ -970,6 +988,11 @@ class ControlWindow(QMainWindow):
         font_size = prefs.get("font_size")
         if isinstance(font_size, int) and 10 <= font_size <= 160:
             self.font_size_spin.setValue(int(font_size))
+
+        capture_window_ms = prefs.get("capture_window_ms")
+        if isinstance(capture_window_ms, int) and 50 <= capture_window_ms <= 10000:
+            self.capture_window_ms = capture_window_ms
+            self.capture_window_spin.setValue(capture_window_ms)
 
         on_top = bool(prefs.get("always_on_top", False))
         self.always_on_top.setChecked(on_top)
@@ -1130,8 +1153,25 @@ class ControlWindow(QMainWindow):
     def _register_custom_chord(self, name: str, intervals: List[int], persist: bool = True):
         unique_intervals = sorted({int(ivl) % 12 for ivl in intervals} | {0})
         pattern = {"nombre": name, "obligatorias": unique_intervals, "opcionales": [], "is_custom": True}
-        CHORD_PATTERNS.append(pattern)
-        self.custom_chords.append(pattern)
+        existing_idx = next(
+            (i for i, p in enumerate(self.custom_chords) if sorted(p.get("obligatorias", [])) == unique_intervals),
+            None,
+        )
+        if existing_idx is not None:
+            old_name = self.custom_chords[existing_idx].get("nombre", "(sin nombre)")
+            res = QMessageBox.question(
+                self,
+                "Midi learn",
+                f"Ya existe un acorde aprendido con esos intervalos:\n«{old_name}».\n\n"
+                f"¿Quieres reemplazarlo por «{name}»?",
+            )
+            if res != QMessageBox.StandardButton.Yes:
+                return
+            existing_pattern = self.custom_chords[existing_idx]
+            existing_pattern.update(pattern)
+        else:
+            CHORD_PATTERNS.append(pattern)
+            self.custom_chords.append(pattern)
         self._refresh_learned_chords_ui()
         if persist:
             self._write_preferences(False)
@@ -1149,25 +1189,32 @@ class ControlWindow(QMainWindow):
 
     def start_learning_mode(self):
         if self.learning_chord:
-            self.learning_chord = False
-            self.learn_button.setText(self._learn_button_default_text)
+            self._reset_learning_state()
             QMessageBox.information(
                 self,
                 "Midi learn",
                 "Modo aprendizaje cancelado.",
             )
             return
+
+        current_notes = set(self.active_notes) | set(self.sustained_notes)
+        if current_notes:
+            self.learning_chord = True
+            self.learn_button.setText("Midi learn: capturando acorde…")
+            self._complete_learning_with_notes(current_notes)
+            return
+
         self.learning_chord = True
+        self.learning_waiting_first_note = True
         self.learn_button.setText("Midi learn: esperando acorde…")
         QMessageBox.information(
             self,
             "Midi learn",
-            "Toca el acorde en tu teclado MIDI. Luego se te pedirá escribir el cifrado.",
+            "Toca el acorde en tu teclado MIDI. Se abrirá una ventana de captura desde la primera nota.",
         )
 
     def _complete_learning_with_notes(self, notas):
-        self.learning_chord = False
-        self.learn_button.setText(self._learn_button_default_text)
+        self._reset_learning_state()
         if not notas:
             QMessageBox.warning(self, "Midi learn", "No se detectaron notas para aprender.")
             return
@@ -1196,6 +1243,27 @@ class ControlWindow(QMainWindow):
 
         self._register_custom_chord(name, intervals, persist=True)
 
+    def _reset_learning_state(self):
+        self.learning_chord = False
+        self.learning_waiting_first_note = False
+        self.learning_capture_notes.clear()
+        if self.capture_timer.isActive():
+            self.capture_timer.stop()
+        self.learn_button.setText(self._learn_button_default_text)
+
+    def _begin_capture_window(self, notas_actuales: Set[int]):
+        self.learning_waiting_first_note = False
+        self.learning_capture_notes = set(notas_actuales)
+        self.learn_button.setText("Midi learn: capturando acorde…")
+        self.capture_timer.start(int(self.capture_window_spin.value()))
+
+    def _absorb_capture_notes(self, notas_actuales: Set[int]):
+        self.learning_capture_notes.update(notas_actuales)
+
+    def _finish_capture_window(self):
+        notas = set(self.learning_capture_notes)
+        self._complete_learning_with_notes(notas)
+
     # --- MIDI polling ---
 
     
@@ -1204,6 +1272,7 @@ class ControlWindow(QMainWindow):
             return
         try:
             changed = False
+            new_note_on = False
             for msg in self.midi_in.iter_pending():
                 # Pedal de sustain (CC 64)
                 if msg.type == "control_change" and getattr(msg, "control", None) == 64:
@@ -1228,6 +1297,7 @@ class ControlWindow(QMainWindow):
                         if note in self.sustained_notes:
                             self.sustained_notes.discard(note)
                             self.piano.set_sustained(note, False)
+                        new_note_on = True
                     else:
                         # Nota liberada físicamente
                         self.piano.set_pressed(note, False)
@@ -1248,8 +1318,11 @@ class ControlWindow(QMainWindow):
             if changed:
                 notas_para_acorde = set(self.active_notes) | set(self.sustained_notes)
                 self.chord_window.update_chord(notas_para_acorde)
-                if self.learning_chord and notas_para_acorde:
-                    self._complete_learning_with_notes(notas_para_acorde)
+                if self.learning_chord:
+                    if self.learning_waiting_first_note and new_note_on and notas_para_acorde:
+                        self._begin_capture_window(notas_para_acorde)
+                    elif self.capture_timer.isActive():
+                        self._absorb_capture_notes(notas_para_acorde)
         except Exception:
             # no queremos que un error de MIDI tumbe la interfaz
             pass
