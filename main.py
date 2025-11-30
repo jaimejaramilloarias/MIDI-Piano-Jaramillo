@@ -1438,14 +1438,24 @@ class ControlWindow(QMainWindow):
     def font_size_changed(self, value: int):
         self._apply_chord_font()
 
-    def toggle_on_top(self, on: bool):
-        flags = self.piano_window.windowFlags()
+    def _apply_on_top_to_window(self, window: QMainWindow, on: bool):
+        flags = window.windowFlags()
         if on:
             flags |= Qt.WindowType.WindowStaysOnTopHint
         else:
             flags &= ~Qt.WindowType.WindowStaysOnTopHint
-        self.piano_window.setWindowFlags(flags)
-        self.piano_window.show()
+        window.setWindowFlags(flags)
+
+        if on:
+            # Restaurar y llevar al frente incluso si estaba minimizada u oculta.
+            self._bring_to_front(window)
+        elif window.isVisible():
+            # setWindowFlags requiere volver a mostrar la ventana para aplicar cambios.
+            window.show()
+
+    def toggle_on_top(self, on: bool):
+        for win in (self.piano_window, self.chord_window):
+            self._apply_on_top_to_window(win, on)
 
     def _refresh_learned_chords_ui(self):
         while self.learned_chords_layout.count():
