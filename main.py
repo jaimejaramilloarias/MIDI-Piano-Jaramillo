@@ -899,15 +899,13 @@ class StaffWidget(QWidget):
 
         staff_spacing = max(8.0, min(18.0, rect.height() / 18.0))
         margin = staff_spacing * 1.2
-        label_width = staff_spacing * 3.0
-        clef_width = staff_spacing * 2.6
+        label_width = staff_spacing * 4.0
+        clef_width = staff_spacing * 3.0
 
-        available_width = max(rect.width() - 2 * margin - label_width - clef_width, staff_spacing * 8)
-        staff_width = available_width * 0.6
+        usable_width = max(rect.width() - 2 * margin - label_width - clef_width, staff_spacing * 10)
 
         line_x_start = margin + label_width + clef_width
-        line_x_end = line_x_start + staff_width
-
+        min_staff_width = staff_spacing * 10
         center_y = rect.center().y()
 
         return {
@@ -915,9 +913,9 @@ class StaffWidget(QWidget):
             "margin": margin,
             "labelWidth": label_width,
             "clefWidth": clef_width,
-            "staffWidth": staff_width,
+            "usableWidth": usable_width,
             "lineStart": line_x_start,
-            "lineEnd": line_x_end,
+            "minStaffWidth": min_staff_width,
             "centerY": center_y,
         }
 
@@ -928,12 +926,32 @@ class StaffWidget(QWidget):
         if not notes:
             return offsets
 
-        note_steps = [(n, self._relative_step(n)) for n in notes]
-        note_steps.sort(key=lambda pair: pair[1])  # grave → aguda
+        dx = note_head_width * 0.6
 
-        for (note_a, step_a), (note_b, step_b) in zip(note_steps, note_steps[1:]):
-            if abs(step_a - step_b) == 1:
-                offsets[note_b] = note_head_width * 0.6
+        def apply_offsets(group: List[Tuple[int, int]]):
+            group.sort(key=lambda pair: pair[1])  # grave → aguda
+            prev_step: Optional[int] = None
+            toggle = False
+            for note, step in group:
+                if prev_step is not None and abs(step - prev_step) == 1:
+                    offsets[note] = dx if not toggle else 0.0
+                    toggle = not toggle
+                else:
+                    offsets[note] = 0.0
+                    toggle = False
+                prev_step = step
+
+        treble_group: List[Tuple[int, int]] = []
+        bass_group: List[Tuple[int, int]] = []
+        for n in notes:
+            step = self._relative_step(n)
+            if step >= 2:
+                treble_group.append((n, step))
+            else:
+                bass_group.append((n, step))
+
+        apply_offsets(treble_group)
+        apply_offsets(bass_group)
 
         return offsets
 
@@ -954,19 +972,20 @@ class StaffWidget(QWidget):
         painter.setFont(clef_font)
 
         if clef_type == "treble":
-            line_index = 3  # Segunda línea desde abajo
+            line_index = 3  # Segunda línea desde abajo (G4)
             symbol = "𝄞"
             y = staff_top_y + line_index * staff_spacing
         else:
-            line_index = 1  # Línea F3 rodeada por los puntos
+            line_index = 1  # Los puntos abrazan la cuarta línea (F3)
             symbol = "𝄢"
             y = staff_top_y + line_index * staff_spacing
 
+        rect_height = staff_spacing * 4.2
         rect = QRectF(
             x,
-            y - staff_spacing * 2,
-            staff_spacing * 2.6,
-            staff_spacing * 4,
+            y - rect_height / 2,
+            staff_spacing * 3.2,
+            rect_height,
         )
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, symbol)
 
@@ -983,16 +1002,24 @@ class StaffWidget(QWidget):
         painter.drawEllipse(QRectF(-width / 2, -height / 2, width, height))
         painter.restore()
 
-    def drawAccidental(self, painter: QPainter, accidental: str, note_x: float, note_y: float, staff_spacing: float):
+    def drawAccidental(
+        self,
+        painter: QPainter,
+        accidental: str,
+        column_x: float,
+        note_y: float,
+        staff_spacing: float,
+        note_head_width: float,
+    ):
         """Dibuja una alteración a la izquierda de la cabeza de nota."""
 
         font = QFont("Times New Roman", int(staff_spacing * 1.4))
         painter.setFont(font)
-        accidental_x = note_x - staff_spacing * 1.2
+        accidental_x = column_x - note_head_width * 1.2
         rect = QRectF(
             accidental_x,
             note_y - staff_spacing * 0.9,
-            staff_spacing * 1.4,
+            note_head_width * 1.2,
             staff_spacing * 1.8,
         )
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, accidental)
@@ -1008,6 +1035,7 @@ class StaffWidget(QWidget):
         staff_spacing = layout["staffSpacing"]
         step_height = staff_spacing / 2.0
         center_y = layout["centerY"]
+        line_start = layout["lineStart"]
 
         pen = QPen(QColor(40, 40, 40))
         pen.setWidthF(max(1.2, staff_spacing * 0.12))
@@ -1016,17 +1044,15 @@ class StaffWidget(QWidget):
         treble_top = center_y - 10 * step_height
         bass_top = center_y + 2 * step_height
 
-        self.drawStaff(painter, treble_top, staff_spacing, layout["lineStart"], layout["lineEnd"])
-        self.drawStaff(painter, bass_top, staff_spacing, layout["lineStart"], layout["lineEnd"])
-
-        self.drawClef(painter, "treble", treble_top, staff_spacing, layout["margin"] + layout["labelWidth"])
-        self.drawClef(painter, "bass", bass_top, staff_spacing, layout["margin"] + layout["labelWidth"])
-
-        note_x_base = layout["lineStart"] + staff_spacing * 1.6
+        note_x_base = line_start + staff_spacing * 1.2
         note_head_width = staff_spacing * 1.2
         ledger_length = note_head_width * 1.4
 
         offsets = self.computeNoteXOffsetsForCollisions(sorted(self.notes), note_head_width)
+
+        note_positions: List[float] = []
+        accidental_info: List[Tuple[str, float, float, float]] = []
+        note_rows: List[Tuple[int, float, List[int], float]] = []
 
         for note in sorted(self.notes):
             rel_step = self._relative_step(note)
@@ -1040,23 +1066,46 @@ class StaffWidget(QWidget):
             elif -2 < rel_step < 2 and rel_step % 2 == 0:
                 ledger_steps = [0]
 
-            for ls in ledger_steps:
-                ly = center_y - ls * step_height
-                painter.drawLine(
-                    note_x_base - ledger_length / 2 + offsets.get(note, 0.0),
-                    ly,
-                    note_x_base + ledger_length / 2 + offsets.get(note, 0.0),
-                    ly,
-                )
-
             note_x = note_x_base + offsets.get(note, 0.0)
-            self.drawNoteHead(painter, note_x, y, staff_spacing)
+            note_positions.append(note_x)
+            note_rows.append((note, y, ledger_steps, note_x))
 
             accidental = ""
             if note % 12 in (1, 3, 6, 8, 10):
                 accidental = "#"
             if accidental:
-                self.drawAccidental(painter, accidental, note_x, y, staff_spacing)
+                accidental_column_x = note_x
+                accidental_info.append((accidental, accidental_column_x, y, note_head_width))
+
+        accidental_info.sort(key=lambda item: item[2])
+        if note_positions:
+            max_x = max(note_positions) + staff_spacing * 2.0
+            staff_width = max(
+                layout["minStaffWidth"],
+                min(layout["usableWidth"], max_x - line_start),
+            )
+        else:
+            staff_width = layout["minStaffWidth"]
+
+        line_end = line_start + staff_width
+        self.drawStaff(painter, treble_top, staff_spacing, line_start, line_end)
+        self.drawStaff(painter, bass_top, staff_spacing, line_start, line_end)
+
+        clef_x = layout["margin"] + layout["labelWidth"]
+        self.drawClef(painter, "treble", treble_top, staff_spacing, clef_x)
+        self.drawClef(painter, "bass", bass_top, staff_spacing, clef_x)
+
+        for note, y, ledger_steps, note_x in note_rows:
+            for ls in ledger_steps:
+                ly = center_y - ls * step_height
+                painter.drawLine(
+                    note_x - ledger_length / 2,
+                    ly,
+                    note_x + ledger_length / 2,
+                    ly,
+                )
+
+            self.drawNoteHead(painter, note_x, y, staff_spacing)
 
             painter.setFont(QFont("Arial", int(staff_spacing * 1.1)))
             painter.drawText(
@@ -1068,6 +1117,17 @@ class StaffWidget(QWidget):
                 ),
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 midi_to_name(note),
+            )
+
+        for idx, (symbol, column_x, y, head_width) in enumerate(accidental_info):
+            x_offset = - (idx % 2) * head_width * 0.25
+            self.drawAccidental(
+                painter,
+                symbol,
+                column_x + x_offset,
+                y,
+                staff_spacing,
+                head_width,
             )
 
 
