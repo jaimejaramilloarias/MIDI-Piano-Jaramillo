@@ -4,8 +4,8 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, QPoint, QEvent
-from PyQt6.QtGui import QPainter, QPen, QBrush, QFont, QColor, QCursor
+from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, QPoint, QEvent, QSettings
+from PyQt6.QtGui import QPainter, QPen, QBrush, QFont, QColor, QCursor, QActionGroup
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -18,6 +18,7 @@ from PyQt6.QtWidgets import (
     QSpinBox,
     QMessageBox,
     QFontComboBox,
+    QFontDialog,
     QColorDialog,
     QInputDialog,
     QFileDialog,
@@ -320,6 +321,14 @@ class PianoWidget(QWidget):
         self._resize_start_size = None
         self._resize_margin = 16  # píxeles desde la esquina inferior derecha
 
+        self.interval_label_settings = {
+            "font_family": "",
+            "font_size": 14,
+            "color": QColor(Qt.GlobalColor.black),
+            "y_anchor_mode": "bottom25",
+            "y_percent": 87.5,
+        }
+
     # --- configuración pública ---
 
     def set_range(self, start_note: int, end_note: int):
@@ -373,6 +382,10 @@ class PianoWidget(QWidget):
 
     def set_interval_labels(self, labels: Dict[int, str]):
         self.interval_labels = labels
+        self.update()
+
+    def set_interval_label_style(self, settings: Dict):
+        self.interval_label_settings = settings
         self.update()
 
     def set_base_color_name(self, name: str):
@@ -573,8 +586,9 @@ class PianoWidget(QWidget):
 
         # Etiquetas de intervalos para notas activas
         if self.interval_labels:
-            label_font = QFont()
-            label_font.setPointSize(10)
+            settings = self.interval_label_settings or {}
+            label_font = QFont(settings.get("font_family") or "")
+            label_font.setPointSize(int(settings.get("font_size", 14)))
             painter.setFont(label_font)
 
             # Teclas blancas
@@ -585,8 +599,9 @@ class PianoWidget(QWidget):
                 idx = note_to_white_index[n]
                 x = x_offset + idx * key_width
                 key_rect = QRectF(x, y_offset, key_width, key_height)
-                painter.setPen(QPen(Qt.GlobalColor.black))
-                painter.drawText(key_rect.adjusted(0, 6, 0, -black_height * 0.3), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, label)
+                painter.setPen(QPen(self._interval_pen_color(False)))
+                label_zone = self._interval_label_zone(key_rect, key_height)
+                painter.drawText(label_zone, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, label)
 
             # Teclas negras
             for n in range(self.start_note, self.end_note + 1):
@@ -598,8 +613,40 @@ class PianoWidget(QWidget):
                 idx = note_to_white_index[n]
                 x = x_offset + idx * key_width + key_width - black_width / 2
                 key_rect = QRectF(x, y_offset, black_width, black_height)
-                painter.setPen(QPen(Qt.GlobalColor.white))
-                painter.drawText(key_rect, Qt.AlignmentFlag.AlignCenter, label)
+                painter.setPen(QPen(self._interval_pen_color(True)))
+                label_zone = self._interval_label_zone(key_rect, black_height)
+                painter.drawText(label_zone, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, label)
+
+    def _interval_label_zone(self, key_rect: QRectF, key_height: float) -> QRectF:
+        settings = self.interval_label_settings or {}
+        zone_height = max(10.0, key_height * 0.25)
+        mode = settings.get("y_anchor_mode", "bottom25")
+        percent = float(settings.get("y_percent", 87.5))
+
+        if mode == "top":
+            center_y = key_rect.top() + zone_height / 2
+        elif mode == "center":
+            center_y = key_rect.top() + key_height / 2
+        elif mode == "bottom":
+            center_y = key_rect.bottom() - zone_height / 2
+        elif mode == "custom":
+            percent = max(0.0, min(100.0, percent))
+            center_y = key_rect.top() + key_height * (percent / 100.0)
+        else:  # bottom25 por defecto
+            center_y = key_rect.top() + key_height * 0.875
+
+        top = max(key_rect.top(), min(center_y - zone_height / 2, key_rect.bottom() - zone_height))
+        return QRectF(key_rect.left(), top, key_rect.width(), zone_height)
+
+    def _interval_pen_color(self, is_black_key: bool) -> QColor:
+        chosen = self.interval_label_settings.get("color", QColor(Qt.GlobalColor.black))
+        if isinstance(chosen, str):
+            chosen = QColor(chosen)
+        if not isinstance(chosen, QColor) or not chosen.isValid():
+            chosen = QColor(Qt.GlobalColor.black if not is_black_key else Qt.GlobalColor.white)
+        if is_black_key and chosen.lightness() < 160:
+            return QColor(Qt.GlobalColor.white)
+        return chosen
 
 
 class PianoWindow(QMainWindow):
@@ -756,6 +803,8 @@ class ControlWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("MIDI Piano - Controles")
 
+        self.settings = QSettings("MIDI-Piano-Jaramillo", "MIDI-Piano")
+
         self.piano_window = piano_window
         self.piano = piano_window.piano
         self.chord_window = chord_window
@@ -773,6 +822,7 @@ class ControlWindow(QMainWindow):
         self._learn_button_default_text = "Midi learn: nuevo cifrado"
         self.chord_text_color = QColor(Qt.GlobalColor.black)
         self.chord_bg_color = QColor(Qt.GlobalColor.white)
+        self.interval_label_settings = self._default_interval_label_settings()
         self.capture_timer = QTimer()
         self.capture_timer.setSingleShot(True)
         self.capture_timer.timeout.connect(self._finish_capture_window)
@@ -937,6 +987,7 @@ class ControlWindow(QMainWindow):
         self.timer.start(10)
 
         # Inicializar dispositivos y preferencias
+        self._load_interval_settings()
         self.refresh_inputs()
         self.load_preferences()
         self._apply_chord_font()
@@ -975,6 +1026,8 @@ class ControlWindow(QMainWindow):
         dictionary_menu = self.menuBar().addMenu("Diccionario")
         load_dict = dictionary_menu.addAction("Cargar diccionario…")
         load_dict.triggered.connect(self.load_chord_dictionary_from_dialog)
+
+        self._setup_interval_menu()
 
         for win in (self, self.piano_window, self.chord_window):
             win.installEventFilter(self)
@@ -1029,6 +1082,170 @@ class ControlWindow(QMainWindow):
             "Ocultar Acordes" if chords_visible else "Mostrar Acordes"
         )
         self.chord_action.blockSignals(False)
+
+    def _setup_interval_menu(self):
+        view_menu = self.menuBar().addMenu("Ver")
+        intervals_menu = view_menu.addMenu("Intervalos en teclas")
+
+        font_action = intervals_menu.addAction("Fuente…")
+        font_action.triggered.connect(self._choose_interval_font)
+
+        size_action = intervals_menu.addAction("Tamaño…")
+        size_action.triggered.connect(self._choose_interval_size)
+
+        color_action = intervals_menu.addAction("Color…")
+        color_action.triggered.connect(self._choose_interval_color)
+
+        position_menu = intervals_menu.addMenu("Posición")
+        self.interval_position_group = QActionGroup(self)
+        self.interval_position_group.setExclusive(True)
+        self.interval_position_actions = {}
+        for text, mode in (
+            ("Arriba", "top"),
+            ("Centro", "center"),
+            ("Abajo", "bottom"),
+            ("Abajo 25%", "bottom25"),
+        ):
+            action = position_menu.addAction(text)
+            action.setCheckable(True)
+            action.setData(mode)
+            self.interval_position_group.addAction(action)
+            self.interval_position_actions[mode] = action
+
+        custom_action = position_menu.addAction("Personalizado…")
+        custom_action.setCheckable(True)
+        custom_action.setData("custom")
+        self.interval_position_group.addAction(custom_action)
+        self.interval_position_actions["custom"] = custom_action
+        self.interval_position_group.triggered.connect(self._interval_position_selected)
+
+    def _default_interval_label_settings(self) -> Dict:
+        return {
+            "font_family": "",
+            "font_size": 14,
+            "color": QColor(Qt.GlobalColor.black),
+            "y_anchor_mode": "bottom25",
+            "y_percent": 87.5,
+        }
+
+    def _load_interval_settings(self):
+        settings = self._default_interval_label_settings()
+        font_family = self.settings.value("intervals/font_family", "", type=str)
+        if font_family:
+            settings["font_family"] = font_family
+
+        font_size = self.settings.value("intervals/font_size")
+        if isinstance(font_size, (int, float)) and 6 <= int(font_size) <= 300:
+            settings["font_size"] = int(font_size)
+
+        color_name = self.settings.value("intervals/color", "", type=str)
+        color = QColor(color_name)
+        if color.isValid():
+            settings["color"] = color
+
+        position_mode = self.settings.value("intervals/position_mode", "bottom25", type=str)
+        settings["y_anchor_mode"] = position_mode or "bottom25"
+
+        y_percent = self.settings.value("intervals/y_percent", settings["y_percent"], type=float)
+        try:
+            settings["y_percent"] = float(y_percent)
+        except Exception:
+            pass
+
+        self.interval_label_settings = settings
+        self._apply_interval_settings_to_piano()
+        self._sync_interval_position_actions()
+
+    def _save_interval_settings(self):
+        color = self.interval_label_settings.get("color", QColor(Qt.GlobalColor.black))
+        if isinstance(color, str):
+            color = QColor(color)
+        color_name = color.name() if isinstance(color, QColor) and color.isValid() else "#000000"
+
+        self.settings.setValue("intervals/font_family", self.interval_label_settings.get("font_family", ""))
+        self.settings.setValue("intervals/font_size", int(self.interval_label_settings.get("font_size", 14)))
+        self.settings.setValue("intervals/color", color_name)
+        self.settings.setValue("intervals/position_mode", self.interval_label_settings.get("y_anchor_mode", "bottom25"))
+        self.settings.setValue("intervals/y_percent", float(self.interval_label_settings.get("y_percent", 87.5)))
+        self.settings.sync()
+
+    def _apply_interval_settings_to_piano(self):
+        self.piano.set_interval_label_style(dict(self.interval_label_settings))
+
+    def _sync_interval_position_actions(self):
+        mode = self.interval_label_settings.get("y_anchor_mode", "bottom25")
+        actions = getattr(self, "interval_position_actions", {})
+        if not actions:
+            return
+        for key, action in actions.items():
+            action.blockSignals(True)
+            action.setChecked(key == mode)
+            action.blockSignals(False)
+
+    def _choose_interval_font(self):
+        current_family = self.interval_label_settings.get("font_family", "")
+        current_font = QFont(current_family) if current_family else QFont()
+        font, ok = QFontDialog.getFont(current_font, self, "Fuente para intervalos")
+        if not ok:
+            self._sync_interval_position_actions()
+            return
+        self.interval_label_settings["font_family"] = font.family()
+        self._apply_interval_settings_to_piano()
+        self._save_interval_settings()
+
+    def _choose_interval_size(self):
+        current_size = int(self.interval_label_settings.get("font_size", 14))
+        size, ok = QInputDialog.getInt(
+            self,
+            "Tamaño de intervalos",
+            "Tamaño en puntos:",
+            current_size,
+            6,
+            300,
+        )
+        if not ok:
+            self._sync_interval_position_actions()
+            return
+        self.interval_label_settings["font_size"] = int(size)
+        self._apply_interval_settings_to_piano()
+        self._save_interval_settings()
+
+    def _choose_interval_color(self):
+        current_color = self.interval_label_settings.get("color", QColor(Qt.GlobalColor.black))
+        if isinstance(current_color, str):
+            current_color = QColor(current_color)
+        color = QColorDialog.getColor(current_color, self, "Color de intervalos")
+        if not color.isValid():
+            self._sync_interval_position_actions()
+            return
+        self.interval_label_settings["color"] = color
+        self._apply_interval_settings_to_piano()
+        self._save_interval_settings()
+
+    def _interval_position_selected(self, action):
+        mode = action.data()
+        if mode == "custom":
+            current_percent = int(self.interval_label_settings.get("y_percent", 87.5))
+            percent, ok = QInputDialog.getInt(
+                self,
+                "Posición personalizada",
+                "Porcentaje vertical (0=arriba, 100=abajo):",
+                current_percent,
+                0,
+                100,
+            )
+            if not ok:
+                self._sync_interval_position_actions()
+                return
+            self.interval_label_settings["y_anchor_mode"] = "custom"
+            self.interval_label_settings["y_percent"] = percent
+        else:
+            self.interval_label_settings["y_anchor_mode"] = mode
+            if mode == "bottom25":
+                self.interval_label_settings["y_percent"] = 87.5
+        self._apply_interval_settings_to_piano()
+        self._save_interval_settings()
+        self._sync_interval_position_actions()
 
     def eventFilter(self, source, event):
         if source in (self, self.piano_window, self.chord_window):
