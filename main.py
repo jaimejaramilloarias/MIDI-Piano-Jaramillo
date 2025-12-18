@@ -5,7 +5,16 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, QPoint, QEvent, QSettings
-from PyQt6.QtGui import QPainter, QPen, QBrush, QFont, QColor, QCursor, QActionGroup
+from PyQt6.QtGui import (
+    QActionGroup,
+    QBrush,
+    QColor,
+    QCursor,
+    QFont,
+    QFontMetrics,
+    QPainter,
+    QPen,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -590,6 +599,7 @@ class PianoWidget(QWidget):
             label_font = QFont(settings.get("font_family") or "")
             label_font.setPointSize(int(settings.get("font_size", 14)))
             painter.setFont(label_font)
+            metrics = painter.fontMetrics()
 
             # Teclas blancas
             for n in white_notes:
@@ -600,7 +610,7 @@ class PianoWidget(QWidget):
                 x = x_offset + idx * key_width
                 key_rect = QRectF(x, y_offset, key_width, key_height)
                 painter.setPen(QPen(self._interval_pen_color(False)))
-                label_zone = self._interval_label_zone(key_rect, key_height)
+                label_zone = self._interval_label_zone(key_rect, key_height, label, metrics)
                 painter.drawText(label_zone, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, label)
 
             # Teclas negras
@@ -614,14 +624,20 @@ class PianoWidget(QWidget):
                 x = x_offset + idx * key_width + key_width - black_width / 2
                 key_rect = QRectF(x, y_offset, black_width, black_height)
                 painter.setPen(QPen(self._interval_pen_color(True)))
-                label_zone = self._interval_label_zone(key_rect, black_height)
+                label_zone = self._interval_label_zone(key_rect, black_height, label, metrics)
                 painter.drawText(label_zone, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, label)
 
-    def _interval_label_zone(self, key_rect: QRectF, key_height: float) -> QRectF:
+    def _interval_label_zone(
+        self, key_rect: QRectF, key_height: float, label: str, metrics: QFontMetrics
+    ) -> QRectF:
         settings = self.interval_label_settings or {}
         zone_height = max(10.0, key_height * 0.25)
         mode = settings.get("y_anchor_mode", "bottom25")
         percent = float(settings.get("y_percent", 87.5))
+
+        text_width = max(0.0, metrics.horizontalAdvance(label))
+        zone_width = max(key_rect.width(), text_width + 6)
+        zone_width = min(zone_width, float(self.width()))
 
         if mode == "top":
             center_y = key_rect.top() + zone_height / 2
@@ -636,7 +652,11 @@ class PianoWidget(QWidget):
             center_y = key_rect.top() + key_height * 0.875
 
         top = max(key_rect.top(), min(center_y - zone_height / 2, key_rect.bottom() - zone_height))
-        return QRectF(key_rect.left(), top, key_rect.width(), zone_height)
+
+        left = key_rect.center().x() - zone_width / 2
+        left = max(0.0, min(left, float(self.width()) - zone_width))
+
+        return QRectF(left, top, zone_width, zone_height)
 
     def _interval_pen_color(self, is_black_key: bool) -> QColor:
         chosen = self.interval_label_settings.get("color", QColor(Qt.GlobalColor.black))
