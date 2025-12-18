@@ -689,8 +689,6 @@ class PianoWidget(QWidget):
             chosen = QColor(chosen)
         if not isinstance(chosen, QColor) or not chosen.isValid():
             chosen = QColor(Qt.GlobalColor.black if not is_black_key else Qt.GlobalColor.white)
-        if is_black_key and chosen.lightness() < 160:
-            return QColor(Qt.GlobalColor.white)
         return chosen
 
     def _draw_interval_frame(self, painter: QPainter, rect: QRectF):
@@ -1325,14 +1323,18 @@ class ControlWindow(QMainWindow):
         if isinstance(color_white, str):
             color_white = QColor(color_white)
         color_white_name = (
-            color_white.name() if isinstance(color_white, QColor) and color_white.isValid() else "#000000"
+            color_white.name(QColor.NameFormat.HexArgb)
+            if isinstance(color_white, QColor) and color_white.isValid()
+            else QColor(Qt.GlobalColor.black).name(QColor.NameFormat.HexArgb)
         )
 
         color_black = self.interval_label_settings.get("color_black", QColor(Qt.GlobalColor.white))
         if isinstance(color_black, str):
             color_black = QColor(color_black)
         color_black_name = (
-            color_black.name() if isinstance(color_black, QColor) and color_black.isValid() else "#ffffff"
+            color_black.name(QColor.NameFormat.HexArgb)
+            if isinstance(color_black, QColor) and color_black.isValid()
+            else QColor(Qt.GlobalColor.white).name(QColor.NameFormat.HexArgb)
         )
 
         self.settings.setValue("intervals/color_white", color_white_name)
