@@ -333,9 +333,16 @@ class PianoWidget(QWidget):
         self.interval_label_settings = {
             "font_family": "",
             "font_size": 14,
-            "color": QColor(Qt.GlobalColor.black),
-            "y_anchor_mode": "bottom25",
-            "y_percent": 87.5,
+            "color_white": QColor(Qt.GlobalColor.black),
+            "color_black": QColor(Qt.GlobalColor.white),
+            "y_anchor_mode_white": "bottom25",
+            "y_percent_white": 87.5,
+            "y_anchor_mode_black": "center",
+            "y_percent_black": 60.0,
+            "frame_fill_color": QColor(255, 255, 255),
+            "frame_fill_opacity": 0.6,
+            "frame_border_color": QColor(0, 0, 0, 180),
+            "frame_border_width": 1.0,
         }
 
     # --- configuración pública ---
@@ -609,8 +616,12 @@ class PianoWidget(QWidget):
                 idx = note_to_white_index[n]
                 x = x_offset + idx * key_width
                 key_rect = QRectF(x, y_offset, key_width, key_height)
-                painter.setPen(QPen(self._interval_pen_color(False)))
-                label_zone = self._interval_label_zone(key_rect, key_height, label, metrics)
+                text_color = self._interval_pen_color(False)
+                label_zone = self._interval_label_zone(
+                    key_rect, key_height, label, metrics, False
+                )
+                self._draw_interval_frame(painter, label_zone)
+                painter.setPen(QPen(text_color))
                 painter.drawText(label_zone, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, label)
 
             # Teclas negras
@@ -623,17 +634,28 @@ class PianoWidget(QWidget):
                 idx = note_to_white_index[n]
                 x = x_offset + idx * key_width + key_width - black_width / 2
                 key_rect = QRectF(x, y_offset, black_width, black_height)
-                painter.setPen(QPen(self._interval_pen_color(True)))
-                label_zone = self._interval_label_zone(key_rect, black_height, label, metrics)
+                text_color = self._interval_pen_color(True)
+                label_zone = self._interval_label_zone(
+                    key_rect, black_height, label, metrics, True
+                )
+                self._draw_interval_frame(painter, label_zone)
+                painter.setPen(QPen(text_color))
                 painter.drawText(label_zone, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, label)
 
     def _interval_label_zone(
-        self, key_rect: QRectF, key_height: float, label: str, metrics: QFontMetrics
+        self,
+        key_rect: QRectF,
+        key_height: float,
+        label: str,
+        metrics: QFontMetrics,
+        is_black_key: bool,
     ) -> QRectF:
         settings = self.interval_label_settings or {}
         zone_height = max(10.0, key_height * 0.25)
-        mode = settings.get("y_anchor_mode", "bottom25")
-        percent = float(settings.get("y_percent", 87.5))
+        default_mode_key = "y_anchor_mode_black" if is_black_key else "y_anchor_mode_white"
+        default_percent_key = "y_percent_black" if is_black_key else "y_percent_white"
+        mode = settings.get(default_mode_key, "bottom25")
+        percent = float(settings.get(default_percent_key, 87.5))
 
         text_width = max(0.0, metrics.horizontalAdvance(label))
         zone_width = max(key_rect.width(), text_width + 6)
@@ -659,7 +681,10 @@ class PianoWidget(QWidget):
         return QRectF(left, top, zone_width, zone_height)
 
     def _interval_pen_color(self, is_black_key: bool) -> QColor:
-        chosen = self.interval_label_settings.get("color", QColor(Qt.GlobalColor.black))
+        key = "color_black" if is_black_key else "color_white"
+        chosen = self.interval_label_settings.get(key)
+        if chosen is None:
+            chosen = QColor(Qt.GlobalColor.black if not is_black_key else Qt.GlobalColor.white)
         if isinstance(chosen, str):
             chosen = QColor(chosen)
         if not isinstance(chosen, QColor) or not chosen.isValid():
@@ -667,6 +692,34 @@ class PianoWidget(QWidget):
         if is_black_key and chosen.lightness() < 160:
             return QColor(Qt.GlobalColor.white)
         return chosen
+
+    def _draw_interval_frame(self, painter: QPainter, rect: QRectF):
+        settings = self.interval_label_settings or {}
+        fill = settings.get("frame_fill_color", QColor(255, 255, 255))
+        if isinstance(fill, str):
+            fill = QColor(fill)
+        if not isinstance(fill, QColor) or not fill.isValid():
+            fill = QColor(255, 255, 255)
+
+        opacity = float(settings.get("frame_fill_opacity", 0.6))
+        opacity = max(0.0, min(1.0, opacity))
+        fill = QColor(fill)
+        fill.setAlphaF(opacity)
+
+        border = settings.get("frame_border_color", QColor(0, 0, 0, 180))
+        if isinstance(border, str):
+            border = QColor(border)
+        if not isinstance(border, QColor) or not border.isValid():
+            border = QColor(0, 0, 0, 180)
+
+        width = float(settings.get("frame_border_width", 1.0))
+        width = max(0.0, width)
+
+        painter.save()
+        painter.setPen(QPen(border, width))
+        painter.setBrush(QBrush(fill))
+        painter.drawRoundedRect(rect.adjusted(0.5, 0.5, -0.5, -0.5), 3, 3)
+        painter.restore()
 
 
 class PianoWindow(QMainWindow):
@@ -1113,39 +1166,79 @@ class ControlWindow(QMainWindow):
         size_action = intervals_menu.addAction("Tamaño…")
         size_action.triggered.connect(self._choose_interval_size)
 
-        color_action = intervals_menu.addAction("Color…")
-        color_action.triggered.connect(self._choose_interval_color)
+        color_white_action = intervals_menu.addAction("Color teclas blancas…")
+        color_white_action.triggered.connect(lambda: self._choose_interval_color(False))
+
+        color_black_action = intervals_menu.addAction("Color teclas negras…")
+        color_black_action.triggered.connect(lambda: self._choose_interval_color(True))
 
         position_menu = intervals_menu.addMenu("Posición")
-        self.interval_position_group = QActionGroup(self)
-        self.interval_position_group.setExclusive(True)
-        self.interval_position_actions = {}
+        self.interval_position_group_white = QActionGroup(self)
+        self.interval_position_group_white.setExclusive(True)
+        self.interval_position_actions_white = {}
+        self.interval_position_group_black = QActionGroup(self)
+        self.interval_position_group_black.setExclusive(True)
+        self.interval_position_actions_black = {}
         for text, mode in (
             ("Arriba", "top"),
             ("Centro", "center"),
             ("Abajo", "bottom"),
             ("Abajo 25%", "bottom25"),
         ):
-            action = position_menu.addAction(text)
-            action.setCheckable(True)
-            action.setData(mode)
-            self.interval_position_group.addAction(action)
-            self.interval_position_actions[mode] = action
+            action_w = position_menu.addAction(f"{text} (blancas)")
+            action_w.setCheckable(True)
+            action_w.setData((mode, False))
+            self.interval_position_group_white.addAction(action_w)
+            self.interval_position_actions_white[mode] = action_w
 
-        custom_action = position_menu.addAction("Personalizado…")
+            action_b = position_menu.addAction(f"{text} (negras)")
+            action_b.setCheckable(True)
+            action_b.setData((mode, True))
+            self.interval_position_group_black.addAction(action_b)
+            self.interval_position_actions_black[mode] = action_b
+
+        custom_action = position_menu.addAction("Personalizado… (blancas)")
         custom_action.setCheckable(True)
-        custom_action.setData("custom")
-        self.interval_position_group.addAction(custom_action)
-        self.interval_position_actions["custom"] = custom_action
-        self.interval_position_group.triggered.connect(self._interval_position_selected)
+        custom_action.setData(("custom", False))
+        self.interval_position_group_white.addAction(custom_action)
+        self.interval_position_actions_white["custom"] = custom_action
+
+        custom_action_b = position_menu.addAction("Personalizado… (negras)")
+        custom_action_b.setCheckable(True)
+        custom_action_b.setData(("custom", True))
+        self.interval_position_group_black.addAction(custom_action_b)
+        self.interval_position_actions_black["custom"] = custom_action_b
+
+        self.interval_position_group_white.triggered.connect(self._interval_position_selected)
+        self.interval_position_group_black.triggered.connect(self._interval_position_selected)
+
+        frame_menu = intervals_menu.addMenu("Marco de etiquetas")
+        frame_fill_action = frame_menu.addAction("Color de relleno…")
+        frame_fill_action.triggered.connect(self._choose_interval_frame_fill)
+
+        frame_opacity_action = frame_menu.addAction("Opacidad del relleno…")
+        frame_opacity_action.triggered.connect(self._choose_interval_frame_opacity)
+
+        frame_border_color_action = frame_menu.addAction("Color del borde…")
+        frame_border_color_action.triggered.connect(self._choose_interval_frame_border_color)
+
+        frame_border_width_action = frame_menu.addAction("Grosor del borde…")
+        frame_border_width_action.triggered.connect(self._choose_interval_frame_border_width)
 
     def _default_interval_label_settings(self) -> Dict:
         return {
             "font_family": "",
             "font_size": 14,
-            "color": QColor(Qt.GlobalColor.black),
-            "y_anchor_mode": "bottom25",
-            "y_percent": 87.5,
+            "color_white": QColor(Qt.GlobalColor.black),
+            "color_black": QColor(Qt.GlobalColor.white),
+            "y_anchor_mode_white": "bottom25",
+            "y_percent_white": 87.5,
+            "y_anchor_mode_black": "center",
+            "y_percent_black": 60.0,
+            "frame_fill_color": QColor(255, 255, 255),
+            "frame_fill_opacity": 0.6,
+            "frame_border_color": QColor(0, 0, 0, 180),
+            "frame_border_width": 1.0,
         }
 
     def _load_interval_settings(self):
@@ -1158,17 +1251,66 @@ class ControlWindow(QMainWindow):
         if isinstance(font_size, (int, float)) and 6 <= int(font_size) <= 300:
             settings["font_size"] = int(font_size)
 
-        color_name = self.settings.value("intervals/color", "", type=str)
-        color = QColor(color_name)
-        if color.isValid():
-            settings["color"] = color
+        color_name_white = self.settings.value("intervals/color_white", "", type=str)
+        color_white = QColor(color_name_white)
+        if color_white.isValid():
+            settings["color_white"] = color_white
+        else:
+            legacy_color = self.settings.value("intervals/color", "", type=str)
+            legacy_qc = QColor(legacy_color)
+            if legacy_qc.isValid():
+                settings["color_white"] = legacy_qc
 
-        position_mode = self.settings.value("intervals/position_mode", "bottom25", type=str)
-        settings["y_anchor_mode"] = position_mode or "bottom25"
+        color_name_black = self.settings.value("intervals/color_black", "", type=str)
+        color_black = QColor(color_name_black)
+        if color_black.isValid():
+            settings["color_black"] = color_black
 
-        y_percent = self.settings.value("intervals/y_percent", settings["y_percent"], type=float)
+        position_mode_white = self.settings.value("intervals/position_mode_white", "bottom25", type=str)
+        settings["y_anchor_mode_white"] = position_mode_white or "bottom25"
+
+        position_mode_black = self.settings.value("intervals/position_mode_black", "center", type=str)
+        settings["y_anchor_mode_black"] = position_mode_black or "center"
+
+        y_percent_white = self.settings.value(
+            "intervals/y_percent_white", settings.get("y_percent_white", 87.5), type=float
+        )
         try:
-            settings["y_percent"] = float(y_percent)
+            settings["y_percent_white"] = float(y_percent_white)
+        except Exception:
+            pass
+
+        y_percent_black = self.settings.value(
+            "intervals/y_percent_black", settings.get("y_percent_black", 60.0), type=float
+        )
+        try:
+            settings["y_percent_black"] = float(y_percent_black)
+        except Exception:
+            pass
+
+        frame_fill = self.settings.value("intervals/frame_fill_color", "", type=str)
+        fill_color = QColor(frame_fill)
+        if fill_color.isValid():
+            settings["frame_fill_color"] = fill_color
+
+        fill_opacity = self.settings.value(
+            "intervals/frame_fill_opacity", settings.get("frame_fill_opacity", 0.6), type=float
+        )
+        try:
+            settings["frame_fill_opacity"] = float(fill_opacity)
+        except Exception:
+            pass
+
+        border_color_name = self.settings.value("intervals/frame_border_color", "", type=str)
+        border_color = QColor(border_color_name)
+        if border_color.isValid():
+            settings["frame_border_color"] = border_color
+
+        border_width = self.settings.value(
+            "intervals/frame_border_width", settings.get("frame_border_width", 1.0), type=float
+        )
+        try:
+            settings["frame_border_width"] = float(border_width)
         except Exception:
             pass
 
@@ -1177,29 +1319,78 @@ class ControlWindow(QMainWindow):
         self._sync_interval_position_actions()
 
     def _save_interval_settings(self):
-        color = self.interval_label_settings.get("color", QColor(Qt.GlobalColor.black))
-        if isinstance(color, str):
-            color = QColor(color)
-        color_name = color.name() if isinstance(color, QColor) and color.isValid() else "#000000"
-
         self.settings.setValue("intervals/font_family", self.interval_label_settings.get("font_family", ""))
         self.settings.setValue("intervals/font_size", int(self.interval_label_settings.get("font_size", 14)))
-        self.settings.setValue("intervals/color", color_name)
-        self.settings.setValue("intervals/position_mode", self.interval_label_settings.get("y_anchor_mode", "bottom25"))
-        self.settings.setValue("intervals/y_percent", float(self.interval_label_settings.get("y_percent", 87.5)))
+        color_white = self.interval_label_settings.get("color_white", QColor(Qt.GlobalColor.black))
+        if isinstance(color_white, str):
+            color_white = QColor(color_white)
+        color_white_name = (
+            color_white.name() if isinstance(color_white, QColor) and color_white.isValid() else "#000000"
+        )
+
+        color_black = self.interval_label_settings.get("color_black", QColor(Qt.GlobalColor.white))
+        if isinstance(color_black, str):
+            color_black = QColor(color_black)
+        color_black_name = (
+            color_black.name() if isinstance(color_black, QColor) and color_black.isValid() else "#ffffff"
+        )
+
+        self.settings.setValue("intervals/color_white", color_white_name)
+        self.settings.setValue("intervals/color_black", color_black_name)
+        self.settings.setValue(
+            "intervals/position_mode_white", self.interval_label_settings.get("y_anchor_mode_white", "bottom25")
+        )
+        self.settings.setValue(
+            "intervals/position_mode_black", self.interval_label_settings.get("y_anchor_mode_black", "center")
+        )
+        self.settings.setValue(
+            "intervals/y_percent_white", float(self.interval_label_settings.get("y_percent_white", 87.5))
+        )
+        self.settings.setValue(
+            "intervals/y_percent_black", float(self.interval_label_settings.get("y_percent_black", 60.0))
+        )
+
+        frame_fill = self.interval_label_settings.get("frame_fill_color", QColor(255, 255, 255))
+        if isinstance(frame_fill, str):
+            frame_fill = QColor(frame_fill)
+        frame_fill_name = (
+            frame_fill.name() if isinstance(frame_fill, QColor) and frame_fill.isValid() else "#ffffff"
+        )
+        self.settings.setValue("intervals/frame_fill_color", frame_fill_name)
+
+        frame_opacity = float(self.interval_label_settings.get("frame_fill_opacity", 0.6))
+        self.settings.setValue("intervals/frame_fill_opacity", frame_opacity)
+
+        border_color = self.interval_label_settings.get("frame_border_color", QColor(0, 0, 0, 180))
+        if isinstance(border_color, str):
+            border_color = QColor(border_color)
+        border_color_name = (
+            border_color.name()
+            if isinstance(border_color, QColor) and border_color.isValid()
+            else "#000000"
+        )
+        self.settings.setValue("intervals/frame_border_color", border_color_name)
+
+        border_width = float(self.interval_label_settings.get("frame_border_width", 1.0))
+        self.settings.setValue("intervals/frame_border_width", border_width)
         self.settings.sync()
 
     def _apply_interval_settings_to_piano(self):
         self.piano.set_interval_label_style(dict(self.interval_label_settings))
 
     def _sync_interval_position_actions(self):
-        mode = self.interval_label_settings.get("y_anchor_mode", "bottom25")
-        actions = getattr(self, "interval_position_actions", {})
-        if not actions:
-            return
-        for key, action in actions.items():
+        mode_white = self.interval_label_settings.get("y_anchor_mode_white", "bottom25")
+        actions_white = getattr(self, "interval_position_actions_white", {})
+        for key, action in actions_white.items():
             action.blockSignals(True)
-            action.setChecked(key == mode)
+            action.setChecked(key == mode_white)
+            action.blockSignals(False)
+
+        mode_black = self.interval_label_settings.get("y_anchor_mode_black", "center")
+        actions_black = getattr(self, "interval_position_actions_black", {})
+        for key, action in actions_black.items():
+            action.blockSignals(True)
+            action.setChecked(key == mode_black)
             action.blockSignals(False)
 
     def _choose_interval_font(self):
@@ -1230,22 +1421,88 @@ class ControlWindow(QMainWindow):
         self._apply_interval_settings_to_piano()
         self._save_interval_settings()
 
-    def _choose_interval_color(self):
-        current_color = self.interval_label_settings.get("color", QColor(Qt.GlobalColor.black))
+    def _choose_interval_color(self, is_black: bool):
+        key = "color_black" if is_black else "color_white"
+        title = "Color intervalos en teclas negras" if is_black else "Color intervalos en teclas blancas"
+        current_color = self.interval_label_settings.get(
+            key, QColor(Qt.GlobalColor.white if is_black else Qt.GlobalColor.black)
+        )
         if isinstance(current_color, str):
             current_color = QColor(current_color)
-        color = QColorDialog.getColor(current_color, self, "Color de intervalos")
+        color = QColorDialog.getColor(current_color, self, title)
         if not color.isValid():
             self._sync_interval_position_actions()
             return
-        self.interval_label_settings["color"] = color
+        self.interval_label_settings[key] = color
+        self._apply_interval_settings_to_piano()
+        self._save_interval_settings()
+
+    def _choose_interval_frame_fill(self):
+        current_fill = self.interval_label_settings.get("frame_fill_color", QColor(255, 255, 255))
+        if isinstance(current_fill, str):
+            current_fill = QColor(current_fill)
+        color = QColorDialog.getColor(current_fill, self, "Color de relleno de etiqueta")
+        if not color.isValid():
+            self._sync_interval_position_actions()
+            return
+        self.interval_label_settings["frame_fill_color"] = color
+        self._apply_interval_settings_to_piano()
+        self._save_interval_settings()
+
+    def _choose_interval_frame_opacity(self):
+        current_opacity = float(self.interval_label_settings.get("frame_fill_opacity", 0.6))
+        opacity, ok = QInputDialog.getDouble(
+            self,
+            "Opacidad de relleno",
+            "Valor entre 0 (transparente) y 1 (opaco):",
+            current_opacity,
+            0.0,
+            1.0,
+            2,
+        )
+        if not ok:
+            self._sync_interval_position_actions()
+            return
+        self.interval_label_settings["frame_fill_opacity"] = opacity
+        self._apply_interval_settings_to_piano()
+        self._save_interval_settings()
+
+    def _choose_interval_frame_border_color(self):
+        current_color = self.interval_label_settings.get("frame_border_color", QColor(0, 0, 0, 180))
+        if isinstance(current_color, str):
+            current_color = QColor(current_color)
+        color = QColorDialog.getColor(current_color, self, "Color del borde de etiqueta")
+        if not color.isValid():
+            self._sync_interval_position_actions()
+            return
+        self.interval_label_settings["frame_border_color"] = color
+        self._apply_interval_settings_to_piano()
+        self._save_interval_settings()
+
+    def _choose_interval_frame_border_width(self):
+        current_width = float(self.interval_label_settings.get("frame_border_width", 1.0))
+        width, ok = QInputDialog.getDouble(
+            self,
+            "Grosor del borde",
+            "Espesor en píxeles:",
+            current_width,
+            0.0,
+            10.0,
+            1,
+        )
+        if not ok:
+            self._sync_interval_position_actions()
+            return
+        self.interval_label_settings["frame_border_width"] = width
         self._apply_interval_settings_to_piano()
         self._save_interval_settings()
 
     def _interval_position_selected(self, action):
-        mode = action.data()
+        mode, is_black = action.data()
+        anchor_key = "y_anchor_mode_black" if is_black else "y_anchor_mode_white"
+        percent_key = "y_percent_black" if is_black else "y_percent_white"
         if mode == "custom":
-            current_percent = int(self.interval_label_settings.get("y_percent", 87.5))
+            current_percent = int(self.interval_label_settings.get(percent_key, 87.5))
             percent, ok = QInputDialog.getInt(
                 self,
                 "Posición personalizada",
@@ -1257,12 +1514,12 @@ class ControlWindow(QMainWindow):
             if not ok:
                 self._sync_interval_position_actions()
                 return
-            self.interval_label_settings["y_anchor_mode"] = "custom"
-            self.interval_label_settings["y_percent"] = percent
+            self.interval_label_settings[anchor_key] = "custom"
+            self.interval_label_settings[percent_key] = percent
         else:
-            self.interval_label_settings["y_anchor_mode"] = mode
+            self.interval_label_settings[anchor_key] = mode
             if mode == "bottom25":
-                self.interval_label_settings["y_percent"] = 87.5
+                self.interval_label_settings[percent_key] = 87.5
         self._apply_interval_settings_to_piano()
         self._save_interval_settings()
         self._sync_interval_position_actions()
