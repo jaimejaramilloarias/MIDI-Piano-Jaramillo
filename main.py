@@ -36,6 +36,21 @@ MAX_NOTE = 108  # C8
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
 
+INTERVAL_LABELS = {
+    0: "f",
+    1: "2m",
+    2: "2M",
+    3: "+2/3m",
+    4: "3M",
+    5: "4j",
+    6: "4+/5b",
+    7: "5j",
+    8: "5+/b6",
+    9: "6",
+    10: "b6/7m",
+    11: "7M",
+}
+
 BASE_CHORD_PATTERNS = [
     {'nombre':'', 'obligatorias':[0,4,7], 'opcionales':[]},
     {'nombre':'m', 'obligatorias':[0,3,7], 'opcionales':[]},
@@ -240,7 +255,12 @@ def analizar_cifrado_alternativos(notas):
         if len(alternativos) >= 4:
             break
 
-    return {"principal": principal, "alternativos": alternativos}
+    return {
+        "principal": principal,
+        "alternativos": alternativos,
+        "principal_match": principal_match,
+        "bass_pc": bass_pc,
+    }
 
 
 
@@ -279,6 +299,7 @@ class PianoWidget(QWidget):
         self.pressed_notes: Set[int] = set()
         self.sustained_notes: Set[int] = set()
         self.sustain_opacity: float = 0.4  # 0.0–1.0
+        self.interval_labels: Dict[int, str] = {}
 
         # Proporción alto/ancho de una tecla blanca (alto = ancho * aspect)
         self.key_aspect_ratio = 4.5
@@ -348,6 +369,10 @@ class PianoWidget(QWidget):
 
     def clear_sustained(self):
         self.sustained_notes.clear()
+        self.update()
+
+    def set_interval_labels(self, labels: Dict[int, str]):
+        self.interval_labels = labels
         self.update()
 
     def set_base_color_name(self, name: str):
@@ -546,6 +571,36 @@ class PianoWidget(QWidget):
             painter.setPen(QPen(Qt.GlobalColor.black))
             painter.drawRect(key_rect)
 
+        # Etiquetas de intervalos para notas activas
+        if self.interval_labels:
+            label_font = QFont()
+            label_font.setPointSize(10)
+            painter.setFont(label_font)
+
+            # Teclas blancas
+            for n in white_notes:
+                label = self.interval_labels.get(n)
+                if not label:
+                    continue
+                idx = note_to_white_index[n]
+                x = x_offset + idx * key_width
+                key_rect = QRectF(x, y_offset, key_width, key_height)
+                painter.setPen(QPen(Qt.GlobalColor.black))
+                painter.drawText(key_rect.adjusted(0, 6, 0, -black_height * 0.3), Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignTop, label)
+
+            # Teclas negras
+            for n in range(self.start_note, self.end_note + 1):
+                if is_white(n):
+                    continue
+                label = self.interval_labels.get(n)
+                if not label:
+                    continue
+                idx = note_to_white_index[n]
+                x = x_offset + idx * key_width + key_width - black_width / 2
+                key_rect = QRectF(x, y_offset, black_width, black_height)
+                painter.setPen(QPen(Qt.GlobalColor.white))
+                painter.drawText(key_rect, Qt.AlignmentFlag.AlignCenter, label)
+
 
 class PianoWindow(QMainWindow):
     """Ventana que SOLO muestra el teclado, sin bordes ni barra de título."""
@@ -672,7 +727,7 @@ class ChordWindow(QMainWindow):
         if not principal:
             self.main_label.setText("")
             self.alt_label.setText("")
-            return
+            return info
 
         self.main_label.setText(principal)
 
@@ -681,6 +736,8 @@ class ChordWindow(QMainWindow):
             self.alt_label.setText("  ·  ".join(alternativos))
         else:
             self.alt_label.setText("")
+
+        return info
 
 class ControlWindow(QMainWindow):
     """
@@ -888,32 +945,36 @@ class ControlWindow(QMainWindow):
     # --- menú de ventanas ---
 
     def _setup_window_menu(self):
-        menu = self.menuBar().addMenu("Ventana")
+        window_menu = self.menuBar().addMenu("Ventana")
 
-        self.controls_action = menu.addAction("Ocultar Controles")
+        self.controls_action = window_menu.addAction("Ocultar Controles")
         self.controls_action.setCheckable(True)
         self.controls_action.setChecked(True)
         self.controls_action.triggered.connect(
             lambda checked: self._toggle_window_visibility(self, checked)
         )
 
-        self.keyboard_action = menu.addAction("Ocultar Teclado")
+        self.keyboard_action = window_menu.addAction("Ocultar Teclado")
         self.keyboard_action.setCheckable(True)
         self.keyboard_action.setChecked(True)
         self.keyboard_action.triggered.connect(
             lambda checked: self._toggle_window_visibility(self.piano_window, checked)
         )
 
-        self.chord_action = menu.addAction("Ocultar Acordes")
+        self.chord_action = window_menu.addAction("Ocultar Acordes")
         self.chord_action.setCheckable(True)
         self.chord_action.setChecked(True)
         self.chord_action.triggered.connect(
             lambda checked: self._toggle_window_visibility(self.chord_window, checked)
         )
 
-        menu.addSeparator()
-        show_all = menu.addAction("Mostrar todas")
+        window_menu.addSeparator()
+        show_all = window_menu.addAction("Mostrar todas")
         show_all.triggered.connect(self.show_all_windows)
+
+        dictionary_menu = self.menuBar().addMenu("Diccionario")
+        load_dict = dictionary_menu.addAction("Cargar diccionario…")
+        load_dict.triggered.connect(self.load_chord_dictionary_from_dialog)
 
         for win in (self, self.piano_window, self.chord_window):
             win.installEventFilter(self)
@@ -1069,18 +1130,22 @@ class ControlWindow(QMainWindow):
             self._remember_additional_base(name, oblig_norm, opc_norm)
         return pattern
 
-    def _import_dictionary_from_path(self, path: Path, record_extra: bool = False):
+    def _import_dictionary_from_path(
+        self, path: Path, record_extra: bool = False, allow_overwrite: bool = False
+    ) -> int:
         if not path.exists():
-            return
+            return 0
         try:
             data = json.loads(path.read_text(encoding="utf-8"))
         except Exception as e:
             print(f"No se pudo leer {path}: {e}")
-            return
+            return 0
 
         chords = data.get("chords") if isinstance(data, dict) else None
         if not isinstance(chords, list):
-            return
+            return 0
+
+        added = 0
 
         for chord in chords:
             if not isinstance(chord, dict):
@@ -1091,16 +1156,20 @@ class ControlWindow(QMainWindow):
             try:
                 if not oblig:
                     continue
-                self._add_base_chord(
+                pattern = self._add_base_chord(
                     name,
                     [int(ivl) for ivl in oblig],
                     [int(ivl) for ivl in opc],
                     source=str(path),
-                    allow_overwrite=False,
+                    allow_overwrite=allow_overwrite,
                     record_extra=record_extra,
                 )
+                if pattern is not None:
+                    added += 1
             except Exception:
                 continue
+
+        return added
 
     def _load_external_chord_dictionary(self):
         project_dict = Path(__file__).resolve().parent / "diccionario_acordes.json"
@@ -1226,6 +1295,28 @@ class ControlWindow(QMainWindow):
                 "Exportación lista",
                 f"Diccionario exportado en:\n{file_path}",
             )
+
+    def load_chord_dictionary_from_dialog(self):
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Cargar diccionario de acordes",
+            str(Path.home()),
+            "JSON (*.json)",
+        )
+        if not file_path:
+            return
+
+        added = self._import_dictionary_from_path(
+            Path(file_path), record_extra=True, allow_overwrite=True
+        )
+        QMessageBox.information(
+            self,
+            "Diccionario cargado",
+            (
+                "El diccionario se cargó en memoria.\n\n"
+                f"Acordes agregados o actualizados: {added}."
+            ),
+        )
 
     def load_preferences(self):
         if not self.CONFIG_PATH.exists():
@@ -1676,6 +1767,36 @@ class ControlWindow(QMainWindow):
         self._refresh_learned_chords_ui()
         self._write_preferences(False)
 
+    def _update_interval_labels(self, notas: Set[int], chord_info: Optional[Dict]):
+        if not notas:
+            self.piano.set_interval_labels({})
+            return
+
+        principal_match = chord_info.get("principal_match") if chord_info else None
+        if not principal_match:
+            self.piano.set_interval_labels({})
+            return
+
+        root_pc = principal_match.get("root")
+        if root_pc is None:
+            self.piano.set_interval_labels({})
+            return
+
+        root_candidates = sorted(n for n in notas if n % 12 == root_pc)
+        if not root_candidates:
+            self.piano.set_interval_labels({})
+            return
+
+        root_note = root_candidates[0]
+        labels: Dict[int, str] = {}
+        for note in notas:
+            interval = (note - root_note) % 12
+            label = INTERVAL_LABELS.get(interval)
+            if label:
+                labels[note] = label
+
+        self.piano.set_interval_labels(labels)
+
     def start_learning_mode(self):
         if self.learning_chord:
             self._reset_learning_state()
@@ -1806,7 +1927,8 @@ class ControlWindow(QMainWindow):
                     changed = True
             if changed:
                 notas_para_acorde = set(self.active_notes) | set(self.sustained_notes)
-                self.chord_window.update_chord(notas_para_acorde)
+                chord_info = self.chord_window.update_chord(notas_para_acorde)
+                self._update_interval_labels(notas_para_acorde, chord_info)
                 if self.learning_chord:
                     if self.learning_waiting_first_note and new_note_on and notas_para_acorde:
                         self._begin_capture_window(notas_para_acorde)
