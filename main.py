@@ -893,6 +893,110 @@ class StaffWidget(QWidget):
         reference = 4 * 7  # C4
         return step - reference
 
+    # --- Layout helpers -------------------------------------------------
+    def computeLayout(self, rect: QRect) -> Dict[str, float]:
+        """Calcula márgenes, anchos y posiciones básicas a partir del rectángulo."""
+
+        staff_spacing = max(8.0, min(18.0, rect.height() / 18.0))
+        margin = staff_spacing * 1.2
+        label_width = staff_spacing * 3.0
+        clef_width = staff_spacing * 2.6
+
+        available_width = max(rect.width() - 2 * margin - label_width - clef_width, staff_spacing * 8)
+        staff_width = available_width * 0.6
+
+        line_x_start = margin + label_width + clef_width
+        line_x_end = line_x_start + staff_width
+
+        center_y = rect.center().y()
+
+        return {
+            "staffSpacing": staff_spacing,
+            "margin": margin,
+            "labelWidth": label_width,
+            "clefWidth": clef_width,
+            "staffWidth": staff_width,
+            "lineStart": line_x_start,
+            "lineEnd": line_x_end,
+            "centerY": center_y,
+        }
+
+    def computeNoteXOffsetsForCollisions(self, notes: List[int], note_head_width: float) -> Dict[int, float]:
+        """Desplazamientos en X para segundas que colisionan (intervalo de 1 paso)."""
+
+        offsets: Dict[int, float] = {n: 0.0 for n in notes}
+        if not notes:
+            return offsets
+
+        note_steps = [(n, self._relative_step(n)) for n in notes]
+        note_steps.sort(key=lambda pair: pair[1])  # grave → aguda
+
+        for (note_a, step_a), (note_b, step_b) in zip(note_steps, note_steps[1:]):
+            if abs(step_a - step_b) == 1:
+                offsets[note_b] = note_head_width * 0.6
+
+        return offsets
+
+    # --- Dibujo modular -------------------------------------------------
+    def drawStaff(self, painter: QPainter, y_top: float, staff_spacing: float, x_start: float, x_end: float):
+        """Dibuja un pentagrama de 5 líneas desde y_top (de arriba a abajo)."""
+
+        for i in range(5):
+            y = y_top + i * staff_spacing
+            painter.drawLine(x_start, y, x_end, y)
+
+    def drawClef(self, painter: QPainter, clef_type: str, staff_top_y: float, staff_spacing: float, x: float):
+        """Dibuja la clave indicada, escalada al espaciado del pentagrama."""
+
+        font_size = staff_spacing * 3.2
+        clef_font = QFont("Times New Roman", int(font_size))
+        clef_font.setBold(True)
+        painter.setFont(clef_font)
+
+        if clef_type == "treble":
+            line_index = 3  # Segunda línea desde abajo
+            symbol = "𝄞"
+            y = staff_top_y + line_index * staff_spacing
+        else:
+            line_index = 1  # Línea F3 rodeada por los puntos
+            symbol = "𝄢"
+            y = staff_top_y + line_index * staff_spacing
+
+        rect = QRectF(
+            x,
+            y - staff_spacing * 2,
+            staff_spacing * 2.6,
+            staff_spacing * 4,
+        )
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, symbol)
+
+    def drawNoteHead(self, painter: QPainter, center_x: float, center_y: float, staff_spacing: float):
+        """Dibuja una cabeza de nota ovalada inclinada hacia la izquierda."""
+
+        width = staff_spacing * 1.2
+        height = staff_spacing * 0.85
+
+        painter.save()
+        painter.translate(center_x, center_y)
+        painter.rotate(-20)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawEllipse(QRectF(-width / 2, -height / 2, width, height))
+        painter.restore()
+
+    def drawAccidental(self, painter: QPainter, accidental: str, note_x: float, note_y: float, staff_spacing: float):
+        """Dibuja una alteración a la izquierda de la cabeza de nota."""
+
+        font = QFont("Times New Roman", int(staff_spacing * 1.4))
+        painter.setFont(font)
+        accidental_x = note_x - staff_spacing * 1.2
+        rect = QRectF(
+            accidental_x,
+            note_y - staff_spacing * 0.9,
+            staff_spacing * 1.4,
+            staff_spacing * 1.8,
+        )
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, accidental)
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
@@ -900,101 +1004,67 @@ class StaffWidget(QWidget):
         rect = self.rect()
         painter.fillRect(rect, QBrush(QColor(Qt.GlobalColor.white)))
 
-        # --- dibujo del pentagrama (dos sistemas de 5 líneas) ---
-        line_spacing = max(10.0, min(20.0, rect.height() / 12.0))
-        step_height = line_spacing / 2.0
-        center_y = rect.center().y()
-
-        left_padding = line_spacing
-        label_column_width = line_spacing * 3.2
-        clef_width = line_spacing * 2.6
-        right_margin = line_spacing
-
-        line_x_start = left_padding + label_column_width + clef_width
-        line_x_end = rect.width() - right_margin
+        layout = self.computeLayout(rect)
+        staff_spacing = layout["staffSpacing"]
+        step_height = staff_spacing / 2.0
+        center_y = layout["centerY"]
 
         pen = QPen(QColor(40, 40, 40))
-        pen.setWidthF(1.4)
+        pen.setWidthF(max(1.2, staff_spacing * 0.12))
         painter.setPen(pen)
 
-        bass_lines = [-10, -8, -6, -4, -2]
-        treble_lines = [2, 4, 6, 8, 10]
-        for rel_step in bass_lines + treble_lines:
-            y = center_y - rel_step * step_height
-            painter.drawLine(line_x_start, y, line_x_end, y)
+        treble_top = center_y - 10 * step_height
+        bass_top = center_y + 2 * step_height
 
-        # Claves correctamente posicionadas y escaladas respecto al pentagrama
-        clef_font = QFont("Times New Roman", int(line_spacing * 3.2))
-        clef_font.setBold(True)
-        painter.setFont(clef_font)
+        self.drawStaff(painter, treble_top, staff_spacing, layout["lineStart"], layout["lineEnd"])
+        self.drawStaff(painter, bass_top, staff_spacing, layout["lineStart"], layout["lineEnd"])
 
-        treble_y = center_y - 4 * step_height  # Segunda línea (G4)
-        bass_y = center_y + 4 * step_height    # Cuarta línea (F3)
+        self.drawClef(painter, "treble", treble_top, staff_spacing, layout["margin"] + layout["labelWidth"])
+        self.drawClef(painter, "bass", bass_top, staff_spacing, layout["margin"] + layout["labelWidth"])
 
-        treble_rect = QRectF(
-            left_padding + label_column_width,
-            treble_y - line_spacing * 2,
-            clef_width,
-            line_spacing * 4,
-        )
-        bass_rect = QRectF(
-            left_padding + label_column_width,
-            bass_y - line_spacing * 2,
-            clef_width,
-            line_spacing * 4,
-        )
-        painter.drawText(treble_rect, Qt.AlignmentFlag.AlignCenter, "𝄞")
-        painter.drawText(bass_rect, Qt.AlignmentFlag.AlignCenter, "𝄢")
+        note_x_base = layout["lineStart"] + staff_spacing * 1.6
+        note_head_width = staff_spacing * 1.2
+        ledger_length = note_head_width * 1.4
 
-        # Configuración general de notas (sin plicas, cabezas abiertas)
-        note_font = QFont("Arial", 10)
-        painter.setFont(note_font)
-        note_x = line_x_start + line_spacing * 1.6
-        head_width = line_spacing * 1.4
-        head_height = head_width * 0.75
-        ledger_length = head_width * 1.4
+        offsets = self.computeNoteXOffsetsForCollisions(sorted(self.notes), note_head_width)
 
-        # --- cálculo de posición Y de cada nota y líneas adicionales ---
         for note in sorted(self.notes):
             rel_step = self._relative_step(note)
             y = center_y - rel_step * step_height
 
             ledger_steps: List[int] = []
-            if rel_step > max(treble_lines):
-                ledger_steps = list(range(max(treble_lines) + 2, rel_step + 1, 2))
-            elif rel_step < min(bass_lines):
-                ledger_steps = list(range(min(bass_lines) - 2, rel_step - 1, -2))
+            if rel_step > 10:
+                ledger_steps = list(range(12, rel_step + 1, 2))
+            elif rel_step < -10:
+                ledger_steps = list(range(-12, rel_step - 1, -2))
             elif -2 < rel_step < 2 and rel_step % 2 == 0:
-                # Línea adicional para Do central únicamente cuando la nota es C4
                 ledger_steps = [0]
 
-            # --- dibujo de ledger lines (líneas adicionales) ---
             for ls in ledger_steps:
                 ly = center_y - ls * step_height
                 painter.drawLine(
-                    note_x - ledger_length / 2,
+                    note_x_base - ledger_length / 2 + offsets.get(note, 0.0),
                     ly,
-                    note_x + ledger_length / 2,
+                    note_x_base + ledger_length / 2 + offsets.get(note, 0.0),
                     ly,
                 )
 
-            # --- dibujo de la cabeza de nota abierta ---
-            head_rect = QRectF(
-                note_x - head_width / 2,
-                y - head_height / 2,
-                head_width,
-                head_height,
-            )
-            painter.setBrush(Qt.BrushStyle.NoBrush)
-            painter.drawEllipse(head_rect)
+            note_x = note_x_base + offsets.get(note, 0.0)
+            self.drawNoteHead(painter, note_x, y, staff_spacing)
 
-            # --- etiqueta de nota antes de las claves ---
+            accidental = ""
+            if note % 12 in (1, 3, 6, 8, 10):
+                accidental = "#"
+            if accidental:
+                self.drawAccidental(painter, accidental, note_x, y, staff_spacing)
+
+            painter.setFont(QFont("Arial", int(staff_spacing * 1.1)))
             painter.drawText(
                 QRectF(
-                    left_padding,
-                    y - line_spacing * 0.6,
-                    label_column_width - line_spacing * 0.2,
-                    line_spacing * 1.2,
+                    layout["margin"],
+                    y - staff_spacing * 0.6,
+                    layout["labelWidth"] - staff_spacing * 0.2,
+                    staff_spacing * 1.2,
                 ),
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 midi_to_name(note),
@@ -1006,10 +1076,6 @@ class StaffWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
-
-        flags = self.windowFlags()
-        flags |= Qt.WindowType.FramelessWindowHint
-        self.setWindowFlags(flags)
 
         self.setWindowTitle("MIDI Piano — Partitura")
         self._drag_offset: Optional[QPoint] = None
