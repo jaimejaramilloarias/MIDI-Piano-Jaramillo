@@ -857,6 +857,152 @@ class ChordWindow(QMainWindow):
 
         return info
 
+
+class StaffWidget(QWidget):
+    """Dibuja un endecagrama de piano con notas en tiempo real."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.notes: Set[int] = set()
+        self.setMinimumSize(520, 240)
+
+    def set_notes(self, notes: Set[int]):
+        self.notes = {n for n in notes if MIN_NOTE <= n <= MAX_NOTE}
+        self.update()
+
+    def _relative_step(self, note: int) -> int:
+        """Posición relativa (en pasos de línea/espacio) respecto a C4."""
+
+        pc_step = {
+            0: 0,  # C
+            1: 0,  # C#
+            2: 1,  # D
+            3: 1,  # D#
+            4: 2,  # E
+            5: 3,  # F
+            6: 3,  # F#
+            7: 4,  # G
+            8: 4,  # G#
+            9: 5,  # A
+            10: 5,  # A#
+            11: 6,  # B
+        }
+
+        octave = note_octave(note)
+        step = octave * 7 + pc_step.get(note % 12, 0)
+        reference = 4 * 7  # C4
+        return step - reference
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        rect = self.rect()
+        painter.fillRect(rect, QBrush(QColor(Qt.GlobalColor.white)))
+
+        left_margin = 90
+        right_margin = 16
+        line_x_start = left_margin
+        line_x_end = rect.width() - right_margin
+
+        line_spacing = 14.0
+        step_height = line_spacing / 2.0
+        center_y = rect.center().y()
+
+        pen = QPen(QColor(40, 40, 40))
+        pen.setWidthF(1.4)
+        painter.setPen(pen)
+
+        for rel_step in range(-10, 11, 2):
+            y = center_y - rel_step * step_height
+            painter.drawLine(line_x_start, y, line_x_end, y)
+
+        clef_font = QFont("Times New Roman", 48)
+        clef_font.setBold(True)
+        painter.setFont(clef_font)
+
+        treble_rect = QRectF(left_margin - 70, center_y - line_spacing * 5 - 20, 60, 80)
+        bass_rect = QRectF(left_margin - 70, center_y + line_spacing - 20, 60, 80)
+        painter.drawText(treble_rect, Qt.AlignmentFlag.AlignCenter, "𝄞")
+        painter.drawText(bass_rect, Qt.AlignmentFlag.AlignCenter, "𝄢")
+
+        note_font = QFont("Arial", 10)
+        painter.setFont(note_font)
+
+        note_x_start = line_x_start + 50
+        note_spacing = 28
+
+        for idx, note in enumerate(sorted(self.notes)):
+            rel_step = self._relative_step(note)
+            y = center_y - rel_step * step_height
+            x = note_x_start + idx * note_spacing
+
+            ledger_steps = []
+            if rel_step > 10:
+                ledger_steps = list(range(12, rel_step + 1, 2))
+            elif rel_step < -10:
+                ledger_steps = list(range(-12, rel_step - 1, -2))
+
+            for ls in ledger_steps:
+                ly = center_y - ls * step_height
+                painter.drawLine(x - 10, ly, x + 10, ly)
+
+            head_rect = QRectF(x - 8, y - 6, 16, 12)
+            painter.setBrush(QBrush(QColor(20, 20, 20)))
+            painter.drawEllipse(head_rect)
+
+            painter.drawText(
+                QRectF(left_margin - 80, y - 8, 70, 16),
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                midi_to_name(note),
+            )
+
+            stem_height = 28
+            stem_x = x + 7
+            if rel_step >= 0:
+                painter.drawLine(stem_x, y - 1, stem_x, y - stem_height)
+            else:
+                painter.drawLine(x - 7, y + 1, x - 7, y + stem_height)
+
+
+class StaffWindow(QMainWindow):
+    """Ventana flotante con notación de endecagrama."""
+
+    def __init__(self):
+        super().__init__()
+
+        flags = self.windowFlags()
+        flags |= Qt.WindowType.FramelessWindowHint
+        self.setWindowFlags(flags)
+
+        self.setWindowTitle("MIDI Piano — Partitura")
+        self._drag_offset: Optional[QPoint] = None
+
+        self.widget = StaffWidget()
+        self.setCentralWidget(self.widget)
+        self.resize(760, 320)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_offset is not None and (event.buttons() & Qt.MouseButton.LeftButton):
+            self.move(event.globalPosition().toPoint() - self._drag_offset)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_offset = None
+        super().mouseReleaseEvent(event)
+
+    def set_notes(self, notes: Set[int]):
+        self.widget.set_notes(notes)
+
 class ControlWindow(QMainWindow):
     """
     Ventana de controles:
@@ -870,7 +1016,7 @@ class ControlWindow(QMainWindow):
 
     CONFIG_PATH = Path.home() / ".midi_piano_prefs.json"
 
-    def __init__(self, piano_window: PianoWindow, chord_window: ChordWindow):
+    def __init__(self, piano_window: PianoWindow, chord_window: ChordWindow, staff_window: StaffWindow):
         super().__init__()
         self.setWindowTitle("MIDI Piano - Controles")
 
@@ -879,6 +1025,7 @@ class ControlWindow(QMainWindow):
         self.piano_window = piano_window
         self.piano = piano_window.piano
         self.chord_window = chord_window
+        self.staff_window = staff_window
         self.active_notes: Set[int] = set()
         self.sustained_notes: Set[int] = set()
         self.sustain_on: bool = False
@@ -1090,6 +1237,13 @@ class ControlWindow(QMainWindow):
             lambda checked: self._toggle_window_visibility(self.chord_window, checked)
         )
 
+        self.staff_action = window_menu.addAction("Ocultar Partitura")
+        self.staff_action.setCheckable(True)
+        self.staff_action.setChecked(True)
+        self.staff_action.triggered.connect(
+            lambda checked: self._toggle_window_visibility(self.staff_window, checked)
+        )
+
         window_menu.addSeparator()
         show_all = window_menu.addAction("Mostrar todas")
         show_all.triggered.connect(self.show_all_windows)
@@ -1100,7 +1254,7 @@ class ControlWindow(QMainWindow):
 
         self._setup_interval_menu()
 
-        for win in (self, self.piano_window, self.chord_window):
+        for win in (self, self.piano_window, self.chord_window, self.staff_window):
             win.installEventFilter(self)
 
         QTimer.singleShot(0, self._update_window_actions)
@@ -1124,7 +1278,7 @@ class ControlWindow(QMainWindow):
         self._update_window_actions()
 
     def show_all_windows(self):
-        for win in (self, self.piano_window, self.chord_window):
+        for win in (self, self.piano_window, self.chord_window, self.staff_window):
             self._bring_to_front(win)
         self._update_window_actions()
 
@@ -1132,6 +1286,7 @@ class ControlWindow(QMainWindow):
         controls_visible = self._window_is_visible(self)
         keyboard_visible = self._window_is_visible(self.piano_window)
         chords_visible = self._window_is_visible(self.chord_window)
+        staff_visible = self._window_is_visible(self.staff_window)
 
         self.controls_action.blockSignals(True)
         self.controls_action.setChecked(controls_visible)
@@ -1153,6 +1308,13 @@ class ControlWindow(QMainWindow):
             "Ocultar Acordes" if chords_visible else "Mostrar Acordes"
         )
         self.chord_action.blockSignals(False)
+
+        self.staff_action.blockSignals(True)
+        self.staff_action.setChecked(staff_visible)
+        self.staff_action.setText(
+            "Ocultar Partitura" if staff_visible else "Mostrar Partitura"
+        )
+        self.staff_action.blockSignals(False)
 
     def _setup_interval_menu(self):
         view_menu = self.menuBar().addMenu("Ver")
@@ -1725,6 +1887,7 @@ class ControlWindow(QMainWindow):
                 "controls": self._geometry_payload_for(self),
                 "keyboard": self._geometry_payload_for(self.piano_window),
                 "chords": self._geometry_payload_for(self.chord_window),
+                "staff": self._geometry_payload_for(self.staff_window),
             },
         }
 
@@ -1961,6 +2124,7 @@ class ControlWindow(QMainWindow):
         self._apply_geometry_if_valid(self, rect_from_payload(geoms.get("controls")))
         self._apply_geometry_if_valid(self.piano_window, rect_from_payload(geoms.get("keyboard")))
         self._apply_geometry_if_valid(self.chord_window, rect_from_payload(geoms.get("chords")))
+        self._apply_geometry_if_valid(self.staff_window, rect_from_payload(geoms.get("staff")))
 
     def _apply_geometry_if_valid(self, window: QMainWindow, rect: Optional[QRect]):
         if rect is None:
@@ -2424,6 +2588,7 @@ class ControlWindow(QMainWindow):
             if changed:
                 notas_para_acorde = set(self.active_notes) | set(self.sustained_notes)
                 chord_info = self.chord_window.update_chord(notas_para_acorde)
+                self.staff_window.set_notes(notas_para_acorde)
                 self._update_interval_labels(notas_para_acorde, chord_info)
                 if self.learning_chord:
                     if self.learning_waiting_first_note and new_note_on and notas_para_acorde:
@@ -2442,11 +2607,13 @@ def main():
 
     piano_window = PianoWindow()
     chord_window = ChordWindow()
-    control_window = ControlWindow(piano_window, chord_window)
+    staff_window = StaffWindow()
+    control_window = ControlWindow(piano_window, chord_window, staff_window)
 
     piano_window.show()
     control_window.show()
     chord_window.show()
+    staff_window.show()
 
     sys.exit(app.exec())
 
