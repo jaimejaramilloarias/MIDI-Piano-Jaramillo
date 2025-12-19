@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, QPoint, QEvent, QSettings
+from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, QPoint, QPointF, QEvent, QSettings
 from PyQt6.QtGui import (
     QActionGroup,
     QBrush,
@@ -13,6 +13,7 @@ from PyQt6.QtGui import (
     QFont,
     QFontDatabase,
     QFontMetrics,
+    QFontMetricsF,
     QPainter,
     QPen,
 )
@@ -903,6 +904,8 @@ class StaffWidget(QWidget):
             "collision_x_offset_scale": 1.0,
             "staff_line_length_scale": 1.0,
             "staff_line_extra": 0.0,
+            "ledger_x_offset": 0.0,
+            "ledger_y_offset": 0.0,
             "middle_c_ledger_x_offset": 0.0,
             "label_collision_x_offset": 0.6,
         }
@@ -1031,7 +1034,7 @@ class StaffWidget(QWidget):
 
         for i in range(5):
             y = y_top + i * staff_spacing
-            painter.drawLine(x_start, y, x_end, y)
+            painter.drawLine(QPointF(x_start, y), QPointF(x_end, y))
 
     def drawClef(self, painter: QPainter, clef_type: str, staff_top_y: float, staff_spacing: float, x: float):
         """Dibuja la clave indicada, escalada al espaciado del pentagrama."""
@@ -1209,16 +1212,16 @@ class StaffWidget(QWidget):
             ledger_pen = QPen(ledger_color)
             ledger_pen.setWidthF(max(1.2, staff_spacing * 0.12))
             painter.setPen(ledger_pen)
+            ledger_global_x = float(self.staff_settings.get("ledger_x_offset", 0.0)) * staff_spacing
+            ledger_global_y = float(self.staff_settings.get("ledger_y_offset", 0.0)) * staff_spacing
             for ls in ledger_steps:
-                ly = center_y - ls * step_height + note_y_offset
-                ledger_x_offset = 0.0
+                ly = center_y - ls * step_height + note_y_offset + ledger_global_y
+                ledger_x_offset = ledger_global_x
                 if ls == 0:
-                    ledger_x_offset = float(self.staff_settings.get("middle_c_ledger_x_offset", 0.0)) * staff_spacing
+                    ledger_x_offset += float(self.staff_settings.get("middle_c_ledger_x_offset", 0.0)) * staff_spacing
                 painter.drawLine(
-                    note_x - ledger_length / 2 + ledger_x_offset,
-                    ly,
-                    note_x + ledger_length / 2 + ledger_x_offset,
-                    ly,
+                    QPointF(note_x - ledger_length / 2 + ledger_x_offset, ly),
+                    QPointF(note_x + ledger_length / 2 + ledger_x_offset, ly),
                 )
 
             note_color = self._color_from_setting("note_head_color", QColor(Qt.GlobalColor.black))
@@ -1959,6 +1962,28 @@ class ControlWindow(QMainWindow):
                 "Offset en espaciado",
                 -10.0,
                 20.0,
+            )
+        )
+
+        ledger_x_action = lines_menu.addAction("Posición X líneas auxiliares…")
+        ledger_x_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "ledger_x_offset",
+                "Posición X líneas auxiliares",
+                "Offset en espaciado",
+                -6.0,
+                6.0,
+            )
+        )
+
+        ledger_y_action = lines_menu.addAction("Posición Y líneas auxiliares…")
+        ledger_y_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "ledger_y_offset",
+                "Posición Y líneas auxiliares",
+                "Offset en espaciado",
+                -6.0,
+                6.0,
             )
         )
 
