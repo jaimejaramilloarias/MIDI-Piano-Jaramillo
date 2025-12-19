@@ -1328,14 +1328,7 @@ class StaffWidget(QWidget):
                     (symbol, column_x + shift_x, y, head_width)
                     for symbol, column_x, y, head_width in accidental_info
                 ]
-        if note_positions:
-            max_x = max(note_positions) + staff_spacing * 2.0
-            staff_width = max(
-                layout["minStaffWidth"],
-                min(layout["usableWidth"], max_x - line_start),
-            )
-        else:
-            staff_width = layout["minStaffWidth"]
+        staff_width = layout["usableWidth"]
 
         line_length_scale = max(0.3, float(self.staff_settings.get("staff_line_length_scale", 1.0)))
         line_extra = float(self.staff_settings.get("staff_line_extra", 0.0)) * staff_spacing
@@ -1721,6 +1714,7 @@ class ControlWindow(QMainWindow):
         load_dict = dictionary_menu.addAction("Cargar diccionario…")
         load_dict.triggered.connect(self.load_chord_dictionary_from_dialog)
 
+        self._setup_controls_menu()
         self._setup_interval_menu()
         self._setup_staff_menu()
 
@@ -1854,6 +1848,11 @@ class ControlWindow(QMainWindow):
 
         frame_border_width_action = frame_menu.addAction("Grosor del borde…")
         frame_border_width_action.triggered.connect(self._choose_interval_frame_border_width)
+
+    def _setup_controls_menu(self):
+        controls_menu = self.menuBar().addMenu("Controles")
+        edit_chords_action = controls_menu.addAction("Editar etiquetas de acordes…")
+        edit_chords_action.triggered.connect(self._edit_chord_labels)
 
     def _setup_staff_menu(self):
         staff_menu = self.menuBar().addMenu("Partitura")
@@ -3208,6 +3207,61 @@ class ControlWindow(QMainWindow):
             container = QWidget()
             container.setLayout(row)
             self.learned_chords_layout.addWidget(container)
+
+    def _edit_chord_labels(self):
+        if not CHORD_PATTERNS:
+            QMessageBox.information(self, "Editar etiquetas", "No hay acordes para editar.")
+            return
+
+        entries: List[Tuple[str, Dict]] = []
+        for pattern in CHORD_PATTERNS:
+            name = pattern.get("nombre", "")
+            oblig = list(pattern.get("obligatorias", []))
+            opc = list(pattern.get("opcionales", []))
+            source = "aprendido" if pattern.get("is_custom") else "base"
+            label_parts = [f"{name or '(sin nombre)'} ({source})", f"obligatorias: {oblig}"]
+            if opc:
+                label_parts.append(f"opcionales: {opc}")
+            label = " — ".join(label_parts)
+            entries.append((label, pattern))
+
+        entries.sort(key=lambda item: item[0].lower())
+        labels = [label for label, _ in entries]
+        selection, ok = QInputDialog.getItem(
+            self,
+            "Editar etiquetas de acordes",
+            "Selecciona el acorde:",
+            labels,
+            0,
+            False,
+        )
+        if not ok or not selection:
+            return
+
+        pattern = next(ptn for label, ptn in entries if label == selection)
+        current_name = pattern.get("nombre", "")
+        new_name, ok = QInputDialog.getText(
+            self,
+            "Editar etiqueta",
+            "Etiqueta/cifrado del acorde:",
+            text=current_name,
+        )
+        if not ok:
+            return
+        new_name = str(new_name).strip()
+        if not new_name:
+            QMessageBox.warning(self, "Etiqueta inválida", "La etiqueta no puede estar vacía.")
+            return
+
+        pattern["nombre"] = new_name
+        if not pattern.get("is_custom"):
+            self._remember_additional_base(
+                new_name,
+                list(pattern.get("obligatorias", [])),
+                list(pattern.get("opcionales", [])),
+            )
+        self._refresh_learned_chords_ui()
+        self._write_preferences(False)
 
     def _edit_custom_chord_name(self, index: int):
         if index < 0 or index >= len(self.custom_chords):
