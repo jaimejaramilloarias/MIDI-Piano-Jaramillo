@@ -36,6 +36,22 @@ from PyQt6.QtWidgets import (
 )
 import mido
 
+from music_theory import (
+    ACCIDENTAL_TO_SYMBOL,
+    DETECT_NOTE_NAMES,
+    NOTE_LETTERS,
+    NOTE_LETTER_TO_INDEX,
+    NOTE_LETTER_TO_PC,
+    NOTE_NAMES,
+    _degree_for_interval,
+    _degree_offset,
+    _parse_root_spelling,
+    midi_of_C,
+    note_octave,
+    spell_note_for_interval,
+    spelled_octave,
+)
+
 # Asegura que PyInstaller incluya el backend rtmidi (y permite correr sin él).
 try:
     import mido.backends.rtmidi  # type: ignore  # noqa: F401
@@ -45,12 +61,6 @@ except Exception:
 # MIDI note range for a full piano
 MIN_NOTE = 21   # A0
 MAX_NOTE = 108  # C8
-
-NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-NOTE_LETTERS = ["C", "D", "E", "F", "G", "A", "B"]
-NOTE_LETTER_TO_INDEX = {letter: index for index, letter in enumerate(NOTE_LETTERS)}
-NOTE_LETTER_TO_PC = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
-ACCIDENTAL_TO_SYMBOL = {"bb": "♭♭", "b": "♭", "": "", "#": "♯", "##": "♯♯"}
 
 INTERVAL_LABELS = {
     0: "f",
@@ -162,93 +172,6 @@ for _pattern in BASE_CHORD_PATTERNS:
     _pattern.setdefault("is_custom", False)
 
 CHORD_PATTERNS = [dict(ptn) for ptn in BASE_CHORD_PATTERNS]
-
-DETECT_NOTE_NAMES = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B']
-
-
-def _parse_root_spelling(chord_name: str) -> Tuple[Optional[str], str]:
-    if not chord_name:
-        return None, ""
-    root = chord_name.split("/")[0].strip()
-    if not root:
-        return None, ""
-    letter = root[0].upper()
-    if letter not in NOTE_LETTER_TO_INDEX:
-        return None, ""
-    accidental = ""
-    if len(root) > 1 and root[1] in ("b", "#"):
-        accidental = root[1]
-        if len(root) > 2 and root[2] == root[1]:
-            accidental += root[2]
-    return letter, accidental
-
-
-def _degree_offset(degree: int) -> int:
-    mapping = {1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 9: 1, 11: 3, 13: 5}
-    return mapping.get(degree, 0)
-
-
-def _degree_for_interval(interval: int, chord_name: str) -> int:
-    name = chord_name or ""
-    is_sus2 = "sus2" in name
-    is_sus4 = "sus4" in name
-
-    if interval == 0:
-        return 1
-
-    if interval in (1, 2, 3):
-        if "addb2" in name and interval == 1:
-            return 2
-        if "#9" in name and interval == 3:
-            return 9
-        if "b9" in name and interval == 1:
-            return 9
-        if ("9" in name or "add2" in name or is_sus2) and interval == 2:
-            return 9 if "9" in name else 2
-        return 3
-
-    if interval == 4:
-        return 3
-
-    if interval in (5, 6):
-        if is_sus4 and interval == 5:
-            return 4
-        if "add4" in name and interval == 5:
-            return 4
-        if "#11" in name and interval == 6:
-            return 11
-        if "11" in name and interval in (5, 6):
-            return 11
-        if "b5" in name or "(b5)" in name or "º" in name or "ø" in name:
-            if interval == 6:
-                return 5
-        if interval == 5 and not is_sus4:
-            return 11
-        return 4 if is_sus4 else 5
-
-    if interval == 7:
-        return 5
-
-    if interval == 8:
-        if "b13" in name:
-            return 13
-        if "+" in name or "#5" in name:
-            return 5
-        return 13 if "13" in name else 5
-
-    if interval == 9:
-        if "º7" in name or ("º" in name and "7" in name):
-            return 7
-        if "13" in name or "b13" in name:
-            return 13
-        if "6" in name and "13" not in name:
-            return 6
-        return 6
-
-    if interval in (10, 11):
-        return 7
-
-    return 1
 
 
 def _normalize_intervals(intervals: List[int]) -> List[int]:
@@ -369,16 +292,6 @@ def midi_to_name(note: int) -> str:
     octave = note // 12 - 1
     name = NOTE_NAMES[note % 12]
     return f"{name}{octave}"
-
-
-def note_octave(note: int) -> int:
-    """Devuelve la octava según la convención MIDI típica."""
-    return note // 12 - 1
-
-
-def midi_of_C(octave: int) -> int:
-    """Devuelve el número de nota MIDI de C<octave>."""
-    return (octave + 1) * 12
 
 
 def is_white(note: int) -> bool:
@@ -1020,10 +933,10 @@ class StaffWidget(QWidget):
             self.chord_info = chord_info
         self.update()
 
-    def _relative_step(self, note: int, letter: str) -> int:
+    def _relative_step(self, note: int, letter: str, accidental: str) -> int:
         """Posición relativa (en pasos de línea/espacio) respecto a C4."""
 
-        octave = note_octave(note)
+        octave = spelled_octave(note, letter, accidental)
         letter_index = NOTE_LETTER_TO_INDEX.get(letter, 0)
         step = octave * 7 + letter_index
         reference = 4 * 7  # C4
@@ -1245,22 +1158,9 @@ class StaffWidget(QWidget):
 
         spellings: Dict[int, str] = {}
         root_pc = int(root_pc)
-        root_index = NOTE_LETTER_TO_INDEX[root_letter]
-
         for note in notes:
             interval = (note - root_pc) % 12
-            degree = _degree_for_interval(interval, chord_name)
-            letter_index = (root_index + _degree_offset(degree)) % 7
-            letter = NOTE_LETTERS[letter_index]
-            natural_pc = NOTE_LETTER_TO_PC[letter]
-            diff = (note % 12 - natural_pc + 12) % 12
-            if diff > 6:
-                diff -= 12
-            if diff not in (-2, -1, 0, 1, 2):
-                spellings[note] = NOTE_NAMES[note % 12]
-                continue
-            accidental = { -2: "bb", -1: "b", 0: "", 1: "#", 2: "##" }[diff]
-            spellings[note] = f"{letter}{accidental}"
+            spellings[note] = spell_note_for_interval(root_letter, root_pc, chord_name, interval)
         return spellings
 
     def drawAccidental(
@@ -1320,6 +1220,15 @@ class StaffWidget(QWidget):
         ledger_length = note_head_width * 1.4
         collision_y_offset = float(self.staff_settings.get("collision_y_offset_steps", 0.0)) * step_height
 
+        clef_x = layout["margin"] + layout["labelWidth"]
+        clef_x += float(self.staff_settings.get("clef_x_offset", 0.0)) * staff_spacing
+        treble_clef_x = clef_x + float(self.staff_settings.get("treble_clef_x_offset", 0.0)) * staff_spacing
+        bass_clef_x = clef_x + float(self.staff_settings.get("bass_clef_x_offset", 0.0)) * staff_spacing
+        clef_rects = [
+            self._clef_rect("treble", treble_top, staff_spacing, treble_clef_x),
+            self._clef_rect("bass", bass_top, staff_spacing, bass_clef_x),
+        ]
+
         note_spellings = self._note_spellings_for_notes(self.notes)
         note_steps: Dict[int, int] = {}
         note_accidentals: Dict[int, str] = {}
@@ -1327,7 +1236,7 @@ class StaffWidget(QWidget):
             spelling = note_spellings.get(note, NOTE_NAMES[note % 12])
             letter = spelling[0]
             accidental = spelling[1:]
-            note_steps[note] = self._relative_step(note, letter)
+            note_steps[note] = self._relative_step(note, letter, accidental)
             note_accidentals[note] = accidental
 
         offsets = self.computeNoteXOffsetsForCollisions(sorted(self.notes), note_head_width, note_steps)
@@ -1383,6 +1292,40 @@ class StaffWidget(QWidget):
                 accidental_info.append((accidental, accidental_column_x, y, note_head_width))
 
         accidental_info.sort(key=lambda item: item[2])
+        accidental_scale = max(0.4, float(self.staff_settings.get("accidental_scale", 1.0)))
+        accidental_font = QFont(self.staff_font_family, int(staff_spacing * 1.4 * accidental_scale))
+        metrics = QFontMetricsF(accidental_font)
+        accidental_x_offset = float(self.staff_settings.get("accidental_x_offset", 0.0)) * staff_spacing
+        accidental_y_offset = float(self.staff_settings.get("accidental_y_offset", 0.0)) * staff_spacing
+
+        if accidental_info:
+            min_left = None
+            for symbol, column_x, y, head_width in accidental_info:
+                text_width = metrics.horizontalAdvance(symbol)
+                text_height = metrics.height()
+                accidental_x = column_x - head_width * 1.2 + accidental_x_offset
+                center_x = accidental_x + (head_width * 1.2) / 2.0
+                baseline_y = y - text_height / 2.0 + metrics.ascent() + accidental_y_offset
+                rect = QRectF(
+                    center_x - text_width / 2.0,
+                    baseline_y - metrics.ascent(),
+                    text_width,
+                    text_height,
+                )
+                min_left = rect.left() if min_left is None else min(min_left, rect.left())
+            min_allowed = max(rect.right() for rect in clef_rects) + staff_spacing * 0.4
+            if min_left is not None and min_left < min_allowed:
+                shift_x = min_allowed - min_left
+                note_positions = [x + shift_x for x in note_positions]
+                note_rows = [
+                    (note, y, ledger_steps, note_x + shift_x)
+                    for note, y, ledger_steps, note_x in note_rows
+                ]
+                note_head_rects = [QRectF(rect).translated(shift_x, 0) for rect in note_head_rects]
+                accidental_info = [
+                    (symbol, column_x + shift_x, y, head_width)
+                    for symbol, column_x, y, head_width in accidental_info
+                ]
         if note_positions:
             max_x = max(note_positions) + staff_spacing * 2.0
             staff_width = max(
@@ -1399,20 +1342,12 @@ class StaffWidget(QWidget):
         self.drawStaff(painter, treble_top, staff_spacing, line_start, line_end)
         self.drawStaff(painter, bass_top, staff_spacing, line_start, line_end)
 
-        clef_x = layout["margin"] + layout["labelWidth"]
-        clef_x += float(self.staff_settings.get("clef_x_offset", 0.0)) * staff_spacing
-        treble_clef_x = clef_x + float(self.staff_settings.get("treble_clef_x_offset", 0.0)) * staff_spacing
-        bass_clef_x = clef_x + float(self.staff_settings.get("bass_clef_x_offset", 0.0)) * staff_spacing
         clef_color = self._color_from_setting("clef_color", QColor(Qt.GlobalColor.black))
         painter.setPen(QPen(clef_color))
         self.drawClef(painter, "treble", treble_top, staff_spacing, treble_clef_x)
         painter.setPen(QPen(clef_color))
         self.drawClef(painter, "bass", bass_top, staff_spacing, bass_clef_x)
 
-        clef_rects = [
-            self._clef_rect("treble", treble_top, staff_spacing, treble_clef_x),
-            self._clef_rect("bass", bass_top, staff_spacing, bass_clef_x),
-        ]
         base_occupied_rects = note_head_rects + clef_rects
 
         for note, y, ledger_steps, note_x in note_rows:
@@ -1436,11 +1371,6 @@ class StaffWidget(QWidget):
             painter.setPen(QPen(note_color))
             self.drawNoteHead(painter, note_x, y, staff_spacing)
 
-        accidental_scale = max(0.4, float(self.staff_settings.get("accidental_scale", 1.0)))
-        accidental_font = QFont(self.staff_font_family, int(staff_spacing * 1.4 * accidental_scale))
-        metrics = QFontMetricsF(accidental_font)
-        accidental_x_offset = float(self.staff_settings.get("accidental_x_offset", 0.0)) * staff_spacing
-        accidental_y_offset = float(self.staff_settings.get("accidental_y_offset", 0.0)) * staff_spacing
         accidental_rects: List[QRectF] = []
         for symbol, column_x, y, head_width in accidental_info:
             stack_offset = float(self.staff_settings.get("accidental_stack_offset", 0.25))
