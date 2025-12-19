@@ -870,17 +870,38 @@ class StaffWidget(QWidget):
         self.staff_font_family = self._load_staff_font()
 
     @staticmethod
-    def default_staff_settings() -> Dict[str, float]:
+    def default_staff_settings() -> Dict[str, object]:
         return {
+            "background_color": "#ffffff",
+            "staff_line_color": "#282828",
+            "ledger_line_color": "#282828",
+            "clef_color": "#000000",
+            "note_head_color": "#000000",
+            "accidental_color": "#000000",
+            "label_color": "#000000",
             "clef_scale": 1.0,
             "clef_x_offset": 0.0,
+            "treble_clef_scale": 1.0,
+            "bass_clef_scale": 1.0,
+            "treble_clef_x_offset": 0.0,
+            "bass_clef_x_offset": 0.0,
             "treble_clef_y_offset": 0.0,
             "bass_clef_y_offset": 0.0,
             "label_font_scale": 1.0,
+            "label_font_family": "",
             "label_x_offset": 0.0,
             "label_y_offset": 0.0,
             "note_head_scale": 1.0,
+            "note_x_offset": 0.0,
+            "note_y_offset": 0.0,
+            "accidental_scale": 1.0,
+            "accidental_x_offset": 0.0,
+            "accidental_y_offset": 0.0,
+            "accidental_stack_offset": 0.25,
             "collision_y_offset_steps": 0.0,
+            "collision_x_offset_scale": 1.0,
+            "staff_line_length_scale": 1.0,
+            "staff_line_extra": 0.0,
         }
 
     def _load_staff_font(self) -> str:
@@ -893,7 +914,7 @@ class StaffWidget(QWidget):
                     return families[0]
         return "Times New Roman"
 
-    def apply_staff_settings(self, settings: Dict[str, float]):
+    def apply_staff_settings(self, settings: Dict[str, object]):
         self.staff_settings.update(settings)
         self.update()
 
@@ -924,6 +945,15 @@ class StaffWidget(QWidget):
         reference = 4 * 7  # C4
         return step - reference
 
+    def _color_from_setting(self, key: str, default: QColor) -> QColor:
+        value = self.staff_settings.get(key, default)
+        if isinstance(value, QColor):
+            return value if value.isValid() else default
+        if isinstance(value, str):
+            color = QColor(value)
+            return color if color.isValid() else default
+        return default
+
     # --- Layout helpers -------------------------------------------------
     def computeLayout(self, rect: QRect) -> Dict[str, float]:
         """Calcula márgenes, anchos y posiciones básicas a partir del rectángulo."""
@@ -932,7 +962,10 @@ class StaffWidget(QWidget):
         margin = staff_spacing * 1.2
         label_scale = max(0.6, float(self.staff_settings.get("label_font_scale", 1.0)))
         label_width = staff_spacing * 4.0 * label_scale
-        clef_scale = max(0.4, float(self.staff_settings.get("clef_scale", 1.0)))
+        base_clef_scale = max(0.4, float(self.staff_settings.get("clef_scale", 1.0)))
+        treble_scale = max(0.4, float(self.staff_settings.get("treble_clef_scale", base_clef_scale)))
+        bass_scale = max(0.4, float(self.staff_settings.get("bass_clef_scale", base_clef_scale)))
+        clef_scale = max(treble_scale, bass_scale)
         clef_width = staff_spacing * 3.0 * clef_scale
 
         usable_width = max(rect.width() - 2 * margin - label_width - clef_width, staff_spacing * 10)
@@ -959,7 +992,8 @@ class StaffWidget(QWidget):
         if not notes:
             return offsets
 
-        dx = note_head_width * 0.6
+        collision_scale = float(self.staff_settings.get("collision_x_offset_scale", 1.0))
+        dx = note_head_width * 0.6 * collision_scale
 
         def apply_offsets(group: List[Tuple[int, int]]):
             group.sort(key=lambda pair: pair[1])  # grave → aguda
@@ -999,7 +1033,11 @@ class StaffWidget(QWidget):
     def drawClef(self, painter: QPainter, clef_type: str, staff_top_y: float, staff_spacing: float, x: float):
         """Dibuja la clave indicada, escalada al espaciado del pentagrama."""
 
-        clef_scale = max(0.4, float(self.staff_settings.get("clef_scale", 1.0)))
+        base_scale = max(0.4, float(self.staff_settings.get("clef_scale", 1.0)))
+        if clef_type == "treble":
+            clef_scale = max(0.4, float(self.staff_settings.get("treble_clef_scale", base_scale)))
+        else:
+            clef_scale = max(0.4, float(self.staff_settings.get("bass_clef_scale", base_scale)))
         font_size = staff_spacing * 3.2 * clef_scale
         clef_font = QFont(self.staff_font_family, int(font_size))
         painter.setFont(clef_font)
@@ -1057,12 +1095,15 @@ class StaffWidget(QWidget):
     ):
         """Dibuja una alteración a la izquierda de la cabeza de nota."""
 
-        font = QFont(self.staff_font_family, int(staff_spacing * 1.4))
+        accidental_scale = max(0.4, float(self.staff_settings.get("accidental_scale", 1.0)))
+        font = QFont(self.staff_font_family, int(staff_spacing * 1.4 * accidental_scale))
         painter.setFont(font)
-        accidental_x = column_x - note_head_width * 1.2
+        accidental_x_offset = float(self.staff_settings.get("accidental_x_offset", 0.0)) * staff_spacing
+        accidental_y_offset = float(self.staff_settings.get("accidental_y_offset", 0.0)) * staff_spacing
+        accidental_x = column_x - note_head_width * 1.2 + accidental_x_offset
         rect = QRectF(
             accidental_x,
-            note_y - staff_spacing * 0.9,
+            note_y - staff_spacing * 0.9 + accidental_y_offset,
             note_head_width * 1.2,
             staff_spacing * 1.8,
         )
@@ -1073,7 +1114,8 @@ class StaffWidget(QWidget):
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
         rect = self.rect()
-        painter.fillRect(rect, QBrush(QColor(Qt.GlobalColor.white)))
+        background_color = self._color_from_setting("background_color", QColor(Qt.GlobalColor.white))
+        painter.fillRect(rect, QBrush(background_color))
 
         layout = self.computeLayout(rect)
         staff_spacing = layout["staffSpacing"]
@@ -1083,14 +1125,17 @@ class StaffWidget(QWidget):
         label_x_offset = float(self.staff_settings.get("label_x_offset", 0.0)) * staff_spacing
         label_y_offset = float(self.staff_settings.get("label_y_offset", 0.0)) * staff_spacing
 
-        pen = QPen(QColor(40, 40, 40))
+        staff_line_color = self._color_from_setting("staff_line_color", QColor(40, 40, 40))
+        pen = QPen(staff_line_color)
         pen.setWidthF(max(1.2, staff_spacing * 0.12))
         painter.setPen(pen)
 
         treble_top = center_y - 10 * step_height
         bass_top = center_y + 2 * step_height
 
-        note_x_base = line_start + staff_spacing * 1.2
+        note_x_offset = float(self.staff_settings.get("note_x_offset", 0.0)) * staff_spacing
+        note_y_offset = float(self.staff_settings.get("note_y_offset", 0.0)) * staff_spacing
+        note_x_base = line_start + staff_spacing * 1.2 + note_x_offset
         note_head_scale = max(0.5, float(self.staff_settings.get("note_head_scale", 1.0)))
         note_head_width = staff_spacing * 1.2 * note_head_scale
         ledger_length = note_head_width * 1.4
@@ -1104,7 +1149,7 @@ class StaffWidget(QWidget):
 
         for note in sorted(self.notes):
             rel_step = self._relative_step(note)
-            y = center_y - rel_step * step_height
+            y = center_y - rel_step * step_height + note_y_offset
             if offsets.get(note, 0.0) != 0.0:
                 y += collision_y_offset
 
@@ -1135,18 +1180,30 @@ class StaffWidget(QWidget):
         else:
             staff_width = layout["minStaffWidth"]
 
-        line_end = line_start + staff_width
+        line_length_scale = max(0.3, float(self.staff_settings.get("staff_line_length_scale", 1.0)))
+        line_extra = float(self.staff_settings.get("staff_line_extra", 0.0)) * staff_spacing
+
+        line_end = line_start + staff_width * line_length_scale + line_extra
         self.drawStaff(painter, treble_top, staff_spacing, line_start, line_end)
         self.drawStaff(painter, bass_top, staff_spacing, line_start, line_end)
 
         clef_x = layout["margin"] + layout["labelWidth"]
         clef_x += float(self.staff_settings.get("clef_x_offset", 0.0)) * staff_spacing
-        self.drawClef(painter, "treble", treble_top, staff_spacing, clef_x)
-        self.drawClef(painter, "bass", bass_top, staff_spacing, clef_x)
+        treble_clef_x = clef_x + float(self.staff_settings.get("treble_clef_x_offset", 0.0)) * staff_spacing
+        bass_clef_x = clef_x + float(self.staff_settings.get("bass_clef_x_offset", 0.0)) * staff_spacing
+        clef_color = self._color_from_setting("clef_color", QColor(Qt.GlobalColor.black))
+        painter.setPen(QPen(clef_color))
+        self.drawClef(painter, "treble", treble_top, staff_spacing, treble_clef_x)
+        painter.setPen(QPen(clef_color))
+        self.drawClef(painter, "bass", bass_top, staff_spacing, bass_clef_x)
 
         for note, y, ledger_steps, note_x in note_rows:
+            ledger_color = self._color_from_setting("ledger_line_color", staff_line_color)
+            ledger_pen = QPen(ledger_color)
+            ledger_pen.setWidthF(max(1.2, staff_spacing * 0.12))
+            painter.setPen(ledger_pen)
             for ls in ledger_steps:
-                ly = center_y - ls * step_height
+                ly = center_y - ls * step_height + note_y_offset
                 painter.drawLine(
                     note_x - ledger_length / 2,
                     ly,
@@ -1154,10 +1211,15 @@ class StaffWidget(QWidget):
                     ly,
                 )
 
+            note_color = self._color_from_setting("note_head_color", QColor(Qt.GlobalColor.black))
+            painter.setPen(QPen(note_color))
             self.drawNoteHead(painter, note_x, y, staff_spacing)
 
             label_scale = max(0.6, float(self.staff_settings.get("label_font_scale", 1.0)))
-            painter.setFont(QFont("Arial", int(staff_spacing * 1.1 * label_scale)))
+            label_font_family = str(self.staff_settings.get("label_font_family", "")).strip() or "Arial"
+            painter.setFont(QFont(label_font_family, int(staff_spacing * 1.1 * label_scale)))
+            label_color = self._color_from_setting("label_color", QColor(Qt.GlobalColor.black))
+            painter.setPen(QPen(label_color))
             painter.drawText(
                 QRectF(
                     layout["margin"] + label_x_offset,
@@ -1170,7 +1232,10 @@ class StaffWidget(QWidget):
             )
 
         for idx, (symbol, column_x, y, head_width) in enumerate(accidental_info):
-            x_offset = - (idx % 2) * head_width * 0.25
+            stack_offset = float(self.staff_settings.get("accidental_stack_offset", 0.25))
+            x_offset = -(idx % 2) * head_width * stack_offset
+            accidental_color = self._color_from_setting("accidental_color", QColor(Qt.GlobalColor.black))
+            painter.setPen(QPen(accidental_color))
             self.drawAccidental(
                 painter,
                 symbol,
@@ -1602,29 +1667,52 @@ class ControlWindow(QMainWindow):
     def _setup_staff_menu(self):
         staff_menu = self.menuBar().addMenu("Partitura")
 
-        clef_size_action = staff_menu.addAction("Tamaño de claves…")
+        clef_menu = staff_menu.addMenu("Claves")
+        clef_size_action = clef_menu.addAction("Tamaño global de claves…")
         clef_size_action.triggered.connect(
             lambda: self._prompt_staff_setting(
                 "clef_scale",
-                "Tamaño de claves (escala)",
+                "Tamaño global de claves (escala)",
                 "Escala (1.0 = por defecto)",
                 0.4,
                 3.0,
             )
         )
 
-        clef_x_action = staff_menu.addAction("Posición X de claves…")
+        clef_x_action = clef_menu.addAction("Posición X global de claves…")
         clef_x_action.triggered.connect(
             lambda: self._prompt_staff_setting(
                 "clef_x_offset",
-                "Posición X de claves",
+                "Posición X global de claves",
                 "Offset en espaciado",
                 -6.0,
                 6.0,
             )
         )
 
-        treble_y_action = staff_menu.addAction("Posición Y clave de Sol…")
+        treble_size_action = clef_menu.addAction("Tamaño clave de Sol…")
+        treble_size_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "treble_clef_scale",
+                "Tamaño clave de Sol",
+                "Escala (1.0 = por defecto)",
+                0.4,
+                3.0,
+            )
+        )
+
+        treble_x_action = clef_menu.addAction("Posición X clave de Sol…")
+        treble_x_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "treble_clef_x_offset",
+                "Posición X clave de Sol",
+                "Offset en espaciado",
+                -6.0,
+                6.0,
+            )
+        )
+
+        treble_y_action = clef_menu.addAction("Posición Y clave de Sol…")
         treble_y_action.triggered.connect(
             lambda: self._prompt_staff_setting(
                 "treble_clef_y_offset",
@@ -1635,7 +1723,29 @@ class ControlWindow(QMainWindow):
             )
         )
 
-        bass_y_action = staff_menu.addAction("Posición Y clave de Fa…")
+        bass_size_action = clef_menu.addAction("Tamaño clave de Fa…")
+        bass_size_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "bass_clef_scale",
+                "Tamaño clave de Fa",
+                "Escala (1.0 = por defecto)",
+                0.4,
+                3.0,
+            )
+        )
+
+        bass_x_action = clef_menu.addAction("Posición X clave de Fa…")
+        bass_x_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "bass_clef_x_offset",
+                "Posición X clave de Fa",
+                "Offset en espaciado",
+                -6.0,
+                6.0,
+            )
+        )
+
+        bass_y_action = clef_menu.addAction("Posición Y clave de Fa…")
         bass_y_action.triggered.connect(
             lambda: self._prompt_staff_setting(
                 "bass_clef_y_offset",
@@ -1646,9 +1756,8 @@ class ControlWindow(QMainWindow):
             )
         )
 
-        staff_menu.addSeparator()
-
-        label_size_action = staff_menu.addAction("Tamaño etiquetas de nota…")
+        labels_menu = staff_menu.addMenu("Etiquetas")
+        label_size_action = labels_menu.addAction("Tamaño etiquetas de nota…")
         label_size_action.triggered.connect(
             lambda: self._prompt_staff_setting(
                 "label_font_scale",
@@ -1659,7 +1768,15 @@ class ControlWindow(QMainWindow):
             )
         )
 
-        label_x_action = staff_menu.addAction("Posición X etiquetas…")
+        label_font_action = labels_menu.addAction("Fuente etiquetas…")
+        label_font_action.triggered.connect(self._choose_staff_label_font)
+
+        label_color_action = labels_menu.addAction("Color etiquetas…")
+        label_color_action.triggered.connect(
+            lambda: self._choose_staff_color("label_color", "Color etiquetas")
+        )
+
+        label_x_action = labels_menu.addAction("Posición X etiquetas…")
         label_x_action.triggered.connect(
             lambda: self._prompt_staff_setting(
                 "label_x_offset",
@@ -1670,7 +1787,7 @@ class ControlWindow(QMainWindow):
             )
         )
 
-        label_y_action = staff_menu.addAction("Posición Y etiquetas…")
+        label_y_action = labels_menu.addAction("Posición Y etiquetas…")
         label_y_action.triggered.connect(
             lambda: self._prompt_staff_setting(
                 "label_y_offset",
@@ -1681,9 +1798,8 @@ class ControlWindow(QMainWindow):
             )
         )
 
-        staff_menu.addSeparator()
-
-        note_head_action = staff_menu.addAction("Tamaño de cabeza de nota…")
+        notes_menu = staff_menu.addMenu("Notas")
+        note_head_action = notes_menu.addAction("Tamaño de cabeza de nota…")
         note_head_action.triggered.connect(
             lambda: self._prompt_staff_setting(
                 "note_head_scale",
@@ -1694,7 +1810,34 @@ class ControlWindow(QMainWindow):
             )
         )
 
-        collision_y_action = staff_menu.addAction("Desplazamiento vertical segundas…")
+        note_x_action = notes_menu.addAction("Posición X de notas…")
+        note_x_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "note_x_offset",
+                "Posición X de notas",
+                "Offset en espaciado",
+                -6.0,
+                6.0,
+            )
+        )
+
+        note_y_action = notes_menu.addAction("Posición Y de notas…")
+        note_y_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "note_y_offset",
+                "Posición Y de notas",
+                "Offset en espaciado",
+                -6.0,
+                6.0,
+            )
+        )
+
+        note_color_action = notes_menu.addAction("Color de cabezas…")
+        note_color_action.triggered.connect(
+            lambda: self._choose_staff_color("note_head_color", "Color de cabezas de nota")
+        )
+
+        collision_y_action = notes_menu.addAction("Desplazamiento vertical segundas…")
         collision_y_action.triggered.connect(
             lambda: self._prompt_staff_setting(
                 "collision_y_offset_steps",
@@ -1703,6 +1846,111 @@ class ControlWindow(QMainWindow):
                 -4.0,
                 4.0,
             )
+        )
+
+        collision_x_action = notes_menu.addAction("Desplazamiento horizontal segundas…")
+        collision_x_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "collision_x_offset_scale",
+                "Desplazamiento horizontal en segundas",
+                "Escala (1.0 = por defecto)",
+                0.2,
+                3.0,
+            )
+        )
+
+        accidentals_menu = staff_menu.addMenu("Alteraciones")
+        accidental_size_action = accidentals_menu.addAction("Tamaño de alteraciones…")
+        accidental_size_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "accidental_scale",
+                "Tamaño de alteraciones",
+                "Escala (1.0 = por defecto)",
+                0.4,
+                3.0,
+            )
+        )
+
+        accidental_x_action = accidentals_menu.addAction("Posición X alteraciones…")
+        accidental_x_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "accidental_x_offset",
+                "Posición X alteraciones",
+                "Offset en espaciado",
+                -6.0,
+                6.0,
+            )
+        )
+
+        accidental_y_action = accidentals_menu.addAction("Posición Y alteraciones…")
+        accidental_y_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "accidental_y_offset",
+                "Posición Y alteraciones",
+                "Offset en espaciado",
+                -6.0,
+                6.0,
+            )
+        )
+
+        accidental_stack_action = accidentals_menu.addAction("Desplazamiento alteraciones repetidas…")
+        accidental_stack_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "accidental_stack_offset",
+                "Desplazamiento alteraciones repetidas",
+                "Multiplicador de ancho (0.25 = por defecto)",
+                0.0,
+                2.0,
+            )
+        )
+
+        accidental_color_action = accidentals_menu.addAction("Color alteraciones…")
+        accidental_color_action.triggered.connect(
+            lambda: self._choose_staff_color("accidental_color", "Color alteraciones")
+        )
+
+        lines_menu = staff_menu.addMenu("Líneas")
+        line_length_action = lines_menu.addAction("Longitud de líneas…")
+        line_length_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "staff_line_length_scale",
+                "Longitud de líneas",
+                "Escala (1.0 = por defecto)",
+                0.3,
+                3.0,
+            )
+        )
+
+        line_extra_action = lines_menu.addAction("Extra de longitud…")
+        line_extra_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "staff_line_extra",
+                "Extra de longitud",
+                "Offset en espaciado",
+                -10.0,
+                20.0,
+            )
+        )
+
+        line_color_action = lines_menu.addAction("Color líneas del pentagrama…")
+        line_color_action.triggered.connect(
+            lambda: self._choose_staff_color("staff_line_color", "Color líneas del pentagrama")
+        )
+
+        ledger_color_action = lines_menu.addAction("Color líneas auxiliares…")
+        ledger_color_action.triggered.connect(
+            lambda: self._choose_staff_color("ledger_line_color", "Color líneas auxiliares")
+        )
+
+        colors_menu = staff_menu.addMenu("Colores")
+        background_action = colors_menu.addAction("Fondo de ventana…")
+        background_action.triggered.connect(
+            lambda: self._choose_staff_color("background_color", "Color de fondo")
+        )
+
+        clef_color_action = colors_menu.addAction("Color de claves…")
+        clef_color_action.triggered.connect(
+            lambda: self._choose_staff_color("clef_color", "Color de claves")
         )
 
     def _default_interval_label_settings(self) -> Dict:
@@ -1798,26 +2046,32 @@ class ControlWindow(QMainWindow):
         self._apply_interval_settings_to_piano()
         self._sync_interval_position_actions()
 
-    def _default_staff_settings(self) -> Dict[str, float]:
+    def _default_staff_settings(self) -> Dict[str, object]:
         return StaffWidget.default_staff_settings()
 
     def _load_staff_settings(self):
         settings = self._default_staff_settings()
-        for key in list(settings.keys()):
+        for key, default_value in list(settings.items()):
             value = self.settings.value(f"staff/{key}")
             if value is None:
                 continue
-            try:
-                settings[key] = float(value)
-            except Exception:
-                continue
+            if isinstance(default_value, (int, float)):
+                try:
+                    settings[key] = float(value)
+                except Exception:
+                    continue
+            else:
+                settings[key] = str(value)
 
         self.staff_settings = settings
         self._apply_staff_settings()
 
     def _save_staff_settings(self):
         for key, value in self.staff_settings.items():
-            self.settings.setValue(f"staff/{key}", float(value))
+            if isinstance(value, (int, float)):
+                self.settings.setValue(f"staff/{key}", float(value))
+            else:
+                self.settings.setValue(f"staff/{key}", str(value))
 
     def _apply_staff_settings(self):
         self.staff_window.widget.apply_staff_settings(self.staff_settings)
@@ -1843,6 +2097,29 @@ class ControlWindow(QMainWindow):
         if not ok:
             return
         self.staff_settings[key] = float(value)
+        self._apply_staff_settings()
+        self._save_staff_settings()
+
+    def _choose_staff_color(self, key: str, title: str):
+        current_value = self.staff_settings.get(key, "#000000")
+        if isinstance(current_value, QColor):
+            current_color = current_value
+        else:
+            current_color = QColor(str(current_value))
+        color = QColorDialog.getColor(current_color, self, title)
+        if not color.isValid():
+            return
+        self.staff_settings[key] = color.name(QColor.NameFormat.HexArgb)
+        self._apply_staff_settings()
+        self._save_staff_settings()
+
+    def _choose_staff_label_font(self):
+        current_family = str(self.staff_settings.get("label_font_family", "")).strip() or "Arial"
+        current_font = QFont(current_family)
+        font, ok = QFontDialog.getFont(current_font, self, "Fuente etiquetas")
+        if not ok:
+            return
+        self.staff_settings["label_font_family"] = font.family()
         self._apply_staff_settings()
         self._save_staff_settings()
 
