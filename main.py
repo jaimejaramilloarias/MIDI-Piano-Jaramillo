@@ -40,16 +40,15 @@ import mido
 from music_theory import (
     ACCIDENTAL_TO_SYMBOL,
     DETECT_NOTE_NAMES,
-    NOTE_LETTERS,
     NOTE_LETTER_TO_INDEX,
     NOTE_LETTER_TO_PC,
     NOTE_NAMES,
     _degree_for_interval,
-    _degree_offset,
     _accidental_offset,
     _parse_root_spelling,
     midi_of_C,
     note_octave,
+    spell_note_for_degree_interval,
     spell_note_for_interval,
     spelled_octave,
 )
@@ -3065,15 +3064,13 @@ class ControlWindow(QWidget):
                         continue
                     interval = item.get("interval")
                     degree = item.get("degree")
-                    accidental = item.get("accidental")
                     if (
                         isinstance(interval, int)
                         and isinstance(degree, int)
-                        and isinstance(accidental, str)
                     ):
                         interval_map[int(interval) % 12] = {
                             "degree": int(degree),
-                            "accidental": accidental,
+                            "accidental": str(item.get("accidental", "")),
                         }
                 if interval_map:
                     self.custom_chord_quality_spellings[str(quality)] = interval_map
@@ -3362,12 +3359,10 @@ class ControlWindow(QWidget):
                 interval_spellings: Dict[int, Dict[str, object]] = {}
                 for pc, label in parsed.items():
                     letter = label[0].upper()
-                    accidental = label[1:].replace("♯", "#").replace("♭", "b")
                     interval = (pc - int(root_pc)) % 12
                     degree = (NOTE_LETTER_TO_INDEX[letter] - root_index + 7) % 7 + 1
                     interval_spellings[interval] = {
                         "degree": degree,
-                        "accidental": accidental,
                     }
                 self.custom_chord_quality_spellings[str(quality)] = interval_spellings
             else:
@@ -3434,10 +3429,12 @@ class ControlWindow(QWidget):
                     custom = interval_spellings.get(interval)
                     if custom:
                         degree = int(custom.get("degree", 1))
-                        accidental = str(custom.get("accidental", ""))
-                        letter_index = (root_index + _degree_offset(degree)) % 7
-                        letter = NOTE_LETTERS[letter_index]
-                        spellings[note % 12] = f"{letter}{accidental}"
+                        spellings[note % 12] = spell_note_for_degree_interval(
+                            root_letter,
+                            root_pc,
+                            degree,
+                            interval,
+                        )
                     else:
                         spellings[note % 12] = spell_note_for_interval(
                             root_letter,

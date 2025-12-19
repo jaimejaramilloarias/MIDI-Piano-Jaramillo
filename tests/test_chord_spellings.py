@@ -85,6 +85,36 @@ class TestChordSpellings(unittest.TestCase):
     def test_spelled_octave_for_cb4(self) -> None:
         self.assertEqual(music_theory.spelled_octave(59, "C", "b"), 4)
 
+    def test_custom_quality_spellings_apply_to_all_roots(self) -> None:
+        intervals_and_degrees = [
+            (10, 7),  # b7
+            (3, 3),   # m3
+            (4, 3),   # M3
+            (6, 4),   # #11/b5
+        ]
+
+        for root_pc, root_name in enumerate(music_theory.DETECT_NOTE_NAMES):
+            root_letter, _accidental = music_theory._parse_root_spelling(root_name)
+            assert root_letter is not None
+            for interval, degree in intervals_and_degrees:
+                spelling = music_theory.spell_note_for_degree_interval(
+                    root_letter, root_pc, degree, interval
+                )
+                letter = spelling[0]
+                accidental = spelling[1:].replace("♯", "#").replace("♭", "b")
+                note_pc = (
+                    music_theory.NOTE_LETTER_TO_PC[letter]
+                    + music_theory._accidental_offset(accidental)
+                ) % 12
+                self.assertEqual(
+                    note_pc,
+                    (root_pc + interval) % 12,
+                    msg=(
+                        f"{root_name}: intervalo {interval} grado {degree} esperaba pc "
+                        f"{(root_pc + interval) % 12} pero fue {note_pc} ({spelling})"
+                    ),
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

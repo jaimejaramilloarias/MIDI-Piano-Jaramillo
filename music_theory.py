@@ -124,6 +124,11 @@ def spelled_octave(note: int, letter: str, accidental: str) -> int:
 def spell_note_for_interval(root_letter: str, root_pc: int, chord_name: str, interval: int) -> str:
     root_index = NOTE_LETTER_TO_INDEX[root_letter]
     degree = _degree_for_interval(interval, chord_name)
+    return spell_note_for_degree_interval(root_letter, root_pc, degree, interval)
+
+
+def spell_note_for_degree_interval(root_letter: str, root_pc: int, degree: int, interval: int) -> str:
+    root_index = NOTE_LETTER_TO_INDEX[root_letter]
     letter_index = (root_index + _degree_offset(degree)) % 7
     letter = NOTE_LETTERS[letter_index]
     natural_pc = NOTE_LETTER_TO_PC[letter]
