@@ -933,20 +933,37 @@ class StaffWidget(QWidget):
     def _relative_step(self, note: int) -> int:
         """Posición relativa (en pasos de línea/espacio) respecto a C4."""
 
-        pc_step = {
-            0: 0,  # C
-            1: 0,  # C#
-            2: 1,  # D
-            3: 1,  # D#
-            4: 2,  # E
-            5: 3,  # F
-            6: 3,  # F#
-            7: 4,  # G
-            8: 4,  # G#
-            9: 5,  # A
-            10: 5,  # A#
-            11: 6,  # B
-        }
+        style = str(self.staff_settings.get("accidental_style", "sharps"))
+        if style == "flats":
+            pc_step = {
+                0: 0,   # C
+                1: 1,   # Db
+                2: 1,   # D
+                3: 2,   # Eb
+                4: 2,   # E
+                5: 3,   # F
+                6: 4,   # Gb
+                7: 4,   # G
+                8: 5,   # Ab
+                9: 5,   # A
+                10: 6,  # Bb
+                11: 6,  # B
+            }
+        else:
+            pc_step = {
+                0: 0,  # C
+                1: 0,  # C#
+                2: 1,  # D
+                3: 1,  # D#
+                4: 2,  # E
+                5: 3,  # F
+                6: 3,  # F#
+                7: 4,  # G
+                8: 4,  # G#
+                9: 5,  # A
+                10: 5,  # A#
+                11: 6,  # B
+            }
 
         octave = note_octave(note)
         step = octave * 7 + pc_step.get(note % 12, 0)
@@ -956,7 +973,11 @@ class StaffWidget(QWidget):
     def _note_name_for_staff(self, note: int) -> str:
         style = str(self.staff_settings.get("accidental_style", "sharps"))
         names = NOTE_NAMES_FLATS if style == "flats" else NOTE_NAMES
-        return names[note % 12]
+        name = names[note % 12]
+        if len(name) == 2 and name[1] in ("b", "#"):
+            accidental = "♭" if name[1] == "b" else "♯"
+            return f"{accidental}{name[0]}"
+        return name
 
     def _clef_rect(self, clef_type: str, staff_top_y: float, staff_spacing: float, x: float) -> QRectF:
         base_scale = max(0.4, float(self.staff_settings.get("clef_scale", 1.0)))
@@ -994,11 +1015,15 @@ class StaffWidget(QWidget):
         step: float,
         max_attempts: int = 12,
         prefer_left: bool = True,
+        allow_right: bool = True,
     ) -> QRectF:
         if not self._rects_intersect(rect, occupied):
             return rect
 
-        directions = (-1, 1) if prefer_left else (1, -1)
+        if allow_right:
+            directions = (-1, 1) if prefer_left else (1, -1)
+        else:
+            directions = (-1,) if prefer_left else (1,)
         for offset_index in range(1, max_attempts + 1):
             for direction in directions:
                 candidate = QRectF(rect)
@@ -1056,17 +1081,28 @@ class StaffWidget(QWidget):
 
         collision_scale = float(self.staff_settings.get("collision_x_offset_scale", 1.0))
         dx = note_head_width * 0.6 * collision_scale
+        unison_dx = note_head_width * 0.9 * collision_scale
 
         def apply_offsets(group: List[Tuple[int, int]]):
             group.sort(key=lambda pair: pair[1])  # grave → aguda
+            step_map: Dict[int, List[int]] = {}
+            for note, step in group:
+                step_map.setdefault(step, []).append(note)
+
+            for step, notes_in_step in step_map.items():
+                if len(notes_in_step) > 1:
+                    notes_in_step.sort()
+                    start = -unison_dx * (len(notes_in_step) - 1) / 2.0
+                    for index, note in enumerate(notes_in_step):
+                        offsets[note] = start + index * unison_dx
+
             prev_step: Optional[int] = None
             toggle = False
             for note, step in group:
                 if prev_step is not None and abs(step - prev_step) == 1:
-                    offsets[note] = dx if not toggle else 0.0
+                    offsets[note] += dx if not toggle else 0.0
                     toggle = not toggle
                 else:
-                    offsets[note] = 0.0
                     toggle = False
                 prev_step = step
 
@@ -1139,9 +1175,9 @@ class StaffWidget(QWidget):
         )
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "𝅝")
 
-    def _accidental_symbol(self, note: int) -> str:
+    def _accidental_symbol(self, note: int, show_natural: bool = False) -> str:
         if note % 12 not in (1, 3, 6, 8, 10):
-            return ""
+            return "♮" if show_natural else ""
         style = str(self.staff_settings.get("accidental_style", "sharps"))
         return "♭" if style == "flats" else "♯"
 
@@ -1210,8 +1246,17 @@ class StaffWidget(QWidget):
         label_rects: List[QRectF] = []
         note_head_rects: List[QRectF] = []
 
+        note_steps: Dict[int, int] = {note: self._relative_step(note) for note in self.notes}
+        step_groups: Dict[int, Dict[str, bool]] = {}
+        for note, rel_step in note_steps.items():
+            info = step_groups.setdefault(rel_step, {"natural": False, "altered": False})
+            if note % 12 in (1, 3, 6, 8, 10):
+                info["altered"] = True
+            else:
+                info["natural"] = True
+
         for note in sorted(self.notes):
-            rel_step = self._relative_step(note)
+            rel_step = note_steps[note]
             y = center_y - rel_step * step_height + note_y_offset
             if offsets.get(note, 0.0) != 0.0:
                 y += collision_y_offset
@@ -1236,7 +1281,11 @@ class StaffWidget(QWidget):
                 )
             )
 
-            accidental = self._accidental_symbol(note)
+            show_natural = False
+            if note % 12 not in (1, 3, 6, 8, 10):
+                group_info = step_groups.get(rel_step, {})
+                show_natural = bool(group_info.get("altered"))
+            accidental = self._accidental_symbol(note, show_natural)
             if accidental:
                 accidental_column_x = note_x
                 if offsets.get(note, 0.0) != 0.0:
@@ -1355,6 +1404,7 @@ class StaffWidget(QWidget):
                 step,
                 max_attempts=14,
                 prefer_left=True,
+                allow_right=False,
             )
             column_x += rect.left() - (center_x - text_width / 2.0)
             self.drawAccidental(
