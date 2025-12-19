@@ -47,6 +47,7 @@ MIN_NOTE = 21   # A0
 MAX_NOTE = 108  # C8
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+NOTE_NAMES_FLATS = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
 
 INTERVAL_LABELS = {
     0: "f",
@@ -900,6 +901,7 @@ class StaffWidget(QWidget):
             "accidental_y_offset": 0.0,
             "accidental_collision_x_offset": 0.0,
             "accidental_stack_offset": 0.25,
+            "accidental_style": "sharps",
             "collision_y_offset_steps": 0.0,
             "collision_x_offset_scale": 1.0,
             "staff_line_length_scale": 1.0,
@@ -950,6 +952,60 @@ class StaffWidget(QWidget):
         step = octave * 7 + pc_step.get(note % 12, 0)
         reference = 4 * 7  # C4
         return step - reference
+
+    def _note_name_for_staff(self, note: int) -> str:
+        style = str(self.staff_settings.get("accidental_style", "sharps"))
+        names = NOTE_NAMES_FLATS if style == "flats" else NOTE_NAMES
+        return names[note % 12]
+
+    def _clef_rect(self, clef_type: str, staff_top_y: float, staff_spacing: float, x: float) -> QRectF:
+        base_scale = max(0.4, float(self.staff_settings.get("clef_scale", 1.0)))
+        if clef_type == "treble":
+            clef_scale = max(0.4, float(self.staff_settings.get("treble_clef_scale", base_scale)))
+        else:
+            clef_scale = max(0.4, float(self.staff_settings.get("bass_clef_scale", base_scale)))
+
+        if clef_type == "treble":
+            line_index = 3  # Segunda línea desde abajo (G4)
+            y_offset = float(self.staff_settings.get("treble_clef_y_offset", 0.0)) * staff_spacing
+            y = staff_top_y + line_index * staff_spacing + y_offset
+        else:
+            line_index = 1  # Los puntos abrazan la cuarta línea (F3)
+            y_offset = float(self.staff_settings.get("bass_clef_y_offset", 0.0)) * staff_spacing
+            y = staff_top_y + line_index * staff_spacing + y_offset
+
+        rect_height = staff_spacing * 4.2 * clef_scale
+        rect_width = staff_spacing * 3.2 * clef_scale
+        return QRectF(
+            x,
+            y - rect_height / 2,
+            rect_width,
+            rect_height,
+        )
+
+    @staticmethod
+    def _rects_intersect(rect: QRectF, others: List[QRectF]) -> bool:
+        return any(rect.intersects(other) for other in others)
+
+    def _resolve_horizontal_collision(
+        self,
+        rect: QRectF,
+        occupied: List[QRectF],
+        step: float,
+        max_attempts: int = 12,
+        prefer_left: bool = True,
+    ) -> QRectF:
+        if not self._rects_intersect(rect, occupied):
+            return rect
+
+        directions = (-1, 1) if prefer_left else (1, -1)
+        for offset_index in range(1, max_attempts + 1):
+            for direction in directions:
+                candidate = QRectF(rect)
+                candidate.translate(direction * step * offset_index, 0)
+                if not self._rects_intersect(candidate, occupied):
+                    return candidate
+        return rect
 
     def _color_from_setting(self, key: str, default: QColor) -> QColor:
         value = self.staff_settings.get(key, default)
@@ -1084,11 +1140,10 @@ class StaffWidget(QWidget):
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "𝅝")
 
     def _accidental_symbol(self, note: int) -> str:
-        if note % 12 in (1, 6):  # C#, F#
-            return "♯"
-        if note % 12 in (3, 8, 10):  # Eb, Ab, Bb
-            return "♭"
-        return ""
+        if note % 12 not in (1, 3, 6, 8, 10):
+            return ""
+        style = str(self.staff_settings.get("accidental_style", "sharps"))
+        return "♭" if style == "flats" else "♯"
 
     def drawAccidental(
         self,
@@ -1143,6 +1198,7 @@ class StaffWidget(QWidget):
         note_x_base = line_start + staff_spacing * 1.2 + note_x_offset
         note_head_scale = max(0.5, float(self.staff_settings.get("note_head_scale", 1.0)))
         note_head_width = staff_spacing * 1.2 * note_head_scale
+        note_head_size = staff_spacing * 2.2 * note_head_scale
         ledger_length = note_head_width * 1.4
         collision_y_offset = float(self.staff_settings.get("collision_y_offset_steps", 0.0)) * step_height
 
@@ -1152,6 +1208,7 @@ class StaffWidget(QWidget):
         accidental_info: List[Tuple[str, float, float, float]] = []
         note_rows: List[Tuple[int, float, List[int], float]] = []
         label_rects: List[QRectF] = []
+        note_head_rects: List[QRectF] = []
 
         for note in sorted(self.notes):
             rel_step = self._relative_step(note)
@@ -1170,6 +1227,14 @@ class StaffWidget(QWidget):
             note_x = note_x_base + offsets.get(note, 0.0)
             note_positions.append(note_x)
             note_rows.append((note, y, ledger_steps, note_x))
+            note_head_rects.append(
+                QRectF(
+                    note_x - note_head_size / 2.0,
+                    y - note_head_size / 2.0,
+                    note_head_size,
+                    note_head_size,
+                )
+            )
 
             accidental = self._accidental_symbol(note)
             if accidental:
@@ -1207,6 +1272,12 @@ class StaffWidget(QWidget):
         painter.setPen(QPen(clef_color))
         self.drawClef(painter, "bass", bass_top, staff_spacing, bass_clef_x)
 
+        clef_rects = [
+            self._clef_rect("treble", treble_top, staff_spacing, treble_clef_x),
+            self._clef_rect("bass", bass_top, staff_spacing, bass_clef_x),
+        ]
+        base_occupied_rects = note_head_rects + clef_rects
+
         for note, y, ledger_steps, note_x in note_rows:
             ledger_color = self._color_from_setting("ledger_line_color", staff_line_color)
             ledger_pen = QPen(ledger_color)
@@ -1241,31 +1312,60 @@ class StaffWidget(QWidget):
                 staff_spacing * 1.2,
             )
             label_collision_x = float(self.staff_settings.get("label_collision_x_offset", 0.6)) * staff_spacing
-            for _ in range(4):
-                if any(label_rect.intersects(existing) for existing in label_rects):
-                    label_rect.moveLeft(label_rect.left() - label_collision_x)
-                else:
-                    break
+            label_rect = self._resolve_horizontal_collision(
+                label_rect,
+                base_occupied_rects + label_rects,
+                label_collision_x,
+                max_attempts=10,
+                prefer_left=True,
+            )
             label_rects.append(QRectF(label_rect))
             painter.drawText(
                 label_rect,
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                midi_to_name(note),
+                self._note_name_for_staff(note),
             )
 
-        for idx, (symbol, column_x, y, head_width) in enumerate(accidental_info):
+        accidental_scale = max(0.4, float(self.staff_settings.get("accidental_scale", 1.0)))
+        accidental_font = QFont(self.staff_font_family, int(staff_spacing * 1.4 * accidental_scale))
+        metrics = QFontMetricsF(accidental_font)
+        accidental_x_offset = float(self.staff_settings.get("accidental_x_offset", 0.0)) * staff_spacing
+        accidental_y_offset = float(self.staff_settings.get("accidental_y_offset", 0.0)) * staff_spacing
+        accidental_rects: List[QRectF] = []
+        for symbol, column_x, y, head_width in accidental_info:
             stack_offset = float(self.staff_settings.get("accidental_stack_offset", 0.25))
-            x_offset = -(idx % 2) * head_width * stack_offset
+            step = max(staff_spacing * 0.35, head_width * stack_offset)
             accidental_color = self._color_from_setting("accidental_color", QColor(Qt.GlobalColor.black))
             painter.setPen(QPen(accidental_color))
+            painter.setFont(accidental_font)
+            text_width = metrics.horizontalAdvance(symbol)
+            text_height = metrics.height()
+            accidental_x = column_x - head_width * 1.2 + accidental_x_offset
+            center_x = accidental_x + (head_width * 1.2) / 2.0
+            baseline_y = y - text_height / 2.0 + metrics.ascent() + accidental_y_offset
+            rect = QRectF(
+                center_x - text_width / 2.0,
+                baseline_y - metrics.ascent(),
+                text_width,
+                text_height,
+            )
+            rect = self._resolve_horizontal_collision(
+                rect,
+                base_occupied_rects + accidental_rects + label_rects,
+                step,
+                max_attempts=14,
+                prefer_left=True,
+            )
+            column_x += rect.left() - (center_x - text_width / 2.0)
             self.drawAccidental(
                 painter,
                 symbol,
-                column_x + x_offset,
+                column_x,
                 y,
                 staff_spacing,
                 head_width,
             )
+            accidental_rects.append(QRectF(rect))
 
 
 class StaffWindow(QMainWindow):
@@ -1882,6 +1982,17 @@ class ControlWindow(QMainWindow):
         )
 
         accidentals_menu = staff_menu.addMenu("Alteraciones")
+        accidental_style_menu = accidentals_menu.addMenu("Preferencia")
+        self.accidental_style_group = QActionGroup(self)
+        self.accidental_style_group.setExclusive(True)
+        self.accidental_style_actions = {}
+        for text, style in (("Sostenidos", "sharps"), ("Bemoles", "flats")):
+            action = accidental_style_menu.addAction(text)
+            action.setCheckable(True)
+            action.setData(style)
+            self.accidental_style_group.addAction(action)
+            self.accidental_style_actions[style] = action
+        self.accidental_style_group.triggered.connect(self._accidental_style_selected)
         accidental_size_action = accidentals_menu.addAction("Tamaño de alteraciones…")
         accidental_size_action.triggered.connect(
             lambda: self._prompt_staff_setting(
@@ -2141,6 +2252,25 @@ class ControlWindow(QMainWindow):
 
     def _apply_staff_settings(self):
         self.staff_window.widget.apply_staff_settings(self.staff_settings)
+        self._sync_accidental_style_actions()
+
+    def _accidental_style_selected(self, action):
+        style = action.data()
+        if not style:
+            return
+        self.staff_settings["accidental_style"] = str(style)
+        self._apply_staff_settings()
+        self._save_staff_settings()
+
+    def _sync_accidental_style_actions(self):
+        if not hasattr(self, "accidental_style_actions"):
+            return
+        style = str(self.staff_settings.get("accidental_style", "sharps"))
+        action = self.accidental_style_actions.get(style)
+        if action:
+            action.blockSignals(True)
+            action.setChecked(True)
+            action.blockSignals(False)
 
     def _prompt_staff_setting(
         self,
