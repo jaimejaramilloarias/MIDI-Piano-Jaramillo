@@ -872,13 +872,13 @@ class StaffWidget(QWidget):
     @staticmethod
     def default_staff_settings() -> Dict[str, object]:
         return {
-            "background_color": "#ffffff",
-            "staff_line_color": "#282828",
-            "ledger_line_color": "#282828",
-            "clef_color": "#000000",
-            "note_head_color": "#000000",
-            "accidental_color": "#000000",
-            "label_color": "#000000",
+            "background_color": "#000000",
+            "staff_line_color": "#ffffff",
+            "ledger_line_color": "#ffffff",
+            "clef_color": "#ffffff",
+            "note_head_color": "#ffffff",
+            "accidental_color": "#ffffff",
+            "label_color": "#ffffff",
             "clef_scale": 1.0,
             "clef_x_offset": 0.0,
             "treble_clef_scale": 1.0,
@@ -897,11 +897,14 @@ class StaffWidget(QWidget):
             "accidental_scale": 1.0,
             "accidental_x_offset": 0.0,
             "accidental_y_offset": 0.0,
+            "accidental_collision_x_offset": 0.0,
             "accidental_stack_offset": 0.25,
             "collision_y_offset_steps": 0.0,
             "collision_x_offset_scale": 1.0,
             "staff_line_length_scale": 1.0,
             "staff_line_extra": 0.0,
+            "middle_c_ledger_x_offset": 0.0,
+            "label_collision_x_offset": 0.6,
         }
 
     def _load_staff_font(self) -> str:
@@ -1098,16 +1101,15 @@ class StaffWidget(QWidget):
         accidental_scale = max(0.4, float(self.staff_settings.get("accidental_scale", 1.0)))
         font = QFont(self.staff_font_family, int(staff_spacing * 1.4 * accidental_scale))
         painter.setFont(font)
+        metrics = QFontMetricsF(font)
         accidental_x_offset = float(self.staff_settings.get("accidental_x_offset", 0.0)) * staff_spacing
         accidental_y_offset = float(self.staff_settings.get("accidental_y_offset", 0.0)) * staff_spacing
         accidental_x = column_x - note_head_width * 1.2 + accidental_x_offset
-        rect = QRectF(
-            accidental_x,
-            note_y - staff_spacing * 0.9 + accidental_y_offset,
-            note_head_width * 1.2,
-            staff_spacing * 1.8,
-        )
-        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, accidental)
+        text_width = metrics.horizontalAdvance(accidental)
+        text_height = metrics.height()
+        center_x = accidental_x + (note_head_width * 1.2) / 2.0
+        baseline_y = note_y - text_height / 2.0 + metrics.ascent() + accidental_y_offset
+        painter.drawText(QPointF(center_x - text_width / 2.0, baseline_y), accidental)
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -1146,6 +1148,7 @@ class StaffWidget(QWidget):
         note_positions: List[float] = []
         accidental_info: List[Tuple[str, float, float, float]] = []
         note_rows: List[Tuple[int, float, List[int], float]] = []
+        label_rects: List[QRectF] = []
 
         for note in sorted(self.notes):
             rel_step = self._relative_step(note)
@@ -1168,6 +1171,10 @@ class StaffWidget(QWidget):
             accidental = self._accidental_symbol(note)
             if accidental:
                 accidental_column_x = note_x
+                if offsets.get(note, 0.0) != 0.0:
+                    accidental_column_x += float(
+                        self.staff_settings.get("accidental_collision_x_offset", 0.0)
+                    ) * staff_spacing
                 accidental_info.append((accidental, accidental_column_x, y, note_head_width))
 
         accidental_info.sort(key=lambda item: item[2])
@@ -1204,10 +1211,13 @@ class StaffWidget(QWidget):
             painter.setPen(ledger_pen)
             for ls in ledger_steps:
                 ly = center_y - ls * step_height + note_y_offset
+                ledger_x_offset = 0.0
+                if ls == 0:
+                    ledger_x_offset = float(self.staff_settings.get("middle_c_ledger_x_offset", 0.0)) * staff_spacing
                 painter.drawLine(
-                    note_x - ledger_length / 2,
+                    note_x - ledger_length / 2 + ledger_x_offset,
                     ly,
-                    note_x + ledger_length / 2,
+                    note_x + ledger_length / 2 + ledger_x_offset,
                     ly,
                 )
 
@@ -1217,16 +1227,25 @@ class StaffWidget(QWidget):
 
             label_scale = max(0.6, float(self.staff_settings.get("label_font_scale", 1.0)))
             label_font_family = str(self.staff_settings.get("label_font_family", "")).strip() or "Arial"
-            painter.setFont(QFont(label_font_family, int(staff_spacing * 1.1 * label_scale)))
+            label_font = QFont(label_font_family, int(staff_spacing * 1.1 * label_scale))
+            painter.setFont(label_font)
             label_color = self._color_from_setting("label_color", QColor(Qt.GlobalColor.black))
             painter.setPen(QPen(label_color))
+            label_rect = QRectF(
+                layout["margin"] + label_x_offset,
+                y - staff_spacing * 0.6 + label_y_offset,
+                layout["labelWidth"] - staff_spacing * 0.2,
+                staff_spacing * 1.2,
+            )
+            label_collision_x = float(self.staff_settings.get("label_collision_x_offset", 0.6)) * staff_spacing
+            for _ in range(4):
+                if any(label_rect.intersects(existing) for existing in label_rects):
+                    label_rect.moveLeft(label_rect.left() - label_collision_x)
+                else:
+                    break
+            label_rects.append(QRectF(label_rect))
             painter.drawText(
-                QRectF(
-                    layout["margin"] + label_x_offset,
-                    y - staff_spacing * 0.6 + label_y_offset,
-                    layout["labelWidth"] - staff_spacing * 0.2,
-                    staff_spacing * 1.2,
-                ),
+                label_rect,
                 Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
                 midi_to_name(note),
             )
@@ -1893,6 +1912,17 @@ class ControlWindow(QMainWindow):
             )
         )
 
+        accidental_collision_action = accidentals_menu.addAction("Posición X alteraciones en segundas…")
+        accidental_collision_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "accidental_collision_x_offset",
+                "Posición X alteraciones para notas desplazadas",
+                "Offset en espaciado",
+                -6.0,
+                6.0,
+            )
+        )
+
         accidental_stack_action = accidentals_menu.addAction("Desplazamiento alteraciones repetidas…")
         accidental_stack_action.triggered.connect(
             lambda: self._prompt_staff_setting(
@@ -1929,6 +1959,17 @@ class ControlWindow(QMainWindow):
                 "Offset en espaciado",
                 -10.0,
                 20.0,
+            )
+        )
+
+        middle_c_ledger_action = lines_menu.addAction("Posición X línea C central…")
+        middle_c_ledger_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "middle_c_ledger_x_offset",
+                "Posición X línea adicional del C central",
+                "Offset en espaciado",
+                -6.0,
+                6.0,
             )
         )
 
