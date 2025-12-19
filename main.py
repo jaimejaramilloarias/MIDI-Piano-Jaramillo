@@ -47,7 +47,10 @@ MIN_NOTE = 21   # A0
 MAX_NOTE = 108  # C8
 
 NOTE_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-NOTE_NAMES_FLATS = ["C", "Db", "D", "Eb", "E", "F", "Gb", "G", "Ab", "A", "Bb", "B"]
+NOTE_LETTERS = ["C", "D", "E", "F", "G", "A", "B"]
+NOTE_LETTER_TO_INDEX = {letter: index for index, letter in enumerate(NOTE_LETTERS)}
+NOTE_LETTER_TO_PC = {"C": 0, "D": 2, "E": 4, "F": 5, "G": 7, "A": 9, "B": 11}
+ACCIDENTAL_TO_SYMBOL = {"bb": "♭♭", "b": "♭", "": "", "#": "♯", "##": "♯♯"}
 
 INTERVAL_LABELS = {
     0: "f",
@@ -161,6 +164,91 @@ for _pattern in BASE_CHORD_PATTERNS:
 CHORD_PATTERNS = [dict(ptn) for ptn in BASE_CHORD_PATTERNS]
 
 DETECT_NOTE_NAMES = ['C','C#','D','Eb','E','F','F#','G','Ab','A','Bb','B']
+
+
+def _parse_root_spelling(chord_name: str) -> Tuple[Optional[str], str]:
+    if not chord_name:
+        return None, ""
+    root = chord_name.split("/")[0].strip()
+    if not root:
+        return None, ""
+    letter = root[0].upper()
+    if letter not in NOTE_LETTER_TO_INDEX:
+        return None, ""
+    accidental = ""
+    if len(root) > 1 and root[1] in ("b", "#"):
+        accidental = root[1]
+        if len(root) > 2 and root[2] == root[1]:
+            accidental += root[2]
+    return letter, accidental
+
+
+def _degree_offset(degree: int) -> int:
+    mapping = {1: 0, 2: 1, 3: 2, 4: 3, 5: 4, 6: 5, 7: 6, 9: 1, 11: 3, 13: 5}
+    return mapping.get(degree, 0)
+
+
+def _degree_for_interval(interval: int, chord_name: str) -> int:
+    name = chord_name or ""
+    is_sus2 = "sus2" in name
+    is_sus4 = "sus4" in name
+
+    if interval == 0:
+        return 1
+
+    if interval in (1, 2, 3):
+        if "addb2" in name and interval == 1:
+            return 2
+        if "#9" in name and interval == 3:
+            return 9
+        if "b9" in name and interval == 1:
+            return 9
+        if ("9" in name or "add2" in name or is_sus2) and interval == 2:
+            return 9 if "9" in name else 2
+        return 3
+
+    if interval == 4:
+        return 3
+
+    if interval in (5, 6):
+        if is_sus4 and interval == 5:
+            return 4
+        if "add4" in name and interval == 5:
+            return 4
+        if "#11" in name and interval == 6:
+            return 11
+        if "11" in name and interval in (5, 6):
+            return 11
+        if "b5" in name or "(b5)" in name or "º" in name or "ø" in name:
+            if interval == 6:
+                return 5
+        if interval == 5 and not is_sus4:
+            return 11
+        return 4 if is_sus4 else 5
+
+    if interval == 7:
+        return 5
+
+    if interval == 8:
+        if "b13" in name:
+            return 13
+        if "+" in name or "#5" in name:
+            return 5
+        return 13 if "13" in name else 5
+
+    if interval == 9:
+        if "º7" in name or ("º" in name and "7" in name):
+            return 7
+        if "13" in name or "b13" in name:
+            return 13
+        if "6" in name and "13" not in name:
+            return 6
+        return 6
+
+    if interval in (10, 11):
+        return 7
+
+    return 1
 
 
 def _normalize_intervals(intervals: List[int]) -> List[int]:
@@ -867,6 +955,7 @@ class StaffWidget(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.notes: Set[int] = set()
+        self.chord_info: Dict[str, object] = {}
         self.setMinimumSize(520, 240)
         self.staff_settings = self.default_staff_settings()
         self.staff_font_family = self._load_staff_font()
@@ -901,7 +990,6 @@ class StaffWidget(QWidget):
             "accidental_y_offset": 0.0,
             "accidental_collision_x_offset": 0.0,
             "accidental_stack_offset": 0.25,
-            "accidental_style": "sharps",
             "collision_y_offset_steps": 0.0,
             "collision_x_offset_scale": 1.0,
             "staff_line_length_scale": 1.0,
@@ -926,54 +1014,20 @@ class StaffWidget(QWidget):
         self.staff_settings.update(settings)
         self.update()
 
-    def set_notes(self, notes: Set[int]):
+    def set_notes(self, notes: Set[int], chord_info: Optional[Dict[str, object]] = None):
         self.notes = {n for n in notes if MIN_NOTE <= n <= MAX_NOTE}
+        if chord_info is not None:
+            self.chord_info = chord_info
         self.update()
 
-    def _relative_step(self, note: int) -> int:
+    def _relative_step(self, note: int, letter: str) -> int:
         """Posición relativa (en pasos de línea/espacio) respecto a C4."""
 
-        style = str(self.staff_settings.get("accidental_style", "sharps"))
-        if style == "flats":
-            pc_step = {
-                0: 0,   # C
-                1: 1,   # Db
-                2: 1,   # D
-                3: 2,   # Eb
-                4: 2,   # E
-                5: 3,   # F
-                6: 4,   # Gb
-                7: 4,   # G
-                8: 5,   # Ab
-                9: 5,   # A
-                10: 6,  # Bb
-                11: 6,  # B
-            }
-        else:
-            pc_step = {
-                0: 0,  # C
-                1: 0,  # C#
-                2: 1,  # D
-                3: 1,  # D#
-                4: 2,  # E
-                5: 3,  # F
-                6: 3,  # F#
-                7: 4,  # G
-                8: 4,  # G#
-                9: 5,  # A
-                10: 5,  # A#
-                11: 6,  # B
-            }
-
         octave = note_octave(note)
-        step = octave * 7 + pc_step.get(note % 12, 0)
+        letter_index = NOTE_LETTER_TO_INDEX.get(letter, 0)
+        step = octave * 7 + letter_index
         reference = 4 * 7  # C4
         return step - reference
-
-    def _note_name_for_staff(self, note: int) -> str:
-        style = str(self.staff_settings.get("accidental_style", "sharps"))
-        names = NOTE_NAMES_FLATS if style == "flats" else NOTE_NAMES
-        return names[note % 12]
 
     def _clef_rect(self, clef_type: str, staff_top_y: float, staff_spacing: float, x: float) -> QRectF:
         base_scale = max(0.4, float(self.staff_settings.get("clef_scale", 1.0)))
@@ -1067,7 +1121,9 @@ class StaffWidget(QWidget):
             "centerY": center_y,
         }
 
-    def computeNoteXOffsetsForCollisions(self, notes: List[int], note_head_width: float) -> Dict[int, float]:
+    def computeNoteXOffsetsForCollisions(
+        self, notes: List[int], note_head_width: float, note_steps: Dict[int, int]
+    ) -> Dict[int, float]:
         """Desplazamientos en X para segundas que colisionan (intervalo de 1 paso)."""
 
         offsets: Dict[int, float] = {n: 0.0 for n in notes}
@@ -1104,7 +1160,7 @@ class StaffWidget(QWidget):
         treble_group: List[Tuple[int, int]] = []
         bass_group: List[Tuple[int, int]] = []
         for n in notes:
-            step = self._relative_step(n)
+            step = note_steps.get(n, 0)
             if step >= 1:
                 treble_group.append((n, step))
             else:
@@ -1170,11 +1226,42 @@ class StaffWidget(QWidget):
         )
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "𝅝")
 
-    def _accidental_symbol(self, note: int, show_natural: bool = False) -> str:
-        if note % 12 not in (1, 3, 6, 8, 10):
-            return "♮" if show_natural else ""
-        style = str(self.staff_settings.get("accidental_style", "sharps"))
-        return "♭" if style == "flats" else "♯"
+    def _accidental_symbol(self, accidental: str, show_natural: bool = False) -> str:
+        if accidental:
+            return ACCIDENTAL_TO_SYMBOL.get(accidental, "")
+        return "♮" if show_natural else ""
+
+    def _note_spellings_for_notes(self, notes: Set[int]) -> Dict[int, str]:
+        if not notes:
+            return {}
+        chord_info = self.chord_info or {}
+        principal = str(chord_info.get("principal") or "")
+        principal_match = chord_info.get("principal_match") or {}
+        root_pc = principal_match.get("root")
+        chord_name = str(principal_match.get("nombre") or "")
+        root_letter, _accidental = _parse_root_spelling(principal)
+        if root_letter is None or root_pc is None:
+            return {note: NOTE_NAMES[note % 12] for note in notes}
+
+        spellings: Dict[int, str] = {}
+        root_pc = int(root_pc)
+        root_index = NOTE_LETTER_TO_INDEX[root_letter]
+
+        for note in notes:
+            interval = (note - root_pc) % 12
+            degree = _degree_for_interval(interval, chord_name)
+            letter_index = (root_index + _degree_offset(degree)) % 7
+            letter = NOTE_LETTERS[letter_index]
+            natural_pc = NOTE_LETTER_TO_PC[letter]
+            diff = (note % 12 - natural_pc + 12) % 12
+            if diff > 6:
+                diff -= 12
+            if diff not in (-2, -1, 0, 1, 2):
+                spellings[note] = NOTE_NAMES[note % 12]
+                continue
+            accidental = { -2: "bb", -1: "b", 0: "", 1: "#", 2: "##" }[diff]
+            spellings[note] = f"{letter}{accidental}"
+        return spellings
 
     def drawAccidental(
         self,
@@ -1233,18 +1320,27 @@ class StaffWidget(QWidget):
         ledger_length = note_head_width * 1.4
         collision_y_offset = float(self.staff_settings.get("collision_y_offset_steps", 0.0)) * step_height
 
-        offsets = self.computeNoteXOffsetsForCollisions(sorted(self.notes), note_head_width)
+        note_spellings = self._note_spellings_for_notes(self.notes)
+        note_steps: Dict[int, int] = {}
+        note_accidentals: Dict[int, str] = {}
+        for note in self.notes:
+            spelling = note_spellings.get(note, NOTE_NAMES[note % 12])
+            letter = spelling[0]
+            accidental = spelling[1:]
+            note_steps[note] = self._relative_step(note, letter)
+            note_accidentals[note] = accidental
+
+        offsets = self.computeNoteXOffsetsForCollisions(sorted(self.notes), note_head_width, note_steps)
 
         note_positions: List[float] = []
         accidental_info: List[Tuple[str, float, float, float]] = []
         note_rows: List[Tuple[int, float, List[int], float]] = []
         note_head_rects: List[QRectF] = []
 
-        note_steps: Dict[int, int] = {note: self._relative_step(note) for note in self.notes}
         step_groups: Dict[int, Dict[str, bool]] = {}
         for note, rel_step in note_steps.items():
             info = step_groups.setdefault(rel_step, {"natural": False, "altered": False})
-            if note % 12 in (1, 3, 6, 8, 10):
+            if note_accidentals.get(note):
                 info["altered"] = True
             else:
                 info["natural"] = True
@@ -1275,11 +1371,9 @@ class StaffWidget(QWidget):
                 )
             )
 
-            show_natural = False
-            if note % 12 not in (1, 3, 6, 8, 10):
-                group_info = step_groups.get(rel_step, {})
-                show_natural = bool(group_info.get("altered"))
-            accidental = self._accidental_symbol(note, show_natural)
+            group_info = step_groups.get(rel_step, {})
+            show_natural = not note_accidentals.get(note) and bool(group_info.get("altered"))
+            accidental = self._accidental_symbol(note_accidentals.get(note, ""), show_natural)
             if accidental:
                 accidental_column_x = note_x
                 if offsets.get(note, 0.0) != 0.0:
@@ -1384,7 +1478,7 @@ class StaffWidget(QWidget):
             )
             accidental_rects.append(QRectF(rect))
 
-        label_texts = [self._note_name_for_staff(note) for note in sorted(self.notes)]
+        label_texts = [note_spellings.get(note, NOTE_NAMES[note % 12]) for note in sorted(self.notes)]
         if label_texts:
             label_scale = max(0.6, float(self.staff_settings.get("label_font_scale", 1.0)))
             label_font_family = str(self.staff_settings.get("label_font_family", "")).strip() or "Arial"
@@ -1438,8 +1532,8 @@ class StaffWindow(QMainWindow):
         self._drag_offset = None
         super().mouseReleaseEvent(event)
 
-    def set_notes(self, notes: Set[int]):
-        self.widget.set_notes(notes)
+    def set_notes(self, notes: Set[int], chord_info: Optional[Dict[str, object]] = None):
+        self.widget.set_notes(notes, chord_info)
 
 class ControlWindow(QMainWindow):
     """
@@ -2021,17 +2115,6 @@ class ControlWindow(QMainWindow):
         )
 
         accidentals_menu = staff_menu.addMenu("Alteraciones")
-        accidental_style_menu = accidentals_menu.addMenu("Preferencia")
-        self.accidental_style_group = QActionGroup(self)
-        self.accidental_style_group.setExclusive(True)
-        self.accidental_style_actions = {}
-        for text, style in (("Sostenidos", "sharps"), ("Bemoles", "flats")):
-            action = accidental_style_menu.addAction(text)
-            action.setCheckable(True)
-            action.setData(style)
-            self.accidental_style_group.addAction(action)
-            self.accidental_style_actions[style] = action
-        self.accidental_style_group.triggered.connect(self._accidental_style_selected)
         accidental_size_action = accidentals_menu.addAction("Tamaño de alteraciones…")
         accidental_size_action.triggered.connect(
             lambda: self._prompt_staff_setting(
@@ -2291,25 +2374,6 @@ class ControlWindow(QMainWindow):
 
     def _apply_staff_settings(self):
         self.staff_window.widget.apply_staff_settings(self.staff_settings)
-        self._sync_accidental_style_actions()
-
-    def _accidental_style_selected(self, action):
-        style = action.data()
-        if not style:
-            return
-        self.staff_settings["accidental_style"] = str(style)
-        self._apply_staff_settings()
-        self._save_staff_settings()
-
-    def _sync_accidental_style_actions(self):
-        if not hasattr(self, "accidental_style_actions"):
-            return
-        style = str(self.staff_settings.get("accidental_style", "sharps"))
-        action = self.accidental_style_actions.get(style)
-        if action:
-            action.blockSignals(True)
-            action.setChecked(True)
-            action.blockSignals(False)
 
     def _prompt_staff_setting(
         self,
@@ -3468,7 +3532,7 @@ class ControlWindow(QMainWindow):
             if changed:
                 notas_para_acorde = set(self.active_notes) | set(self.sustained_notes)
                 chord_info = self.chord_window.update_chord(notas_para_acorde)
-                self.staff_window.set_notes(notas_para_acorde)
+                self.staff_window.set_notes(notas_para_acorde, chord_info)
                 self._update_interval_labels(notas_para_acorde, chord_info)
                 if self.learning_chord:
                     if self.learning_waiting_first_note and new_note_on and notas_para_acorde:
