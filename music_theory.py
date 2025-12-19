@@ -61,13 +61,13 @@ def _degree_for_interval(interval: int, chord_name: str) -> int:
             return 4
         if "add4" in name and interval == 5:
             return 4
+        if "b5" in name or "(b5)" in name or "º" in name or "ø" in name:
+            if interval == 6:
+                return 5
         if "#11" in name and interval == 6:
             return 11
         if "11" in name and interval in (5, 6):
             return 11
-        if "b5" in name or "(b5)" in name or "º" in name or "ø" in name:
-            if interval == 6:
-                return 5
         if interval == 5 and not is_sus4:
             return 11
         return 4 if is_sus4 else 5

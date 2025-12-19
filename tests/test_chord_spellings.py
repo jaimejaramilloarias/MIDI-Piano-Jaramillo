@@ -29,6 +29,27 @@ def expected_degree(interval: int, chord_name: str) -> int | None:
 
 
 class TestChordSpellings(unittest.TestCase):
+    def test_diminished_fifth_spellings_override_augmented_fourth(self) -> None:
+        cases = [
+            ("11(b5)no3", "B", 11, 6, "F"),
+            ("13(b5)", "C", 1, 6, "G"),
+            ("º7(11)", "E", 4, 6, "Bb"),
+            ("ø11", "A", 9, 6, "Eb"),
+        ]
+
+        for chord_name, root_letter, root_pc, interval, expected in cases:
+            spelling = music_theory.spell_note_for_interval(
+                root_letter, root_pc, chord_name, interval
+            )
+            self.assertEqual(
+                spelling,
+                expected,
+                msg=(
+                    f"{root_letter}{chord_name}: intervalo {interval} esperaba {expected} "
+                    f"pero fue {spelling}"
+                ),
+            )
+
     def test_dictionary_spellings(self) -> None:
         dictionary_path = Path(__file__).resolve().parents[1] / "diccionario_acordes.json"
         payload = json.loads(dictionary_path.read_text(encoding="utf-8"))
