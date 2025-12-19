@@ -33,6 +33,7 @@ from PyQt6.QtWidgets import (
     QColorDialog,
     QInputDialog,
     QFileDialog,
+    QWidgetAction,
 )
 import mido
 
@@ -45,6 +46,7 @@ from music_theory import (
     NOTE_NAMES,
     _degree_for_interval,
     _degree_offset,
+    _accidental_offset,
     _parse_root_spelling,
     midi_of_C,
     note_octave,
@@ -1083,6 +1085,19 @@ class StaffWidget(QWidget):
         apply_offsets(treble_group)
         apply_offsets(bass_group)
 
+        treble_steps = {}
+        bass_steps = {}
+        for note, step in treble_group:
+            treble_steps.setdefault(step, []).append(note)
+        for note, step in bass_group:
+            bass_steps.setdefault(step, []).append(note)
+
+        for step, notes_in_step in treble_steps.items():
+            neighbor = step - 1
+            if neighbor in bass_steps:
+                for note in notes_in_step:
+                    offsets[note] += dx
+
         return offsets
 
     # --- Dibujo modular -------------------------------------------------
@@ -1149,6 +1164,17 @@ class StaffWidget(QWidget):
         if not notes:
             return {}
         chord_info = self.chord_info or {}
+        custom_map = chord_info.get("custom_spelling_map")
+        if isinstance(custom_map, dict) and custom_map:
+            spellings: Dict[int, str] = {}
+            for note in notes:
+                pc = note % 12
+                spelling = custom_map.get(pc)
+                if spelling:
+                    spellings[note] = spelling
+                else:
+                    spellings[note] = NOTE_NAMES[pc]
+            return spellings
         principal = str(chord_info.get("principal") or "")
         principal_match = chord_info.get("principal_match") or {}
         root_pc = principal_match.get("root")
@@ -1464,9 +1490,9 @@ class StaffWindow(QMainWindow):
     def set_notes(self, notes: Set[int], chord_info: Optional[Dict[str, object]] = None):
         self.widget.set_notes(notes, chord_info)
 
-class ControlWindow(QMainWindow):
+class ControlWindow(QWidget):
     """
-    Ventana de controles:
+    Panel de controles (se aloja en el menú superior):
     - Selección de dispositivo MIDI
     - Nota inicial (solo A0 o Cs)
     - Número de octavas
@@ -1477,12 +1503,17 @@ class ControlWindow(QMainWindow):
 
     CONFIG_PATH = Path.home() / ".midi_piano_prefs.json"
 
-    def __init__(self, piano_window: PianoWindow, chord_window: ChordWindow, staff_window: StaffWindow):
+    def __init__(
+        self,
+        piano_window: PianoWindow,
+        chord_window: ChordWindow,
+        staff_window: StaffWindow,
+    ):
         super().__init__()
-        self.setWindowTitle("MIDI Piano - Controles")
 
         self.settings = QSettings("MIDI-Piano-Jaramillo", "MIDI-Piano")
 
+        self.menu_bar = piano_window.menuBar()
         self.piano_window = piano_window
         self.piano = piano_window.piano
         self.chord_window = chord_window
@@ -1502,6 +1533,7 @@ class ControlWindow(QMainWindow):
         self.chord_text_color = QColor(Qt.GlobalColor.black)
         self.chord_bg_color = QColor(Qt.GlobalColor.white)
         self.interval_label_settings = self._default_interval_label_settings()
+        self.custom_chord_spellings: Dict[Tuple[int, ...], Dict[int, str]] = {}
         self.capture_timer = QTimer()
         self.capture_timer.setSingleShot(True)
         self.capture_timer.timeout.connect(self._finish_capture_window)
@@ -1636,9 +1668,7 @@ class ControlWindow(QMainWindow):
         self.learned_chords_container.setLayout(self.learned_chords_layout)
         top_layout.addWidget(self.learned_chords_container)
 
-        central = QWidget()
-        central.setLayout(top_layout)
-        self.setCentralWidget(central)
+        self.setLayout(top_layout)
 
         # MIDI
         self.midi_in = None
@@ -1676,14 +1706,7 @@ class ControlWindow(QMainWindow):
     # --- menú de ventanas ---
 
     def _setup_window_menu(self):
-        window_menu = self.menuBar().addMenu("Ventana")
-
-        self.controls_action = window_menu.addAction("Ocultar Controles")
-        self.controls_action.setCheckable(True)
-        self.controls_action.setChecked(True)
-        self.controls_action.triggered.connect(
-            lambda checked: self._toggle_window_visibility(self, checked)
-        )
+        window_menu = self.menu_bar.addMenu("Ventana")
 
         self.keyboard_action = window_menu.addAction("Ocultar Teclado")
         self.keyboard_action.setCheckable(True)
@@ -1710,7 +1733,7 @@ class ControlWindow(QMainWindow):
         show_all = window_menu.addAction("Mostrar todas")
         show_all.triggered.connect(self.show_all_windows)
 
-        dictionary_menu = self.menuBar().addMenu("Diccionario")
+        dictionary_menu = self.menu_bar.addMenu("Diccionario")
         load_dict = dictionary_menu.addAction("Cargar diccionario…")
         load_dict.triggered.connect(self.load_chord_dictionary_from_dialog)
 
@@ -1718,7 +1741,7 @@ class ControlWindow(QMainWindow):
         self._setup_interval_menu()
         self._setup_staff_menu()
 
-        for win in (self, self.piano_window, self.chord_window, self.staff_window):
+        for win in (self.piano_window, self.chord_window, self.staff_window):
             win.installEventFilter(self)
 
         QTimer.singleShot(0, self._update_window_actions)
@@ -1742,22 +1765,14 @@ class ControlWindow(QMainWindow):
         self._update_window_actions()
 
     def show_all_windows(self):
-        for win in (self, self.piano_window, self.chord_window, self.staff_window):
+        for win in (self.piano_window, self.chord_window, self.staff_window):
             self._bring_to_front(win)
         self._update_window_actions()
 
     def _update_window_actions(self):
-        controls_visible = self._window_is_visible(self)
         keyboard_visible = self._window_is_visible(self.piano_window)
         chords_visible = self._window_is_visible(self.chord_window)
         staff_visible = self._window_is_visible(self.staff_window)
-
-        self.controls_action.blockSignals(True)
-        self.controls_action.setChecked(controls_visible)
-        self.controls_action.setText(
-            "Ocultar Controles" if controls_visible else "Mostrar Controles"
-        )
-        self.controls_action.blockSignals(False)
 
         self.keyboard_action.blockSignals(True)
         self.keyboard_action.setChecked(keyboard_visible)
@@ -1781,7 +1796,7 @@ class ControlWindow(QMainWindow):
         self.staff_action.blockSignals(False)
 
     def _setup_interval_menu(self):
-        view_menu = self.menuBar().addMenu("Ver")
+        view_menu = self.menu_bar.addMenu("Ver")
         intervals_menu = view_menu.addMenu("Intervalos en teclas")
 
         font_action = intervals_menu.addAction("Fuente…")
@@ -1850,12 +1865,17 @@ class ControlWindow(QMainWindow):
         frame_border_width_action.triggered.connect(self._choose_interval_frame_border_width)
 
     def _setup_controls_menu(self):
-        controls_menu = self.menuBar().addMenu("Controles")
+        controls_menu = self.menu_bar.addMenu("Controles")
         edit_chords_action = controls_menu.addAction("Editar etiquetas de acordes…")
         edit_chords_action.triggered.connect(self._edit_chord_labels)
+        controls_menu.addSeparator()
+
+        panel_action = QWidgetAction(controls_menu)
+        panel_action.setDefaultWidget(self)
+        controls_menu.addAction(panel_action)
 
     def _setup_staff_menu(self):
-        staff_menu = self.menuBar().addMenu("Partitura")
+        staff_menu = self.menu_bar.addMenu("Partitura")
 
         clef_menu = staff_menu.addMenu("Claves")
         clef_size_action = clef_menu.addAction("Tamaño global de claves…")
@@ -2579,7 +2599,7 @@ class ControlWindow(QMainWindow):
         self._sync_interval_position_actions()
 
     def eventFilter(self, source, event):
-        if source in (self, self.piano_window, self.chord_window):
+        if source in (self.piano_window, self.chord_window, self.staff_window):
             if event.type() in (
                 QEvent.Type.WindowStateChange,
                 QEvent.Type.Hide,
@@ -2773,8 +2793,14 @@ class ControlWindow(QMainWindow):
                 }
                 for c in self.custom_chords
             ],
+            "custom_chord_spellings": [
+                {
+                    "pcs": list(signature),
+                    "labels": [spellings.get(pc, NOTE_NAMES[pc]) for pc in signature],
+                }
+                for signature, spellings in sorted(self.custom_chord_spellings.items())
+            ],
             "window_geometries": {
-                "controls": self._geometry_payload_for(self),
                 "keyboard": self._geometry_payload_for(self.piano_window),
                 "chords": self._geometry_payload_for(self.chord_window),
                 "staff": self._geometry_payload_for(self.staff_window),
@@ -2989,6 +3015,26 @@ class ControlWindow(QMainWindow):
                 ):
                     self._register_custom_chord(name, intervals, persist=False)
 
+        custom_spellings = prefs.get("custom_chord_spellings")
+        if isinstance(custom_spellings, list):
+            for entry in custom_spellings:
+                if not isinstance(entry, dict):
+                    continue
+                pcs = entry.get("pcs")
+                labels = entry.get("labels")
+                if not (
+                    isinstance(pcs, list)
+                    and isinstance(labels, list)
+                    and all(isinstance(pc, int) for pc in pcs)
+                    and all(isinstance(label, str) for label in labels)
+                ):
+                    continue
+                signature = tuple(sorted({int(pc) % 12 for pc in pcs}))
+                if len(signature) != len(labels):
+                    continue
+                spellings = {pc: label for pc, label in zip(signature, labels)}
+                self.custom_chord_spellings[signature] = spellings
+
         # Aplicar rango con las preferencias cargadas
         self.range_changed()
 
@@ -3011,7 +3057,6 @@ class ControlWindow(QMainWindow):
                 return None
             return QRect(x, y, w, h)
 
-        self._apply_geometry_if_valid(self, rect_from_payload(geoms.get("controls")))
         self._apply_geometry_if_valid(self.piano_window, rect_from_payload(geoms.get("keyboard")))
         self._apply_geometry_if_valid(self.chord_window, rect_from_payload(geoms.get("chords")))
         self._apply_geometry_if_valid(self.staff_window, rect_from_payload(geoms.get("staff")))
@@ -3209,59 +3254,99 @@ class ControlWindow(QMainWindow):
             self.learned_chords_layout.addWidget(container)
 
     def _edit_chord_labels(self):
-        if not CHORD_PATTERNS:
-            QMessageBox.information(self, "Editar etiquetas", "No hay acordes para editar.")
+        notes = set(self.active_notes) | set(self.sustained_notes)
+        if not notes:
+            QMessageBox.information(
+                self,
+                "Editar etiquetas",
+                "Toca un acorde para definir su enarmonía.",
+            )
             return
 
-        entries: List[Tuple[str, Dict]] = []
-        for pattern in CHORD_PATTERNS:
-            name = pattern.get("nombre", "")
-            oblig = list(pattern.get("obligatorias", []))
-            opc = list(pattern.get("opcionales", []))
-            source = "aprendido" if pattern.get("is_custom") else "base"
-            label_parts = [f"{name or '(sin nombre)'} ({source})", f"obligatorias: {oblig}"]
-            if opc:
-                label_parts.append(f"opcionales: {opc}")
-            label = " — ".join(label_parts)
-            entries.append((label, pattern))
+        signature = tuple(sorted({n % 12 for n in notes}))
+        existing = self.custom_chord_spellings.get(signature, {})
+        if existing:
+            default_text = " ".join(existing.get(pc, NOTE_NAMES[pc]) for pc in signature)
+        else:
+            default_text = " ".join(NOTE_NAMES[pc] for pc in signature)
 
-        entries.sort(key=lambda item: item[0].lower())
-        labels = [label for label, _ in entries]
-        selection, ok = QInputDialog.getItem(
+        text, ok = QInputDialog.getText(
             self,
-            "Editar etiquetas de acordes",
-            "Selecciona el acorde:",
-            labels,
-            0,
-            False,
-        )
-        if not ok or not selection:
-            return
-
-        pattern = next(ptn for label, ptn in entries if label == selection)
-        current_name = pattern.get("nombre", "")
-        new_name, ok = QInputDialog.getText(
-            self,
-            "Editar etiqueta",
-            "Etiqueta/cifrado del acorde:",
-            text=current_name,
+            "Editar etiquetas",
+            "Escribe la enarmonía deseada (ej: E Bb D F# A):",
+            text=default_text,
         )
         if not ok:
             return
-        new_name = str(new_name).strip()
-        if not new_name:
-            QMessageBox.warning(self, "Etiqueta inválida", "La etiqueta no puede estar vacía.")
+
+        raw = str(text).strip()
+        if not raw:
+            if signature in self.custom_chord_spellings:
+                self.custom_chord_spellings.pop(signature, None)
+                self._write_preferences(False)
+                self._refresh_staff_for_current_notes()
             return
 
-        pattern["nombre"] = new_name
-        if not pattern.get("is_custom"):
-            self._remember_additional_base(
-                new_name,
-                list(pattern.get("obligatorias", [])),
-                list(pattern.get("opcionales", [])),
+        parsed = self._parse_note_labels(raw)
+        if parsed is None:
+            QMessageBox.warning(
+                self,
+                "Etiqueta inválida",
+                "No se pudieron leer las notas. Usa letras A-G con b/#.",
             )
-        self._refresh_learned_chords_ui()
+            return
+
+        pcs = tuple(sorted(parsed.keys()))
+        if pcs != signature:
+            QMessageBox.warning(
+                self,
+                "Etiqueta inválida",
+                "Las notas no coinciden con el acorde tocado.",
+            )
+            return
+
+        self.custom_chord_spellings[signature] = parsed
         self._write_preferences(False)
+        self._refresh_staff_for_current_notes()
+
+    def _refresh_staff_for_current_notes(self):
+        notes = set(self.active_notes) | set(self.sustained_notes)
+        chord_info = self.chord_window.update_chord(notes)
+        if chord_info is not None:
+            chord_info["custom_spelling_map"] = self._custom_spelling_for_notes(notes)
+        self.staff_window.set_notes(notes, chord_info)
+        self._update_interval_labels(notes, chord_info)
+
+    def _parse_note_labels(self, text: str) -> Optional[Dict[int, str]]:
+        tokens = [
+            token.strip()
+            for token in text.replace(",", " ").split()
+            if token.strip()
+        ]
+        if not tokens:
+            return None
+
+        parsed: Dict[int, str] = {}
+        for token in tokens:
+            letter = token[0].upper()
+            if letter not in NOTE_LETTER_TO_PC:
+                return None
+            accidental = token[1:].replace("♯", "#").replace("♭", "b")
+            if any(ch not in ("b", "#") for ch in accidental):
+                return None
+            if len(accidental) > 2:
+                return None
+            pc = (NOTE_LETTER_TO_PC[letter] + _accidental_offset(accidental)) % 12
+            if pc in parsed:
+                return None
+            parsed[pc] = f"{letter}{accidental}"
+        return parsed
+
+    def _custom_spelling_for_notes(self, notes: Set[int]) -> Optional[Dict[int, str]]:
+        if not notes:
+            return None
+        signature = tuple(sorted({n % 12 for n in notes}))
+        return self.custom_chord_spellings.get(signature)
 
     def _edit_custom_chord_name(self, index: int):
         if index < 0 or index >= len(self.custom_chords):
@@ -3533,6 +3618,10 @@ class ControlWindow(QMainWindow):
             if changed:
                 notas_para_acorde = set(self.active_notes) | set(self.sustained_notes)
                 chord_info = self.chord_window.update_chord(notas_para_acorde)
+                if chord_info is not None:
+                    chord_info["custom_spelling_map"] = self._custom_spelling_for_notes(
+                        notas_para_acorde
+                    )
                 self.staff_window.set_notes(notas_para_acorde, chord_info)
                 self._update_interval_labels(notas_para_acorde, chord_info)
                 if self.learning_chord:
@@ -3556,7 +3645,6 @@ def main():
     control_window = ControlWindow(piano_window, chord_window, staff_window)
 
     piano_window.show()
-    control_window.show()
     chord_window.show()
     staff_window.show()
 
