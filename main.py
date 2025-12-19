@@ -973,11 +973,7 @@ class StaffWidget(QWidget):
     def _note_name_for_staff(self, note: int) -> str:
         style = str(self.staff_settings.get("accidental_style", "sharps"))
         names = NOTE_NAMES_FLATS if style == "flats" else NOTE_NAMES
-        name = names[note % 12]
-        if len(name) == 2 and name[1] in ("b", "#"):
-            accidental = "♭" if name[1] == "b" else "♯"
-            return f"{accidental}{name[0]}"
-        return name
+        return names[note % 12]
 
     def _clef_rect(self, clef_type: str, staff_top_y: float, staff_spacing: float, x: float) -> QRectF:
         base_scale = max(0.4, float(self.staff_settings.get("clef_scale", 1.0)))
@@ -1047,8 +1043,7 @@ class StaffWidget(QWidget):
 
         staff_spacing = max(8.0, min(18.0, rect.height() / 18.0))
         margin = staff_spacing * 1.2
-        label_scale = max(0.6, float(self.staff_settings.get("label_font_scale", 1.0)))
-        label_width = staff_spacing * 4.0 * label_scale
+        label_width = 0.0
         base_clef_scale = max(0.4, float(self.staff_settings.get("clef_scale", 1.0)))
         treble_scale = max(0.4, float(self.staff_settings.get("treble_clef_scale", base_clef_scale)))
         bass_scale = max(0.4, float(self.staff_settings.get("bass_clef_scale", base_clef_scale)))
@@ -1110,7 +1105,7 @@ class StaffWidget(QWidget):
         bass_group: List[Tuple[int, int]] = []
         for n in notes:
             step = self._relative_step(n)
-            if step >= 2:
+            if step >= 1:
                 treble_group.append((n, step))
             else:
                 bass_group.append((n, step))
@@ -1243,7 +1238,6 @@ class StaffWidget(QWidget):
         note_positions: List[float] = []
         accidental_info: List[Tuple[str, float, float, float]] = []
         note_rows: List[Tuple[int, float, List[int], float]] = []
-        label_rects: List[QRectF] = []
         note_head_rects: List[QRectF] = []
 
         note_steps: Dict[int, int] = {note: self._relative_step(note) for note in self.notes}
@@ -1348,33 +1342,6 @@ class StaffWidget(QWidget):
             painter.setPen(QPen(note_color))
             self.drawNoteHead(painter, note_x, y, staff_spacing)
 
-            label_scale = max(0.6, float(self.staff_settings.get("label_font_scale", 1.0)))
-            label_font_family = str(self.staff_settings.get("label_font_family", "")).strip() or "Arial"
-            label_font = QFont(label_font_family, int(staff_spacing * 1.1 * label_scale))
-            painter.setFont(label_font)
-            label_color = self._color_from_setting("label_color", QColor(Qt.GlobalColor.black))
-            painter.setPen(QPen(label_color))
-            label_rect = QRectF(
-                layout["margin"] + label_x_offset,
-                y - staff_spacing * 0.6 + label_y_offset,
-                layout["labelWidth"] - staff_spacing * 0.2,
-                staff_spacing * 1.2,
-            )
-            label_collision_x = float(self.staff_settings.get("label_collision_x_offset", 0.6)) * staff_spacing
-            label_rect = self._resolve_horizontal_collision(
-                label_rect,
-                base_occupied_rects + label_rects,
-                label_collision_x,
-                max_attempts=10,
-                prefer_left=True,
-            )
-            label_rects.append(QRectF(label_rect))
-            painter.drawText(
-                label_rect,
-                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
-                self._note_name_for_staff(note),
-            )
-
         accidental_scale = max(0.4, float(self.staff_settings.get("accidental_scale", 1.0)))
         accidental_font = QFont(self.staff_font_family, int(staff_spacing * 1.4 * accidental_scale))
         metrics = QFontMetricsF(accidental_font)
@@ -1400,7 +1367,7 @@ class StaffWidget(QWidget):
             )
             rect = self._resolve_horizontal_collision(
                 rect,
-                base_occupied_rects + accidental_rects + label_rects,
+                base_occupied_rects + accidental_rects,
                 step,
                 max_attempts=14,
                 prefer_left=True,
@@ -1416,6 +1383,28 @@ class StaffWidget(QWidget):
                 head_width,
             )
             accidental_rects.append(QRectF(rect))
+
+        label_texts = [self._note_name_for_staff(note) for note in sorted(self.notes)]
+        if label_texts:
+            label_scale = max(0.6, float(self.staff_settings.get("label_font_scale", 1.0)))
+            label_font_family = str(self.staff_settings.get("label_font_family", "")).strip() or "Arial"
+            label_font = QFont(label_font_family, int(staff_spacing * 1.1 * label_scale))
+            painter.setFont(label_font)
+            label_color = self._color_from_setting("label_color", QColor(Qt.GlobalColor.black))
+            painter.setPen(QPen(label_color))
+            label_text = ", ".join(label_texts)
+            staff_bottom = bass_top + staff_spacing * 4
+            label_rect = QRectF(
+                line_start + label_x_offset,
+                staff_bottom + staff_spacing * 0.9 + label_y_offset,
+                max(0.0, line_end - line_start),
+                staff_spacing * 1.6,
+            )
+            painter.drawText(
+                label_rect,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                label_text,
+            )
 
 
 class StaffWindow(QMainWindow):
