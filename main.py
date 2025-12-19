@@ -612,7 +612,7 @@ class PianoWidget(QWidget):
             painter.drawRect(key_rect)
 
         # Etiquetas de intervalos para notas activas
-        if self.interval_labels:
+        if self.show_keyboard_labels and self.interval_labels:
             settings = self.interval_label_settings or {}
             label_font = QFont(settings.get("font_family") or "")
             label_font.setPointSize(int(settings.get("font_size", 14)))
