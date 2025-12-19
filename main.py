@@ -1062,15 +1062,24 @@ class StaffWidget(QWidget):
                     for index, note in enumerate(notes_in_step):
                         offsets[note] = start + index * unison_dx
 
-            prev_step: Optional[int] = None
-            toggle = False
+            unique_steps = sorted(step_map.keys())
+            shift_steps: Set[int] = set()
+            index = 0
+            while index < len(unique_steps):
+                run_end = index
+                while (
+                    run_end + 1 < len(unique_steps)
+                    and unique_steps[run_end + 1] - unique_steps[run_end] == 1
+                ):
+                    run_end += 1
+                if run_end > index:
+                    for shift_index in range(index + 1, run_end + 1, 2):
+                        shift_steps.add(unique_steps[shift_index])
+                index = run_end + 1
+
             for note, step in group:
-                if prev_step is not None and abs(step - prev_step) == 1:
-                    offsets[note] += dx if not toggle else 0.0
-                    toggle = not toggle
-                else:
-                    toggle = False
-                prev_step = step
+                if step in shift_steps:
+                    offsets[note] += dx
 
         treble_group: List[Tuple[int, int]] = []
         bass_group: List[Tuple[int, int]] = []
@@ -1400,24 +1409,43 @@ class StaffWidget(QWidget):
             painter.setFont(accidental_font)
             text_width = metrics.horizontalAdvance(symbol)
             text_height = metrics.height()
-            accidental_x = column_x - head_width * 1.2 + accidental_x_offset
-            center_x = accidental_x + (head_width * 1.2) / 2.0
-            baseline_y = y - text_height / 2.0 + metrics.ascent() + accidental_y_offset
-            rect = QRectF(
-                center_x - text_width / 2.0,
-                baseline_y - metrics.ascent(),
-                text_width,
-                text_height,
-            )
-            rect = self._resolve_horizontal_collision(
-                rect,
-                base_occupied_rects + accidental_rects,
-                step,
-                max_attempts=14,
-                prefer_left=True,
-                allow_right=False,
-            )
-            column_x += rect.left() - (center_x - text_width / 2.0)
+
+            def accidental_rect(x_pos: float) -> Tuple[QRectF, float, float]:
+                accidental_x = x_pos - head_width * 1.2 + accidental_x_offset
+                center_x = accidental_x + (head_width * 1.2) / 2.0
+                baseline_y = y - text_height / 2.0 + metrics.ascent() + accidental_y_offset
+                rect = QRectF(
+                    center_x - text_width / 2.0,
+                    baseline_y - metrics.ascent(),
+                    text_width,
+                    text_height,
+                )
+                return rect, center_x, baseline_y
+
+            column_offsets = [0.0, -step, -2 * step]
+            placed = False
+            for offset in column_offsets:
+                candidate_x = column_x + offset
+                rect, center_x, _baseline_y = accidental_rect(candidate_x)
+                if not self._rects_intersect(rect, base_occupied_rects + accidental_rects):
+                    column_x = candidate_x
+                    accidental_rects.append(QRectF(rect))
+                    placed = True
+                    break
+
+            if not placed:
+                rect, center_x, _baseline_y = accidental_rect(column_x)
+                rect = self._resolve_horizontal_collision(
+                    rect,
+                    base_occupied_rects + accidental_rects,
+                    step,
+                    max_attempts=14,
+                    prefer_left=True,
+                    allow_right=False,
+                )
+                column_x += rect.left() - (center_x - text_width / 2.0)
+                accidental_rects.append(QRectF(rect))
+
             self.drawAccidental(
                 painter,
                 symbol,
@@ -1426,7 +1454,6 @@ class StaffWidget(QWidget):
                 staff_spacing,
                 head_width,
             )
-            accidental_rects.append(QRectF(rect))
 
         label_texts = [note_spellings.get(note, NOTE_NAMES[note % 12]) for note in sorted(self.notes)]
         if label_texts:
