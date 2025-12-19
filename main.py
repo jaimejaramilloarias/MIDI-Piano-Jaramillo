@@ -883,6 +883,7 @@ class StaffWidget(QWidget):
             "note_head_color": "#ffffff",
             "accidental_color": "#ffffff",
             "label_color": "#ffffff",
+            "content_x_offset": 0.0,
             "clef_scale": 1.0,
             "clef_x_offset": 0.0,
             "treble_clef_scale": 1.0,
@@ -1074,7 +1075,7 @@ class StaffWidget(QWidget):
         bass_group: List[Tuple[int, int]] = []
         for n in notes:
             step = note_steps.get(n, 0)
-            if step >= 1:
+            if step >= 0:
                 treble_group.append((n, step))
             else:
                 bass_group.append((n, step))
@@ -1211,9 +1212,10 @@ class StaffWidget(QWidget):
         treble_top = center_y - 10 * step_height
         bass_top = center_y + 2 * step_height
 
+        content_x_offset = float(self.staff_settings.get("content_x_offset", 0.0)) * staff_spacing
         note_x_offset = float(self.staff_settings.get("note_x_offset", 0.0)) * staff_spacing
         note_y_offset = float(self.staff_settings.get("note_y_offset", 0.0)) * staff_spacing
-        note_x_base = line_start + staff_spacing * 1.2 + note_x_offset
+        note_x_base = line_start + staff_spacing * 1.2 + note_x_offset + content_x_offset
         note_head_scale = max(0.5, float(self.staff_settings.get("note_head_scale", 1.0)))
         note_head_width = staff_spacing * 1.2 * note_head_scale
         note_head_size = staff_spacing * 2.2 * note_head_scale
@@ -1419,7 +1421,7 @@ class StaffWidget(QWidget):
             label_text = ", ".join(label_texts)
             staff_bottom = bass_top + staff_spacing * 4
             label_rect = QRectF(
-                line_start + label_x_offset,
+                line_start + label_x_offset + content_x_offset,
                 staff_bottom + staff_spacing * 0.9 + label_y_offset,
                 max(0.0, line_end - line_start),
                 staff_spacing * 1.6,
@@ -1436,6 +1438,10 @@ class StaffWindow(QMainWindow):
 
     def __init__(self):
         super().__init__()
+
+        flags = self.windowFlags()
+        flags |= Qt.WindowType.FramelessWindowHint
+        self.setWindowFlags(flags)
 
         self.setWindowTitle("MIDI Piano — Partitura")
         self._drag_offset: Optional[QPoint] = None
@@ -1984,6 +1990,17 @@ class ControlWindow(QMainWindow):
         )
 
         notes_menu = staff_menu.addMenu("Notas")
+        content_x_action = notes_menu.addAction("Desplazamiento horizontal global…")
+        content_x_action.triggered.connect(
+            lambda: self._prompt_staff_setting(
+                "content_x_offset",
+                "Desplazamiento horizontal global",
+                "Offset en espaciado",
+                -10.0,
+                10.0,
+            )
+        )
+
         note_head_action = notes_menu.addAction("Tamaño de cabeza de nota…")
         note_head_action.triggered.connect(
             lambda: self._prompt_staff_setting(
