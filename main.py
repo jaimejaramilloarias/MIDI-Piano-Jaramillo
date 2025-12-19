@@ -1534,6 +1534,7 @@ class ControlWindow(QWidget):
         self.chord_bg_color = QColor(Qt.GlobalColor.white)
         self.interval_label_settings = self._default_interval_label_settings()
         self.custom_chord_spellings: Dict[Tuple[int, ...], Dict[int, str]] = {}
+        self.custom_chord_quality_spellings: Dict[str, Dict[int, Dict[str, object]]] = {}
         self.capture_timer = QTimer()
         self.capture_timer.setSingleShot(True)
         self.capture_timer.timeout.connect(self._finish_capture_window)
@@ -2800,6 +2801,20 @@ class ControlWindow(QWidget):
                 }
                 for signature, spellings in sorted(self.custom_chord_spellings.items())
             ],
+            "custom_chord_quality_spellings": [
+                {
+                    "quality": quality,
+                    "intervals": [
+                        {
+                            "interval": int(interval),
+                            "degree": int(data.get("degree", 1)),
+                            "accidental": str(data.get("accidental", "")),
+                        }
+                        for interval, data in sorted(intervals.items())
+                    ],
+                }
+                for quality, intervals in sorted(self.custom_chord_quality_spellings.items())
+            ],
             "window_geometries": {
                 "keyboard": self._geometry_payload_for(self.piano_window),
                 "chords": self._geometry_payload_for(self.chord_window),
@@ -3035,6 +3050,34 @@ class ControlWindow(QWidget):
                 spellings = {pc: label for pc, label in zip(signature, labels)}
                 self.custom_chord_spellings[signature] = spellings
 
+        quality_spellings = prefs.get("custom_chord_quality_spellings")
+        if isinstance(quality_spellings, list):
+            for entry in quality_spellings:
+                if not isinstance(entry, dict):
+                    continue
+                quality = entry.get("quality")
+                intervals = entry.get("intervals")
+                if not isinstance(quality, str) or not isinstance(intervals, list):
+                    continue
+                interval_map: Dict[int, Dict[str, object]] = {}
+                for item in intervals:
+                    if not isinstance(item, dict):
+                        continue
+                    interval = item.get("interval")
+                    degree = item.get("degree")
+                    accidental = item.get("accidental")
+                    if (
+                        isinstance(interval, int)
+                        and isinstance(degree, int)
+                        and isinstance(accidental, str)
+                    ):
+                        interval_map[int(interval) % 12] = {
+                            "degree": int(degree),
+                            "accidental": accidental,
+                        }
+                if interval_map:
+                    self.custom_chord_quality_spellings[str(quality)] = interval_map
+
         # Aplicar rango con las preferencias cargadas
         self.range_changed()
 
@@ -3264,9 +3307,12 @@ class ControlWindow(QWidget):
             return
 
         signature = tuple(sorted({n % 12 for n in notes}))
-        existing = self.custom_chord_spellings.get(signature, {})
-        if existing:
-            default_text = " ".join(existing.get(pc, NOTE_NAMES[pc]) for pc in signature)
+        chord_info = analizar_cifrado_alternativos(notes)
+        principal_match = chord_info.get("principal_match") if chord_info else None
+        quality = principal_match.get("nombre") if isinstance(principal_match, dict) else None
+        custom_map = self._custom_spelling_for_notes(notes, chord_info)
+        if custom_map:
+            default_text = " ".join(custom_map.get(pc, NOTE_NAMES[pc]) for pc in signature)
         else:
             default_text = " ".join(NOTE_NAMES[pc] for pc in signature)
 
@@ -3281,6 +3327,8 @@ class ControlWindow(QWidget):
 
         raw = str(text).strip()
         if not raw:
+            if quality:
+                self.custom_chord_quality_spellings.pop(str(quality), None)
             if signature in self.custom_chord_spellings:
                 self.custom_chord_spellings.pop(signature, None)
                 self._write_preferences(False)
@@ -3305,7 +3353,27 @@ class ControlWindow(QWidget):
             )
             return
 
-        self.custom_chord_spellings[signature] = parsed
+        if quality:
+            principal = str(chord_info.get("principal") or "")
+            root_letter, _accidental = _parse_root_spelling(principal)
+            root_pc = principal_match.get("root") if isinstance(principal_match, dict) else None
+            if root_letter is not None and root_pc is not None:
+                root_index = NOTE_LETTER_TO_INDEX[root_letter]
+                interval_spellings: Dict[int, Dict[str, object]] = {}
+                for pc, label in parsed.items():
+                    letter = label[0].upper()
+                    accidental = label[1:].replace("♯", "#").replace("♭", "b")
+                    interval = (pc - int(root_pc)) % 12
+                    degree = (NOTE_LETTER_TO_INDEX[letter] - root_index + 7) % 7 + 1
+                    interval_spellings[interval] = {
+                        "degree": degree,
+                        "accidental": accidental,
+                    }
+                self.custom_chord_quality_spellings[str(quality)] = interval_spellings
+            else:
+                self.custom_chord_spellings[signature] = parsed
+        else:
+            self.custom_chord_spellings[signature] = parsed
         self._write_preferences(False)
         self._refresh_staff_for_current_notes()
 
@@ -3313,7 +3381,7 @@ class ControlWindow(QWidget):
         notes = set(self.active_notes) | set(self.sustained_notes)
         chord_info = self.chord_window.update_chord(notes)
         if chord_info is not None:
-            chord_info["custom_spelling_map"] = self._custom_spelling_for_notes(notes)
+            chord_info["custom_spelling_map"] = self._custom_spelling_for_notes(notes, chord_info)
         self.staff_window.set_notes(notes, chord_info)
         self._update_interval_labels(notes, chord_info)
 
@@ -3342,9 +3410,43 @@ class ControlWindow(QWidget):
             parsed[pc] = f"{letter}{accidental}"
         return parsed
 
-    def _custom_spelling_for_notes(self, notes: Set[int]) -> Optional[Dict[int, str]]:
+    def _custom_spelling_for_notes(
+        self,
+        notes: Set[int],
+        chord_info: Optional[Dict[str, object]] = None,
+    ) -> Optional[Dict[int, str]]:
         if not notes:
             return None
+        chord_info = chord_info or analizar_cifrado_alternativos(notes)
+        principal_match = chord_info.get("principal_match") if chord_info else None
+        quality = principal_match.get("nombre") if isinstance(principal_match, dict) else None
+        if quality:
+            principal = str(chord_info.get("principal") or "")
+            root_letter, _accidental = _parse_root_spelling(principal)
+            root_pc = principal_match.get("root") if isinstance(principal_match, dict) else None
+            interval_spellings = self.custom_chord_quality_spellings.get(str(quality))
+            if root_letter is not None and root_pc is not None and interval_spellings:
+                root_index = NOTE_LETTER_TO_INDEX[root_letter]
+                root_pc = int(root_pc)
+                spellings: Dict[int, str] = {}
+                for note in notes:
+                    interval = (note - root_pc) % 12
+                    custom = interval_spellings.get(interval)
+                    if custom:
+                        degree = int(custom.get("degree", 1))
+                        accidental = str(custom.get("accidental", ""))
+                        letter_index = (root_index + _degree_offset(degree)) % 7
+                        letter = NOTE_LETTERS[letter_index]
+                        spellings[note % 12] = f"{letter}{accidental}"
+                    else:
+                        spellings[note % 12] = spell_note_for_interval(
+                            root_letter,
+                            root_pc,
+                            str(quality),
+                            interval,
+                        )
+                if spellings:
+                    return spellings
         signature = tuple(sorted({n % 12 for n in notes}))
         return self.custom_chord_spellings.get(signature)
 
@@ -3620,7 +3722,8 @@ class ControlWindow(QWidget):
                 chord_info = self.chord_window.update_chord(notas_para_acorde)
                 if chord_info is not None:
                     chord_info["custom_spelling_map"] = self._custom_spelling_for_notes(
-                        notas_para_acorde
+                        notas_para_acorde,
+                        chord_info,
                     )
                 self.staff_window.set_notes(notas_para_acorde, chord_info)
                 self._update_interval_labels(notas_para_acorde, chord_info)
