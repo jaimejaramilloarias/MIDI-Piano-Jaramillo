@@ -315,6 +315,7 @@ class PianoWidget(QWidget):
         self.sustained_notes: Set[int] = set()
         self.sustain_opacity: float = 0.4  # 0.0–1.0
         self.interval_labels: Dict[int, str] = {}
+        self.show_keyboard_labels = True
 
         # Proporción alto/ancho de una tecla blanca (alto = ancho * aspect)
         self.key_aspect_ratio = 4.5
@@ -407,6 +408,10 @@ class PianoWidget(QWidget):
 
     def set_interval_label_style(self, settings: Dict):
         self.interval_label_settings = settings
+
+    def set_keyboard_labels_visible(self, visible: bool):
+        self.show_keyboard_labels = bool(visible)
+        self.update()
         self.update()
 
     def set_base_color_name(self, name: str):
@@ -569,21 +574,22 @@ class PianoWidget(QWidget):
             painter.drawRect(key_rect)
 
         # Etiquetas para las C
-        painter.setPen(QPen(Qt.GlobalColor.black))
-        font = QFont()
-        font.setPointSize(9)
-        painter.setFont(font)
-        for n in white_notes:
-            if n % 12 == 0:  # C
-                idx = note_to_white_index[n]
-                x = x_offset + idx * key_width
-                key_rect = QRectF(x, y_offset, key_width, key_height)
-                label = midi_to_name(n)
-                painter.drawText(
-                    key_rect.adjusted(2, key_height - 20, -2, -2),
-                    Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
-                    label,
-                )
+        if self.show_keyboard_labels:
+            painter.setPen(QPen(Qt.GlobalColor.black))
+            font = QFont()
+            font.setPointSize(9)
+            painter.setFont(font)
+            for n in white_notes:
+                if n % 12 == 0:  # C
+                    idx = note_to_white_index[n]
+                    x = x_offset + idx * key_width
+                    key_rect = QRectF(x, y_offset, key_width, key_height)
+                    label = midi_to_name(n)
+                    painter.drawText(
+                        key_rect.adjusted(2, key_height - 20, -2, -2),
+                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+                        label,
+                    )
 
         # Teclas negras
         black_height = key_height * 0.6
@@ -1895,6 +1901,10 @@ class ControlWindow(QWidget):
         controls_menu = self.menu_bar.addMenu("Controles")
         edit_chords_action = controls_menu.addAction("Editar etiquetas de acordes…")
         edit_chords_action.triggered.connect(self._edit_chord_labels)
+        self.keyboard_labels_action = controls_menu.addAction("Etiquetas del teclado")
+        self.keyboard_labels_action.setCheckable(True)
+        self.keyboard_labels_action.setChecked(True)
+        self.keyboard_labels_action.toggled.connect(self._toggle_keyboard_labels)
         controls_menu.addSeparator()
 
         panel_action = QWidgetAction(controls_menu)
@@ -2803,6 +2813,7 @@ class ControlWindow(QWidget):
             "font_family": self.font_combo.currentFont().family(),
             "font_size": int(self.font_size_spin.value()),
             "always_on_top": bool(self.always_on_top.isChecked()),
+            "keyboard_labels_visible": bool(self.keyboard_labels_action.isChecked()),
             "chord_text_color": self.chord_text_color.name(),
             "chord_background": self.chord_bg_color.name(),
             "base_chords": [
@@ -3017,6 +3028,10 @@ class ControlWindow(QWidget):
         on_top = bool(prefs.get("always_on_top", False))
         self.always_on_top.setChecked(on_top)
 
+        keyboard_labels = prefs.get("keyboard_labels_visible", True)
+        self.keyboard_labels_action.setChecked(bool(keyboard_labels))
+        self.piano.set_keyboard_labels_visible(bool(keyboard_labels))
+
         base_chords = prefs.get("base_chords")
         if isinstance(base_chords, list):
             for item in base_chords:
@@ -3104,6 +3119,10 @@ class ControlWindow(QWidget):
 
         # Aplicar rango con las preferencias cargadas
         self.range_changed()
+
+    def _toggle_keyboard_labels(self, checked: bool):
+        self.piano.set_keyboard_labels_visible(checked)
+        self._write_preferences(False)
 
     def _restore_window_geometries(self, prefs: Dict):
         geoms = prefs.get("window_geometries") if isinstance(prefs, dict) else None
