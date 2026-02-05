@@ -66,6 +66,9 @@ except Exception:
 # MIDI note range for a full piano
 MIN_NOTE = 21   # A0
 MAX_NOTE = 108  # C8
+DEFAULT_START_NOTE = 36  # C2
+DEFAULT_OCTAVES = 5      # C2–C7
+DEFAULT_VIEW_MODE = "single"
 
 
 class PersistentMenu(QMenu):
@@ -1917,7 +1920,7 @@ class ControlWindow(QWidget):
     - Número de octavas
     - Color base
     - Siempre al frente (para la ventana del teclado)
-    - Guardar preferencias de forma persistente
+    - Guardar preferencias de forma persistente al cerrar la app
     """
 
     CONFIG_PATH = Path.home() / ".midi_piano_prefs.json"
@@ -1969,6 +1972,7 @@ class ControlWindow(QWidget):
         self.capture_timer.timeout.connect(self._finish_capture_window)
         self._menu_panel_widgets: List[QWidget] = []
         self._visual_state_tracking_enabled = False
+        self._is_closing = False
         self._visual_state_save_timer = QTimer(self)
         self._visual_state_save_timer.setSingleShot(True)
         self._visual_state_save_timer.timeout.connect(self._persist_visual_state)
@@ -2005,7 +2009,6 @@ class ControlWindow(QWidget):
         self.always_on_top = QPushButton("Teclado siempre al frente")
         self.always_on_top.setCheckable(True)
 
-        self.save_button = QPushButton("Guardar preferencias")
         self.export_button = QPushButton("Exportar diccionario…")
 
         # Rellenar combo de nota inicial:
@@ -2017,9 +2020,9 @@ class ControlWindow(QWidget):
                 self.start_combo.addItem(label, n)
 
         # Por defecto: teclado completo (A0–C8)
-        default_start = MIN_NOTE
+        default_start = DEFAULT_START_NOTE
         self._select_combo_value(self.start_combo, default_start)
-        self.octaves_spin.setValue(7)
+        self.octaves_spin.setValue(DEFAULT_OCTAVES)
         self.piano.set_range_from_start_and_octaves(default_start, self.octaves_spin.value())
 
         # Layout
@@ -2068,7 +2071,6 @@ class ControlWindow(QWidget):
         # Fila 5: botones de ventana
         row5 = QHBoxLayout()
         row5.addWidget(self.always_on_top)
-        row5.addWidget(self.save_button)
         row5.addWidget(self.export_button)
         row5.addStretch()
         top_layout.addLayout(row5)
@@ -2141,7 +2143,6 @@ class ControlWindow(QWidget):
         self.font_combo.currentFontChanged.connect(self.font_changed)
         self.font_size_spin.valueChanged.connect(self.font_size_changed)
         self.always_on_top.toggled.connect(self.toggle_on_top)
-        self.save_button.clicked.connect(self.save_preferences)
         self.export_button.clicked.connect(self.export_chord_dictionary)
         self.learn_button.clicked.connect(self.start_learning_mode)
         self.display_chord_checkbox.toggled.connect(self._update_display_overlays)
@@ -2167,31 +2168,41 @@ class ControlWindow(QWidget):
         self._install_visual_state_tracking()
         self.refresh_inputs()
         self._populate_display_controls()
-        self.load_preferences()
+        self._apply_startup_defaults()
         self._visual_state_tracking_enabled = True
-        self.range_changed()
         self._apply_chord_font()
         self._refresh_learned_chords_ui()
         self._update_display_overlays()
+
+    def _apply_startup_defaults(self) -> None:
+        self._select_combo_value(self.start_combo, DEFAULT_START_NOTE)
+        self.octaves_spin.setValue(DEFAULT_OCTAVES)
+        self.set_view_mode(DEFAULT_VIEW_MODE, persist=False)
+        self.range_changed(fit_window=False)
+        self._update_window_actions()
 
     def _install_visual_state_tracking(self) -> None:
         """Guarda estado visual automáticamente al cerrar/reubicar/redimensionar ventanas."""
         app = QApplication.instance()
         if app is not None:
-            app.aboutToQuit.connect(self._persist_visual_state)
+            app.aboutToQuit.connect(self._persist_preferences_on_close)
 
         for window in (self.piano_window, self.chord_window, self.staff_window):
             window.installEventFilter(self)
 
     def _schedule_visual_state_save(self) -> None:
-        if not self._visual_state_tracking_enabled:
+        if not self._visual_state_tracking_enabled or self._is_closing:
             return
         if self._visual_state_save_timer.isActive():
             self._visual_state_save_timer.stop()
         self._visual_state_save_timer.start(200)
 
-    def _persist_visual_state(self) -> None:
-        if not self._visual_state_tracking_enabled:
+    def _persist_preferences_on_close(self) -> None:
+        self._is_closing = True
+        self._persist_visual_state(force=True)
+
+    def _persist_visual_state(self, force: bool = False) -> None:
+        if not force and (not self._visual_state_tracking_enabled or self._is_closing):
             return
         if self._visual_state_save_timer.isActive():
             self._visual_state_save_timer.stop()
@@ -3787,6 +3798,7 @@ class ControlWindow(QWidget):
     def _update_display_overlays(self):
         chord_overlays: Dict[int, QColor] = {}
         scale_overlays: Dict[int, QColor] = {}
+        should_persist = self._visual_state_tracking_enabled and not self._syncing_display_panel
 
         root_pc = self.display_root_combo.currentData()
         if root_pc is None:
@@ -3861,13 +3873,15 @@ class ControlWindow(QWidget):
         self.piano.set_display_chord_notes(chord_overlays)
         self.piano.set_display_scale_notes(scale_overlays)
         self._sync_panel_from_primary()
+        if should_persist:
+            self._schedule_visual_state_save()
 
     # --- preferencias persistentes ---
 
     def _preferences_payload(self):
         return {
             "midi_in_name": self.input_combo.currentData() or "",
-            "start_note": int(self.start_combo.currentData() or MIN_NOTE),
+            "start_note": int(self.start_combo.currentData() or DEFAULT_START_NOTE),
             "octaves": int(self.octaves_spin.value()),
             "base_color_rgba": [
                 int(self.piano.base_color.red()),
@@ -3981,9 +3995,6 @@ class ControlWindow(QWidget):
             if show_message:
                 QMessageBox.information(self, "OK", "Preferencias guardadas correctamente.")
 
-    def save_preferences(self):
-        self._write_preferences(True)
-
     def export_chord_dictionary(self):
         default_path = str(Path.home() / "diccionario_acordes.json")
         file_path, _ = QFileDialog.getSaveFileName(
@@ -4047,251 +4058,8 @@ class ControlWindow(QWidget):
         )
 
     def load_preferences(self):
-        if not self.CONFIG_PATH.exists():
-            return
-        try:
-            prefs = json.loads(self.CONFIG_PATH.read_text(encoding="utf-8"))
-        except Exception:
-            return
-
-        self._select_combo_value(self.start_combo, MIN_NOTE)
-        self.octaves_spin.setValue(7)
-
-        start_note = prefs.get("start_note")
-        if isinstance(start_note, int):
-            self._select_combo_value(self.start_combo, max(MIN_NOTE, min(MAX_NOTE, start_note)))
-
-        octaves = prefs.get("octaves")
-        if isinstance(octaves, int):
-            self.octaves_spin.setValue(max(1, min(7, octaves)))
-
-        rgba = prefs.get("base_color_rgba")
-        if (
-            isinstance(rgba, list)
-            and len(rgba) == 4
-            and all(isinstance(x, int) for x in rgba)
-        ):
-            try:
-                self.piano.base_color = QColor(rgba[0], rgba[1], rgba[2], rgba[3])
-                self.piano.update()
-            except Exception:
-                pass
-
-        chord_rgba = prefs.get("chord_color_rgba")
-        if (
-            isinstance(chord_rgba, list)
-            and len(chord_rgba) == 4
-            and all(isinstance(x, int) for x in chord_rgba)
-        ):
-            try:
-                self.chord_text_color = QColor(
-                    chord_rgba[0], chord_rgba[1], chord_rgba[2], chord_rgba[3]
-                )
-                self.chord_window.set_chord_color(self.chord_text_color)
-            except Exception:
-                pass
-
-        font_family = prefs.get("font_family")
-        if isinstance(font_family, str) and font_family:
-            try:
-                self.font_combo.setCurrentFont(QFont(font_family))
-            except Exception:
-                pass
-
-        font_size = prefs.get("font_size")
-        if isinstance(font_size, int) and 10 <= font_size <= 160:
-            self.font_size_spin.setValue(int(font_size))
-
-        chord_text = prefs.get("chord_text_color")
-        if isinstance(chord_text, str):
-            try:
-                color = QColor(chord_text)
-                if color.isValid():
-                    self.chord_text_color = color
-                    self.chord_window.set_chord_color(color)
-            except Exception:
-                pass
-
-        chord_bg = prefs.get("chord_background")
-        if isinstance(chord_bg, str):
-            bg_color = QColor(chord_bg)
-            if bg_color.isValid():
-                self.chord_bg_color = bg_color
-                self.chord_window.set_background_color(bg_color)
-
-        single_bg = prefs.get("single_window_background")
-        if isinstance(single_bg, str):
-            bg_color = QColor(single_bg)
-            if bg_color.isValid():
-                self.single_window_bg_color = bg_color
-                self.piano_window.set_combined_background_color(bg_color)
-
-        display_root = prefs.get("display_root_pc")
-        if isinstance(display_root, int):
-            self._select_combo_value(self.display_root_combo, display_root % 12)
-
-        display_chord = prefs.get("display_chord_type")
-        if isinstance(display_chord, str):
-            idx = self.display_chord_combo.findData(display_chord)
-            if idx >= 0:
-                self.display_chord_combo.setCurrentIndex(idx)
-
-        display_scale = prefs.get("display_scale_type")
-        if isinstance(display_scale, str):
-            idx = self.display_scale_combo.findData(display_scale)
-            if idx >= 0:
-                self.display_scale_combo.setCurrentIndex(idx)
-
-        display_inversion = prefs.get("display_inversion")
-        if isinstance(display_inversion, int):
-            self.display_inversion_spin.setValue(max(-4, min(4, display_inversion)))
-
-        display_drop = prefs.get("display_drop")
-        if isinstance(display_drop, str):
-            idx = self.display_drop_combo.findData(display_drop)
-            if idx >= 0:
-                self.display_drop_combo.setCurrentIndex(idx)
-
-        display_transpose = prefs.get("display_transpose")
-        if isinstance(display_transpose, int):
-            self.display_transpose_spin.setValue(max(-24, min(24, display_transpose)))
-
-        display_chord_enabled = prefs.get("display_chord_enabled")
-        if isinstance(display_chord_enabled, bool):
-            self.display_chord_checkbox.setChecked(display_chord_enabled)
-
-        display_scale_enabled = prefs.get("display_scale_enabled")
-        if isinstance(display_scale_enabled, bool):
-            self.display_scale_checkbox.setChecked(display_scale_enabled)
-
-        self._update_display_overlays()
-
-        interval_settings = prefs.get("interval_label_settings")
-        if isinstance(interval_settings, dict):
-            self._apply_interval_settings_payload(interval_settings)
-
-        staff_settings = prefs.get("staff_settings")
-        if isinstance(staff_settings, dict):
-            self.staff_settings = dict(self._default_staff_settings())
-            self.staff_settings.update({str(k): v for k, v in staff_settings.items()})
-            self._apply_staff_settings()
-
-        self._restore_window_geometries(prefs)
-
-        saved_view_mode = prefs.get("view_mode")
-        if saved_view_mode in ("single", "separate"):
-            self.set_view_mode(str(saved_view_mode), persist=False)
-
-        visibility = prefs.get("window_visibility")
-        if isinstance(visibility, dict) and self.view_mode == "separate":
-            if not bool(visibility.get("keyboard", True)):
-                self.piano_window.hide()
-            if not bool(visibility.get("chords", True)):
-                self.chord_window.hide()
-            if not bool(visibility.get("staff", True)):
-                self.staff_window.hide()
-            self._update_window_actions()
-
-
-        capture_window_ms = prefs.get("capture_window_ms")
-        if isinstance(capture_window_ms, int) and 50 <= capture_window_ms <= 10000:
-            self.capture_window_ms = capture_window_ms
-            self.capture_window_spin.setValue(capture_window_ms)
-
-        on_top = bool(prefs.get("always_on_top", False))
-        self.always_on_top.setChecked(on_top)
-
-        keyboard_labels = prefs.get("keyboard_labels_visible", True)
-        self.keyboard_labels_action.setChecked(bool(keyboard_labels))
-        self.piano.set_keyboard_labels_visible(bool(keyboard_labels))
-
-        base_chords = prefs.get("base_chords")
-        if isinstance(base_chords, list):
-            for item in base_chords:
-                name = item.get("nombre") if isinstance(item, dict) else None
-                oblig = item.get("obligatorias") if isinstance(item, dict) else None
-                opc = item.get("opcionales") if isinstance(item, dict) else []
-                if (
-                    isinstance(name, str)
-                    and name is not None
-                    and isinstance(oblig, list)
-                    and all(isinstance(x, int) for x in oblig)
-                ):
-                    self._add_base_chord(
-                        name,
-                        [int(x) for x in oblig],
-                        [int(x) for x in opc] if isinstance(opc, list) else [],
-                        allow_overwrite=True,
-                        record_extra=True,
-                    )
-
-        midi_name = prefs.get("midi_in_name") or ""
-        if midi_name:
-            idx = self.input_combo.findData(midi_name)
-            if idx >= 0:
-                self.input_combo.setCurrentIndex(idx)
-
-        custom = prefs.get("custom_chords")
-        if isinstance(custom, list):
-            for item in custom:
-                name = item.get("nombre") if isinstance(item, dict) else None
-                intervals = item.get("intervalos") if isinstance(item, dict) else None
-                if (
-                    isinstance(name, str)
-                    and name
-                    and isinstance(intervals, list)
-                    and all(isinstance(x, int) for x in intervals)
-                ):
-                    self._register_custom_chord(name, intervals, persist=False)
-
-        custom_spellings = prefs.get("custom_chord_spellings")
-        if isinstance(custom_spellings, list):
-            for entry in custom_spellings:
-                if not isinstance(entry, dict):
-                    continue
-                pcs = entry.get("pcs")
-                labels = entry.get("labels")
-                if not (
-                    isinstance(pcs, list)
-                    and isinstance(labels, list)
-                    and all(isinstance(pc, int) for pc in pcs)
-                    and all(isinstance(label, str) for label in labels)
-                ):
-                    continue
-                signature = tuple(sorted({int(pc) % 12 for pc in pcs}))
-                if len(signature) != len(labels):
-                    continue
-                spellings = {pc: label for pc, label in zip(signature, labels)}
-                self.custom_chord_spellings[signature] = spellings
-
-        quality_spellings = prefs.get("custom_chord_quality_spellings")
-        if isinstance(quality_spellings, list):
-            for entry in quality_spellings:
-                if not isinstance(entry, dict):
-                    continue
-                quality = entry.get("quality")
-                intervals = entry.get("intervals")
-                if not isinstance(quality, str) or not isinstance(intervals, list):
-                    continue
-                interval_map: Dict[int, Dict[str, object]] = {}
-                for item in intervals:
-                    if not isinstance(item, dict):
-                        continue
-                    interval = item.get("interval")
-                    degree = item.get("degree")
-                    if (
-                        isinstance(interval, int)
-                        and isinstance(degree, int)
-                    ):
-                        interval_map[int(interval) % 12] = {
-                            "degree": int(degree),
-                            "accidental": str(item.get("accidental", "")),
-                        }
-                if interval_map:
-                    self.custom_chord_quality_spellings[str(quality)] = interval_map
-
-        # Aplicar rango con las preferencias cargadas
-        self.range_changed()
+        """Deprecated: startup now always uses fixed defaults."""
+        self._apply_startup_defaults()
 
     def _apply_interval_settings_payload(self, payload: Dict) -> None:
         merged = dict(self._default_interval_label_settings())
@@ -4447,13 +4215,14 @@ class ControlWindow(QWidget):
             QMessageBox.critical(self, "Error MIDI", f"No se pudo abrir el dispositivo MIDI:\n{e}")
             self.midi_in = None
 
-    def range_changed(self):
+    def range_changed(self, *_args, fit_window: bool = True):
         start = self.start_combo.currentData()
         octaves = self.octaves_spin.value()
         if start is None:
             return
         self.piano.set_range_from_start_and_octaves(int(start), int(octaves))
-        self._fit_keyboard_window_to_available_width()
+        if fit_window:
+            self._fit_keyboard_window_to_available_width()
         self._update_display_overlays()
 
     def _fit_keyboard_window_to_available_width(self):

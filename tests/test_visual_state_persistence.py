@@ -41,23 +41,66 @@ class TestVisualStatePersistence(unittest.TestCase):
         self.assertIn("QEvent.Type.Show", method_source)
         self.assertIn("QTimer.singleShot(0, self._update_window_actions)", method_source)
 
-    def test_visual_state_tracking_is_enabled_after_loading_preferences(self) -> None:
+    def test_visual_state_tracking_is_enabled_after_startup_defaults(self) -> None:
         init_source = self._class_method_source("ControlWindow", "__init__")
 
         self.assertIn("self._visual_state_tracking_enabled = False", init_source)
-        load_index = init_source.find("self.load_preferences()")
+        defaults_index = init_source.find("self._apply_startup_defaults()")
         enable_index = init_source.find("self._visual_state_tracking_enabled = True")
 
-        self.assertNotEqual(load_index, -1)
+        self.assertNotEqual(defaults_index, -1)
         self.assertNotEqual(enable_index, -1)
-        self.assertGreater(enable_index, load_index)
+        self.assertGreater(enable_index, defaults_index)
 
     def test_visual_state_save_methods_guard_during_startup(self) -> None:
         schedule_source = self._class_method_source("ControlWindow", "_schedule_visual_state_save")
         persist_source = self._class_method_source("ControlWindow", "_persist_visual_state")
 
-        self.assertIn("if not self._visual_state_tracking_enabled:", schedule_source)
-        self.assertIn("if not self._visual_state_tracking_enabled:", persist_source)
+        self.assertIn("if not self._visual_state_tracking_enabled or self._is_closing:", schedule_source)
+        self.assertIn("if not force and (not self._visual_state_tracking_enabled or self._is_closing):", persist_source)
+
+    def test_persist_on_close_forces_save(self) -> None:
+        install_source = self._class_method_source("ControlWindow", "_install_visual_state_tracking")
+        close_source = self._class_method_source("ControlWindow", "_persist_preferences_on_close")
+
+        self.assertIn("app.aboutToQuit.connect(self._persist_preferences_on_close)", install_source)
+        self.assertIn("self._is_closing = True", close_source)
+        self.assertIn("self._persist_visual_state(force=True)", close_source)
+
+    def test_display_overlay_changes_schedule_persistence(self) -> None:
+        method_source = self._class_method_source("ControlWindow", "_update_display_overlays")
+
+        self.assertIn("should_persist = self._visual_state_tracking_enabled and not self._syncing_display_panel", method_source)
+        self.assertIn("if should_persist:", method_source)
+        self.assertIn("self._schedule_visual_state_save()", method_source)
+
+    def test_startup_range_apply_does_not_override_geometry(self) -> None:
+        startup_source = self._class_method_source("ControlWindow", "_apply_startup_defaults")
+        range_source = self._class_method_source("ControlWindow", "range_changed")
+
+        self.assertIn("self.range_changed(fit_window=False)", startup_source)
+        self.assertIn("if fit_window:", range_source)
+        self.assertIn("self._fit_keyboard_window_to_available_width()", range_source)
+
+    def test_default_startup_state_is_single_view_c2_to_c7(self) -> None:
+        init_source = self._class_method_source("ControlWindow", "__init__")
+        startup_source = self._class_method_source("ControlWindow", "_apply_startup_defaults")
+
+        self.assertIn("default_start = DEFAULT_START_NOTE", init_source)
+        self.assertIn("self.octaves_spin.setValue(DEFAULT_OCTAVES)", init_source)
+        self.assertIn("self.set_view_mode(DEFAULT_VIEW_MODE, persist=False)", startup_source)
+
+    def test_load_preferences_uses_startup_defaults_only(self) -> None:
+        load_source = self._class_method_source("ControlWindow", "load_preferences")
+
+        self.assertIn("Deprecated: startup now always uses fixed defaults.", load_source)
+        self.assertIn("self._apply_startup_defaults()", load_source)
+
+    def test_save_preferences_button_is_removed(self) -> None:
+        init_source = self._class_method_source("ControlWindow", "__init__")
+
+        self.assertNotIn('QPushButton("Guardar preferencias")', init_source)
+        self.assertNotIn("self.save_button", init_source)
 
 
 if __name__ == "__main__":
