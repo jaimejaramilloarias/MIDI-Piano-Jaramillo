@@ -1968,6 +1968,9 @@ class ControlWindow(QWidget):
         self.capture_timer.setSingleShot(True)
         self.capture_timer.timeout.connect(self._finish_capture_window)
         self._menu_panel_widgets: List[QWidget] = []
+        self._visual_state_save_timer = QTimer(self)
+        self._visual_state_save_timer.setSingleShot(True)
+        self._visual_state_save_timer.timeout.connect(self._persist_visual_state)
 
         # Widgets
         self.input_combo = MenuComboBox()
@@ -2160,6 +2163,7 @@ class ControlWindow(QWidget):
         # Inicializar dispositivos y preferencias
         self._load_interval_settings()
         self._load_staff_settings()
+        self._install_visual_state_tracking()
         self.refresh_inputs()
         self._populate_display_controls()
         self.load_preferences()
@@ -2167,6 +2171,38 @@ class ControlWindow(QWidget):
         self._apply_chord_font()
         self._refresh_learned_chords_ui()
         self._update_display_overlays()
+
+    def _install_visual_state_tracking(self) -> None:
+        """Guarda estado visual automáticamente al cerrar/reubicar/redimensionar ventanas."""
+        app = QApplication.instance()
+        if app is not None:
+            app.aboutToQuit.connect(self._persist_visual_state)
+
+        for window in (self.piano_window, self.chord_window, self.staff_window):
+            window.installEventFilter(self)
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched in {self.piano_window, self.chord_window, self.staff_window}:
+            if event.type() in {
+                QEvent.Type.Move,
+                QEvent.Type.Resize,
+                QEvent.Type.Show,
+                QEvent.Type.Hide,
+                QEvent.Type.Close,
+                QEvent.Type.WindowStateChange,
+            }:
+                self._schedule_visual_state_save()
+        return super().eventFilter(watched, event)
+
+    def _schedule_visual_state_save(self) -> None:
+        if self._visual_state_save_timer.isActive():
+            self._visual_state_save_timer.stop()
+        self._visual_state_save_timer.start(200)
+
+    def _persist_visual_state(self) -> None:
+        if self._visual_state_save_timer.isActive():
+            self._visual_state_save_timer.stop()
+        self._write_preferences(False)
 
     # --- menú de ventanas ---
 
@@ -2207,9 +2243,6 @@ class ControlWindow(QWidget):
         self._setup_controls_menu()
         self._setup_interval_menu()
         self._setup_staff_menu()
-
-        for win in (self.piano_window, self.chord_window, self.staff_window):
-            win.installEventFilter(self)
 
         QTimer.singleShot(0, self._update_window_actions)
 
