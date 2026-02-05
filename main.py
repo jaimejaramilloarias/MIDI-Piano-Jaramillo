@@ -67,9 +67,22 @@ MAX_NOTE = 108  # C8
 
 
 class PersistentMenu(QMenu):
-    def mouseReleaseEvent(self, event):
-        action = self.actionAt(event.pos())
+    def _is_widget_action_pos(self, pos):
+        action = self.actionAt(pos)
         if isinstance(action, QWidgetAction):
+            return True
+        child = self.childAt(pos)
+        if child is None:
+            return False
+        for action in self.actions():
+            if isinstance(action, QWidgetAction):
+                widget = action.defaultWidget()
+                if widget and (child is widget or widget.isAncestorOf(child)):
+                    return True
+        return False
+
+    def mouseReleaseEvent(self, event):
+        if self._is_widget_action_pos(event.pos()):
             event.accept()
             return
         super().mouseReleaseEvent(event)
