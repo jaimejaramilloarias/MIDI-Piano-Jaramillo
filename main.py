@@ -20,6 +20,7 @@ from PyQt6.QtGui import (
 from PyQt6.QtWidgets import (
     QApplication,
     QMainWindow,
+    QMenu,
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
@@ -63,6 +64,15 @@ except Exception:
 # MIDI note range for a full piano
 MIN_NOTE = 21   # A0
 MAX_NOTE = 108  # C8
+
+
+class PersistentMenu(QMenu):
+    def mouseReleaseEvent(self, event):
+        action = self.actionAt(event.pos())
+        if isinstance(action, QWidgetAction):
+            event.accept()
+            return
+        super().mouseReleaseEvent(event)
 
 INTERVAL_LABELS = {
     0: "f",
@@ -2081,7 +2091,8 @@ class ControlWindow(QWidget):
         frame_border_width_action.triggered.connect(self._choose_interval_frame_border_width)
 
     def _setup_display_menus(self):
-        chord_menu = self.menu_bar.addMenu("Acordes")
+        chord_menu = PersistentMenu("Acordes", self.menu_bar)
+        self.menu_bar.addMenu(chord_menu)
         chord_widget = QWidget()
         chord_layout = QVBoxLayout()
         chord_layout.setContentsMargins(8, 6, 8, 6)
@@ -2111,7 +2122,8 @@ class ControlWindow(QWidget):
         chord_action.setDefaultWidget(chord_widget)
         chord_menu.addAction(chord_action)
 
-        scale_menu = self.menu_bar.addMenu("Escalas")
+        scale_menu = PersistentMenu("Escalas", self.menu_bar)
+        self.menu_bar.addMenu(scale_menu)
         scale_widget = QWidget()
         scale_layout = QVBoxLayout()
         scale_layout.setContentsMargins(8, 6, 8, 6)
