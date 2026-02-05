@@ -1135,10 +1135,14 @@ class ChordDisplayWidget(QWidget):
         self.main_label = QLabel("")
         self.main_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.main_label.setStyleSheet("background: transparent;")
+        self.main_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.main_label.setMinimumWidth(0)
 
         self.alt_label = QLabel("")
         self.alt_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.alt_label.setStyleSheet("color: #ffffff; background: transparent;")
+        self.alt_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.alt_label.setMinimumWidth(0)
 
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -2160,7 +2164,6 @@ class ControlWindow(QWidget):
         self._populate_display_controls()
         self.load_preferences()
         self.range_changed()
-        self._set_absolute_black_backgrounds(False)
         self._apply_chord_font()
         self._refresh_learned_chords_ui()
         self._update_display_overlays()
@@ -2344,36 +2347,64 @@ class ControlWindow(QWidget):
             self._write_preferences(False)
 
     def _apply_single_view_styles(self, enabled: bool) -> None:
-        menu_style = (
-            "QMenuBar { background: #f2f2f2; color: #000000; border-bottom: 1px solid #cfcfcf; }"
-            "QMenuBar::item { background: transparent; color: #000000; padding: 4px 10px; }"
-            "QMenuBar::item:selected { background: #dcdcdc; }"
-            "QMenu { background-color: #f8f8f8; color: #000000; border: 1px solid #cfcfcf; }"
-            "QMenu::item { color: #000000; }"
-            "QMenu::item:selected { background-color: #dcdcdc; color: #000000; }"
-        )
-        control_style = (
-            "QWidget { color: #000000; background-color: transparent; }"
-            "QLabel, QCheckBox { color: #000000; }"
-            "QPushButton, QToolButton, QComboBox, QSpinBox {"
-            "  color: #000000;"
-            "  background-color: #f4f4f4;"
-            "  border: 1px solid #bdbdbd;"
-            "  padding: 2px 6px;"
-            "}"
-            "QPushButton:disabled, QComboBox:disabled, QSpinBox:disabled { color: #666666; }"
-            "QComboBox QAbstractItemView {"
-            "  background-color: #ffffff;"
-            "  color: #000000;"
-            "  selection-background-color: #dcdcdc;"
-            "  selection-color: #000000;"
-            "}"
-        )
-        self.menu_bar.setStyleSheet(menu_style)
-        self.setStyleSheet(control_style)
-        self.display_panel_widget.setStyleSheet(control_style)
-        for widget in self._menu_panel_widgets:
-            widget.setStyleSheet(control_style)
+        if enabled:
+            menu_style = (
+                "QMenuBar {"
+                "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f4f6f9, stop:1 #e6ebf2);"
+                "  color: #1f2937;"
+                "  border: 1px solid #c7d0dd;"
+                "  border-left: none;"
+                "  border-right: none;"
+                "}"
+                "QMenuBar::item {"
+                "  background: transparent;"
+                "  color: #1f2937;"
+                "  padding: 6px 12px;"
+                "  border-radius: 6px;"
+                "  margin: 2px 3px;"
+                "}"
+                "QMenuBar::item:selected { background: #dbe7f7; }"
+                "QMenuBar::item:pressed { background: #cdddf3; }"
+                "QMenu {"
+                "  background-color: #f8fbff;"
+                "  color: #1f2937;"
+                "  border: 1px solid #c7d0dd;"
+                "}"
+                "QMenu::item { padding: 6px 18px; }"
+                "QMenu::item:selected { background-color: #dbe7f7; color: #0f172a; }"
+            )
+            control_style = (
+                "QWidget { color: #111827; background-color: transparent; }"
+                "QLabel, QCheckBox { color: #111827; }"
+                "QPushButton, QToolButton, QComboBox, QSpinBox {"
+                "  color: #111827;"
+                "  background-color: #f7f9fc;"
+                "  border: 1px solid #b8c4d6;"
+                "  border-radius: 6px;"
+                "  padding: 3px 8px;"
+                "}"
+                "QPushButton:hover, QToolButton:hover, QComboBox:hover, QSpinBox:hover {"
+                "  background-color: #ecf3ff;"
+                "}"
+                "QPushButton:disabled, QComboBox:disabled, QSpinBox:disabled { color: #6b7280; }"
+                "QComboBox QAbstractItemView {"
+                "  background-color: #ffffff;"
+                "  color: #111827;"
+                "  selection-background-color: #dbe7f7;"
+                "  selection-color: #0f172a;"
+                "}"
+            )
+            self.menu_bar.setStyleSheet(menu_style)
+            self.setStyleSheet(control_style)
+            self.display_panel_widget.setStyleSheet(control_style)
+            for widget in self._menu_panel_widgets:
+                widget.setStyleSheet(control_style)
+        else:
+            self.menu_bar.setStyleSheet("")
+            self.setStyleSheet("")
+            self.display_panel_widget.setStyleSheet("")
+            for widget in self._menu_panel_widgets:
+                widget.setStyleSheet("")
 
     def _set_absolute_black_backgrounds(self, persist: bool) -> None:
         black = QColor(0, 0, 0)
@@ -3867,12 +3898,31 @@ class ControlWindow(QWidget):
             "display_drop": str(self.display_drop_combo.currentData() or "none"),
             "display_transpose": int(self.display_transpose_spin.value()),
             "view_mode": str(self.view_mode),
+            "window_visibility": {
+                "keyboard": bool(self.piano_window.isVisible()),
+                "chords": bool(self.chord_window.isVisible()),
+                "staff": bool(self.staff_window.isVisible()),
+            },
+            "interval_label_settings": self._serialize_interval_settings(self.interval_label_settings),
+            "staff_settings": self._serialize_staff_settings(self.staff_window.widget.staff_settings),
             "window_geometries": {
                 "keyboard": self._geometry_payload_for(self.piano_window),
                 "chords": self._geometry_payload_for(self.chord_window),
                 "staff": self._geometry_payload_for(self.staff_window),
             },
         }
+
+    def _serialize_interval_settings(self, settings: Dict) -> Dict:
+        serialized: Dict[str, object] = {}
+        for key, value in (settings or {}).items():
+            if isinstance(value, QColor):
+                serialized[key] = value.name(QColor.NameFormat.HexArgb)
+            else:
+                serialized[key] = value
+        return serialized
+
+    def _serialize_staff_settings(self, settings: Dict) -> Dict:
+        return {str(k): v for k, v in (settings or {}).items()}
 
     def _geometry_payload_for(self, window: QMainWindow) -> Dict[str, int]:
         rect = window.geometry()
@@ -3971,6 +4021,14 @@ class ControlWindow(QWidget):
         self._select_combo_value(self.start_combo, MIN_NOTE)
         self.octaves_spin.setValue(7)
 
+        start_note = prefs.get("start_note")
+        if isinstance(start_note, int):
+            self._select_combo_value(self.start_combo, max(MIN_NOTE, min(MAX_NOTE, start_note)))
+
+        octaves = prefs.get("octaves")
+        if isinstance(octaves, int):
+            self.octaves_spin.setValue(max(1, min(7, octaves)))
+
         rgba = prefs.get("base_color_rgba")
         if (
             isinstance(rgba, list)
@@ -4018,6 +4076,20 @@ class ControlWindow(QWidget):
             except Exception:
                 pass
 
+        chord_bg = prefs.get("chord_background")
+        if isinstance(chord_bg, str):
+            bg_color = QColor(chord_bg)
+            if bg_color.isValid():
+                self.chord_bg_color = bg_color
+                self.chord_window.set_background_color(bg_color)
+
+        single_bg = prefs.get("single_window_background")
+        if isinstance(single_bg, str):
+            bg_color = QColor(single_bg)
+            if bg_color.isValid():
+                self.single_window_bg_color = bg_color
+                self.piano_window.set_combined_background_color(bg_color)
+
         display_root = prefs.get("display_root_pc")
         if isinstance(display_root, int):
             self._select_combo_value(self.display_root_combo, display_root % 12)
@@ -4058,7 +4130,31 @@ class ControlWindow(QWidget):
 
         self._update_display_overlays()
 
+        interval_settings = prefs.get("interval_label_settings")
+        if isinstance(interval_settings, dict):
+            self._apply_interval_settings_payload(interval_settings)
+
+        staff_settings = prefs.get("staff_settings")
+        if isinstance(staff_settings, dict):
+            self.staff_settings = dict(self._default_staff_settings())
+            self.staff_settings.update({str(k): v for k, v in staff_settings.items()})
+            self._apply_staff_settings()
+
         self._restore_window_geometries(prefs)
+
+        saved_view_mode = prefs.get("view_mode")
+        if saved_view_mode in ("single", "separate"):
+            self.set_view_mode(str(saved_view_mode), persist=False)
+
+        visibility = prefs.get("window_visibility")
+        if isinstance(visibility, dict) and self.view_mode == "separate":
+            if not bool(visibility.get("keyboard", True)):
+                self.piano_window.hide()
+            if not bool(visibility.get("chords", True)):
+                self.chord_window.hide()
+            if not bool(visibility.get("staff", True)):
+                self.staff_window.hide()
+            self._update_window_actions()
 
 
         capture_window_ms = prefs.get("capture_window_ms")
@@ -4161,6 +4257,34 @@ class ControlWindow(QWidget):
         # Aplicar rango con las preferencias cargadas
         self.range_changed()
 
+    def _apply_interval_settings_payload(self, payload: Dict) -> None:
+        merged = dict(self._default_interval_label_settings())
+        for key, value in payload.items():
+            if key in {"color_white", "color_black", "frame_fill_color", "frame_border_color"}:
+                color = QColor(value) if isinstance(value, str) else value
+                if isinstance(color, QColor) and color.isValid():
+                    merged[key] = color
+            elif key in {"font_size"}:
+                if isinstance(value, int):
+                    merged[key] = max(6, min(96, value))
+            elif key in {"frame_fill_opacity"}:
+                if isinstance(value, (int, float)):
+                    merged[key] = max(0.0, min(1.0, float(value)))
+            elif key in {"frame_border_width"}:
+                if isinstance(value, (int, float)):
+                    merged[key] = max(0.0, float(value))
+            elif key in {
+                "font_family",
+                "y_anchor_mode_white",
+                "y_anchor_mode_black",
+                "y_percent_white",
+                "y_percent_black",
+            }:
+                merged[key] = value
+        self.interval_label_settings = merged
+        self._apply_interval_settings_to_piano()
+        self._sync_interval_position_actions()
+
     def _toggle_keyboard_labels(self, checked: bool):
         self.piano.set_keyboard_labels_visible(checked)
         self._write_preferences(False)
@@ -4184,7 +4308,7 @@ class ControlWindow(QWidget):
                 return None
             return QRect(x, y, w, h)
 
-        # La geometría del teclado no se restaura para abrir siempre a ancho completo.
+        self._apply_geometry_if_valid(self.piano_window, rect_from_payload(geoms.get("keyboard")))
         self._apply_geometry_if_valid(self.chord_window, rect_from_payload(geoms.get("chords")))
         self._apply_geometry_if_valid(self.staff_window, rect_from_payload(geoms.get("staff")))
 
@@ -4325,7 +4449,10 @@ class ControlWindow(QWidget):
         else:
             target_height = keyboard_height
 
-        target_width = max(720, available.width())
+        if self.view_mode == "single":
+            target_width = max(720, int(current.width()))
+        else:
+            target_width = max(720, available.width())
         self.piano_window.resize(target_width, target_height)
 
     def choose_color(self):
