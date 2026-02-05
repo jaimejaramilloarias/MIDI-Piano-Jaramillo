@@ -36,6 +36,7 @@ from PyQt6.QtWidgets import (
     QInputDialog,
     QFileDialog,
     QWidgetAction,
+    QToolButton,
 )
 import mido
 
@@ -769,7 +770,7 @@ class PianoWidget(QWidget):
         if self.show_keyboard_labels:
             painter.setPen(QPen(Qt.GlobalColor.black))
             font = QFont()
-            font.setPointSize(9)
+            font.setPointSize(self._keyboard_label_font_size(key_width, key_height))
             painter.setFont(font)
             for n in white_notes:
                 if n % 12 == 0:  # C
@@ -830,7 +831,7 @@ class PianoWidget(QWidget):
         if self.show_keyboard_labels and self.interval_labels:
             settings = self.interval_label_settings or {}
             label_font = QFont(settings.get("font_family") or "")
-            label_font.setPointSize(int(settings.get("font_size", 14)))
+            label_font.setPointSize(self._interval_label_font_size(key_width, key_height))
             painter.setFont(label_font)
             metrics = painter.fontMetrics()
 
@@ -916,6 +917,17 @@ class PianoWidget(QWidget):
         if not isinstance(chosen, QColor) or not chosen.isValid():
             chosen = QColor(Qt.GlobalColor.black if not is_black_key else Qt.GlobalColor.white)
         return chosen
+
+    def _keyboard_label_font_size(self, key_width: float, key_height: float) -> int:
+        size = min(key_width * 0.6, key_height * 0.12)
+        return max(6, int(size))
+
+    def _interval_label_font_size(self, key_width: float, key_height: float) -> int:
+        settings = self.interval_label_settings or {}
+        base_size = float(settings.get("font_size", 14))
+        max_size = min(key_width * 0.8, key_height * 0.25)
+        size = min(base_size, max_size)
+        return max(6, int(size))
 
     def _draw_interval_frame(self, painter: QPainter, rect: QRectF):
         settings = self.interval_label_settings or {}
@@ -1052,14 +1064,15 @@ class ChordDisplayWidget(QWidget):
 
         self.main_label = QLabel("")
         self.main_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.main_label.setStyleSheet("background: transparent;")
 
         self.alt_label = QLabel("")
         self.alt_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self.alt_label.setStyleSheet("color: #ffffff;")
+        self.alt_label.setStyleSheet("color: #ffffff; background: transparent;")
 
         layout = QHBoxLayout()
-        layout.setContentsMargins(14, 10, 14, 10)
-        layout.setSpacing(8)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         layout.addWidget(self.main_label, stretch=0)
         layout.addWidget(self.alt_label, stretch=0)
         self.setLayout(layout)
@@ -1092,7 +1105,7 @@ class ChordDisplayWidget(QWidget):
         if not color.isValid():
             return
         self.background_color = color
-        self.setStyleSheet(f"background: {color.name()};")
+        self.setStyleSheet(f"background: {color.name()}; padding: 10px;")
 
     def update_chord(self, notas):
         info = analizar_cifrado_alternativos(notas)
@@ -1108,7 +1121,7 @@ class ChordDisplayWidget(QWidget):
 
         # Alternativos a la derecha, pegados al principal
         if alternativos:
-            self.alt_label.setText("   ".join(alternativos))
+            self.alt_label.setText(" ".join(alternativos))
         else:
             self.alt_label.setText("")
 
@@ -1125,6 +1138,8 @@ class ChordWindow(QMainWindow):
         flags = self.windowFlags()
         flags |= Qt.WindowType.FramelessWindowHint
         self.setWindowFlags(flags)
+        self.setContentsMargins(0, 0, 0, 0)
+        self.setStyleSheet("background: #000000;")
 
         self.setWindowTitle("MIDI Piano Jaramillo — Acordes")
 
@@ -2014,11 +2029,11 @@ class ControlWindow(QWidget):
         self.display_transpose_spin.setValue(0)
         self.display_scale_checkbox = QCheckBox("Mostrar escala")
         self.display_scale_combo = MenuComboBox()
-        self.display_panel_widget = self._build_display_panel()
         self.view_mode = "separate"
         self._syncing_display_panel = False
 
         self._setup_window_menu()
+        self.display_panel_widget = self._build_display_panel()
 
         self._load_external_chord_dictionary()
 
@@ -2081,35 +2096,35 @@ class ControlWindow(QWidget):
     # --- menú de ventanas ---
 
     def _setup_window_menu(self):
-        window_menu = self.menu_bar.addMenu("Ventana")
+        self.window_menu = self.menu_bar.addMenu("Ventana")
 
-        self.keyboard_action = window_menu.addAction("Ocultar Teclado")
+        self.keyboard_action = self.window_menu.addAction("Ocultar Teclado")
         self.keyboard_action.setCheckable(True)
         self.keyboard_action.setChecked(True)
         self.keyboard_action.triggered.connect(
             lambda checked: self._toggle_window_visibility(self.piano_window, checked)
         )
 
-        self.chord_action = window_menu.addAction("Ocultar Acordes")
+        self.chord_action = self.window_menu.addAction("Ocultar Acordes")
         self.chord_action.setCheckable(True)
         self.chord_action.setChecked(True)
         self.chord_action.triggered.connect(
             lambda checked: self._toggle_window_visibility(self.chord_window, checked)
         )
 
-        self.staff_action = window_menu.addAction("Ocultar Partitura")
+        self.staff_action = self.window_menu.addAction("Ocultar Partitura")
         self.staff_action.setCheckable(True)
         self.staff_action.setChecked(True)
         self.staff_action.triggered.connect(
             lambda checked: self._toggle_window_visibility(self.staff_window, checked)
         )
 
-        window_menu.addSeparator()
-        show_all = window_menu.addAction("Mostrar todas")
+        self.window_menu.addSeparator()
+        show_all = self.window_menu.addAction("Mostrar todas")
         show_all.triggered.connect(self.show_all_windows)
 
-        dictionary_menu = self.menu_bar.addMenu("Diccionario")
-        load_dict = dictionary_menu.addAction("Cargar diccionario…")
+        self.dictionary_menu = self.menu_bar.addMenu("Diccionario")
+        load_dict = self.dictionary_menu.addAction("Cargar diccionario…")
         load_dict.triggered.connect(self.load_chord_dictionary_from_dialog)
 
         self._setup_view_menu()
@@ -2124,16 +2139,16 @@ class ControlWindow(QWidget):
         QTimer.singleShot(0, self._update_window_actions)
 
     def _setup_view_menu(self):
-        view_menu = self.menu_bar.addMenu("Visualización")
+        self.visualization_menu = self.menu_bar.addMenu("Visualización")
         self.view_mode_group = QActionGroup(self)
         self.view_mode_group.setExclusive(True)
 
-        self.view_single_action = view_menu.addAction("Una sola ventana")
+        self.view_single_action = self.visualization_menu.addAction("Una sola ventana")
         self.view_single_action.setCheckable(True)
         self.view_single_action.setData("single")
         self.view_mode_group.addAction(self.view_single_action)
 
-        self.view_separate_action = view_menu.addAction("Ventanas separadas")
+        self.view_separate_action = self.visualization_menu.addAction("Ventanas separadas")
         self.view_separate_action.setCheckable(True)
         self.view_separate_action.setData("separate")
         self.view_mode_group.addAction(self.view_separate_action)
@@ -2269,7 +2284,7 @@ class ControlWindow(QWidget):
             control_style = (
                 "QWidget { color: #ffffff; background-color: transparent; }"
                 "QLabel, QCheckBox { color: #ffffff; }"
-                "QPushButton, QComboBox, QSpinBox {"
+                "QPushButton, QToolButton, QComboBox, QSpinBox {"
                 "  color: #ffffff;"
                 "  background-color: #1a1a1a;"
                 "  border: 1px solid #444444;"
@@ -2304,8 +2319,8 @@ class ControlWindow(QWidget):
             self._write_preferences(False)
 
     def _setup_interval_menu(self):
-        view_menu = self.menu_bar.addMenu("Ver")
-        intervals_menu = view_menu.addMenu("Intervalos en teclas")
+        self.interval_menu = self.menu_bar.addMenu("Ver")
+        intervals_menu = self.interval_menu.addMenu("Intervalos en teclas")
 
         font_action = intervals_menu.addAction("Fuente…")
         font_action.triggered.connect(self._choose_interval_font)
@@ -2372,11 +2387,40 @@ class ControlWindow(QWidget):
         frame_border_width_action = frame_menu.addAction("Grosor del borde…")
         frame_border_width_action.triggered.connect(self._choose_interval_frame_border_width)
 
+    def _build_single_window_menu_strip(self) -> QWidget:
+        container = QWidget()
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+
+        for label, menu in (
+            ("Ventana", self.window_menu),
+            ("Diccionario", self.dictionary_menu),
+            ("Visualización", self.visualization_menu),
+            ("Acordes", self.chord_menu),
+            ("Escalas", self.scale_menu),
+            ("Controles", self.controls_menu),
+            ("Ver", self.interval_menu),
+            ("Partitura", self.staff_menu),
+        ):
+            button = QToolButton()
+            button.setText(label)
+            button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
+            button.setMenu(menu)
+            layout.addWidget(button)
+
+        layout.addStretch()
+        container.setLayout(layout)
+        return container
+
     def _build_display_panel(self) -> QWidget:
         panel = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(8, 6, 8, 6)
         layout.setSpacing(6)
+
+        layout.addWidget(self._build_single_window_menu_strip())
 
         chord_row = QHBoxLayout()
         self.display_panel_chord_checkbox = QCheckBox("Mostrar acorde")
@@ -2573,8 +2617,8 @@ class ControlWindow(QWidget):
             self._syncing_display_panel = False
 
     def _setup_display_menus(self):
-        chord_menu = PersistentMenu("Acordes", self.menu_bar)
-        self.menu_bar.addMenu(chord_menu)
+        self.chord_menu = PersistentMenu("Acordes", self.menu_bar)
+        self.menu_bar.addMenu(self.chord_menu)
         chord_widget = QWidget()
         chord_layout = QVBoxLayout()
         chord_layout.setContentsMargins(8, 6, 8, 6)
@@ -2600,13 +2644,13 @@ class ControlWindow(QWidget):
         chord_layout.addLayout(chord_row2)
 
         chord_widget.setLayout(chord_layout)
-        chord_action = QWidgetAction(chord_menu)
+        chord_action = QWidgetAction(self.chord_menu)
         chord_action.setDefaultWidget(chord_widget)
-        chord_menu.addAction(chord_action)
+        self.chord_menu.addAction(chord_action)
         self._menu_panel_widgets.append(chord_widget)
 
-        scale_menu = PersistentMenu("Escalas", self.menu_bar)
-        self.menu_bar.addMenu(scale_menu)
+        self.scale_menu = PersistentMenu("Escalas", self.menu_bar)
+        self.menu_bar.addMenu(self.scale_menu)
         scale_widget = QWidget()
         scale_layout = QVBoxLayout()
         scale_layout.setContentsMargins(8, 6, 8, 6)
@@ -2620,31 +2664,31 @@ class ControlWindow(QWidget):
         scale_layout.addLayout(scale_row)
 
         scale_widget.setLayout(scale_layout)
-        scale_action = QWidgetAction(scale_menu)
+        scale_action = QWidgetAction(self.scale_menu)
         scale_action.setDefaultWidget(scale_widget)
-        scale_menu.addAction(scale_action)
+        self.scale_menu.addAction(scale_action)
         self._menu_panel_widgets.append(scale_widget)
 
     def _setup_controls_menu(self):
-        controls_menu = self.menu_bar.addMenu("Controles")
-        edit_chords_action = controls_menu.addAction("Editar etiquetas de acordes…")
+        self.controls_menu = self.menu_bar.addMenu("Controles")
+        edit_chords_action = self.controls_menu.addAction("Editar etiquetas de acordes…")
         edit_chords_action.triggered.connect(self._edit_chord_labels)
-        self.keyboard_labels_action = controls_menu.addAction("Etiquetas del teclado")
+        self.keyboard_labels_action = self.controls_menu.addAction("Etiquetas del teclado")
         self.keyboard_labels_action.setCheckable(True)
         self.keyboard_labels_action.setChecked(True)
         self.keyboard_labels_action.toggled.connect(self._toggle_keyboard_labels)
-        self.single_window_bg_action = controls_menu.addAction("Fondo vista única…")
+        self.single_window_bg_action = self.controls_menu.addAction("Fondo vista única…")
         self.single_window_bg_action.triggered.connect(self.choose_single_window_background)
-        controls_menu.addSeparator()
+        self.controls_menu.addSeparator()
 
-        panel_action = QWidgetAction(controls_menu)
+        panel_action = QWidgetAction(self.controls_menu)
         panel_action.setDefaultWidget(self)
-        controls_menu.addAction(panel_action)
+        self.controls_menu.addAction(panel_action)
 
     def _setup_staff_menu(self):
-        staff_menu = self.menu_bar.addMenu("Partitura")
+        self.staff_menu = self.menu_bar.addMenu("Partitura")
 
-        clef_menu = staff_menu.addMenu("Claves")
+        clef_menu = self.staff_menu.addMenu("Claves")
         clef_size_action = clef_menu.addAction("Tamaño global de claves…")
         clef_size_action.triggered.connect(
             lambda: self._prompt_staff_setting(
@@ -2733,7 +2777,7 @@ class ControlWindow(QWidget):
             )
         )
 
-        labels_menu = staff_menu.addMenu("Etiquetas")
+        labels_menu = self.staff_menu.addMenu("Etiquetas")
         label_size_action = labels_menu.addAction("Tamaño etiquetas de nota…")
         label_size_action.triggered.connect(
             lambda: self._prompt_staff_setting(
@@ -2775,7 +2819,7 @@ class ControlWindow(QWidget):
             )
         )
 
-        notes_menu = staff_menu.addMenu("Notas")
+        notes_menu = self.staff_menu.addMenu("Notas")
         content_x_action = notes_menu.addAction("Desplazamiento horizontal global…")
         content_x_action.triggered.connect(
             lambda: self._prompt_staff_setting(
@@ -2847,7 +2891,7 @@ class ControlWindow(QWidget):
             )
         )
 
-        accidentals_menu = staff_menu.addMenu("Alteraciones")
+        accidentals_menu = self.staff_menu.addMenu("Alteraciones")
         accidental_size_action = accidentals_menu.addAction("Tamaño de alteraciones…")
         accidental_size_action.triggered.connect(
             lambda: self._prompt_staff_setting(
@@ -2908,7 +2952,7 @@ class ControlWindow(QWidget):
             lambda: self._choose_staff_color("accidental_color", "Color alteraciones")
         )
 
-        lines_menu = staff_menu.addMenu("Líneas")
+        lines_menu = self.staff_menu.addMenu("Líneas")
         line_length_action = lines_menu.addAction("Longitud de líneas…")
         line_length_action.triggered.connect(
             lambda: self._prompt_staff_setting(
@@ -2974,7 +3018,7 @@ class ControlWindow(QWidget):
             lambda: self._choose_staff_color("ledger_line_color", "Color líneas auxiliares")
         )
 
-        colors_menu = staff_menu.addMenu("Colores")
+        colors_menu = self.staff_menu.addMenu("Colores")
         background_action = colors_menu.addAction("Fondo de ventana…")
         background_action.triggered.connect(
             lambda: self._choose_staff_color("background_color", "Color de fondo")
