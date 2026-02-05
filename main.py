@@ -5025,11 +5025,11 @@ def main():
     piano_window = PianoWindow()
     chord_window = ChordWindow()
     staff_window = StaffWindow()
-    control_window = ControlWindow(piano_window, chord_window, staff_window)
-
     piano_window.show()
     chord_window.show()
     staff_window.show()
+
+    control_window = ControlWindow(piano_window, chord_window, staff_window)
 
     sys.exit(app.exec())
 
