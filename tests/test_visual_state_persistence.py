@@ -56,8 +56,22 @@ class TestVisualStatePersistence(unittest.TestCase):
         schedule_source = self._class_method_source("ControlWindow", "_schedule_visual_state_save")
         persist_source = self._class_method_source("ControlWindow", "_persist_visual_state")
 
-        self.assertIn("if not self._visual_state_tracking_enabled:", schedule_source)
-        self.assertIn("if not self._visual_state_tracking_enabled:", persist_source)
+        self.assertIn("if not self._visual_state_tracking_enabled or self._is_closing:", schedule_source)
+        self.assertIn("if not force and (not self._visual_state_tracking_enabled or self._is_closing):", persist_source)
+
+    def test_persist_on_close_forces_save(self) -> None:
+        install_source = self._class_method_source("ControlWindow", "_install_visual_state_tracking")
+        close_source = self._class_method_source("ControlWindow", "_persist_preferences_on_close")
+
+        self.assertIn("app.aboutToQuit.connect(self._persist_preferences_on_close)", install_source)
+        self.assertIn("self._is_closing = True", close_source)
+        self.assertIn("self._persist_visual_state(force=True)", close_source)
+
+    def test_save_preferences_button_is_removed(self) -> None:
+        init_source = self._class_method_source("ControlWindow", "__init__")
+
+        self.assertNotIn('QPushButton("Guardar preferencias")', init_source)
+        self.assertNotIn("self.save_button", init_source)
 
 
 if __name__ == "__main__":
