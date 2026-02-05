@@ -1968,6 +1968,7 @@ class ControlWindow(QWidget):
         self.capture_timer.setSingleShot(True)
         self.capture_timer.timeout.connect(self._finish_capture_window)
         self._menu_panel_widgets: List[QWidget] = []
+        self._visual_state_tracking_enabled = False
         self._visual_state_save_timer = QTimer(self)
         self._visual_state_save_timer.setSingleShot(True)
         self._visual_state_save_timer.timeout.connect(self._persist_visual_state)
@@ -2167,6 +2168,7 @@ class ControlWindow(QWidget):
         self.refresh_inputs()
         self._populate_display_controls()
         self.load_preferences()
+        self._visual_state_tracking_enabled = True
         self.range_changed()
         self._apply_chord_font()
         self._refresh_learned_chords_ui()
@@ -2182,11 +2184,15 @@ class ControlWindow(QWidget):
             window.installEventFilter(self)
 
     def _schedule_visual_state_save(self) -> None:
+        if not self._visual_state_tracking_enabled:
+            return
         if self._visual_state_save_timer.isActive():
             self._visual_state_save_timer.stop()
         self._visual_state_save_timer.start(200)
 
     def _persist_visual_state(self) -> None:
+        if not self._visual_state_tracking_enabled:
+            return
         if self._visual_state_save_timer.isActive():
             self._visual_state_save_timer.stop()
         self._write_preferences(False)
