@@ -66,6 +66,9 @@ except Exception:
 # MIDI note range for a full piano
 MIN_NOTE = 21   # A0
 MAX_NOTE = 108  # C8
+DEFAULT_START_NOTE = 36  # C2
+DEFAULT_OCTAVES = 5      # C2–C7
+DEFAULT_VIEW_MODE = "single"
 
 
 class PersistentMenu(QMenu):
@@ -2017,9 +2020,9 @@ class ControlWindow(QWidget):
                 self.start_combo.addItem(label, n)
 
         # Por defecto: teclado completo (A0–C8)
-        default_start = MIN_NOTE
+        default_start = DEFAULT_START_NOTE
         self._select_combo_value(self.start_combo, default_start)
-        self.octaves_spin.setValue(7)
+        self.octaves_spin.setValue(DEFAULT_OCTAVES)
         self.piano.set_range_from_start_and_octaves(default_start, self.octaves_spin.value())
 
         # Layout
@@ -3872,7 +3875,7 @@ class ControlWindow(QWidget):
     def _preferences_payload(self):
         return {
             "midi_in_name": self.input_combo.currentData() or "",
-            "start_note": int(self.start_combo.currentData() or MIN_NOTE),
+            "start_note": int(self.start_combo.currentData() or DEFAULT_START_NOTE),
             "octaves": int(self.octaves_spin.value()),
             "base_color_rgba": [
                 int(self.piano.base_color.red()),
@@ -4050,14 +4053,18 @@ class ControlWindow(QWidget):
 
     def load_preferences(self):
         if not self.CONFIG_PATH.exists():
+            self._select_combo_value(self.start_combo, DEFAULT_START_NOTE)
+            self.octaves_spin.setValue(DEFAULT_OCTAVES)
+            self.set_view_mode(DEFAULT_VIEW_MODE, persist=False)
+            self._update_window_actions()
             return
         try:
             prefs = json.loads(self.CONFIG_PATH.read_text(encoding="utf-8"))
         except Exception:
             return
 
-        self._select_combo_value(self.start_combo, MIN_NOTE)
-        self.octaves_spin.setValue(7)
+        self._select_combo_value(self.start_combo, DEFAULT_START_NOTE)
+        self.octaves_spin.setValue(DEFAULT_OCTAVES)
 
         start_note = prefs.get("start_note")
         if isinstance(start_note, int):
@@ -4183,6 +4190,8 @@ class ControlWindow(QWidget):
         saved_view_mode = prefs.get("view_mode")
         if saved_view_mode in ("single", "separate"):
             self.set_view_mode(str(saved_view_mode), persist=False)
+        else:
+            self.set_view_mode(DEFAULT_VIEW_MODE, persist=False)
 
         visibility = prefs.get("window_visibility")
         if isinstance(visibility, dict) and self.view_mode == "separate":
