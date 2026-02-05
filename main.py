@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, QPoint, QPointF, QEvent, QSettings
+from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, QPoint, QPointF, QEvent, QSettings, QObject
 from PyQt6.QtGui import (
     QActionGroup,
     QBrush,
@@ -135,6 +135,37 @@ class MenuComboBox(QComboBox):
         while parent is not None and not isinstance(parent, QMenu):
             parent = parent.parentWidget()
         return parent
+
+
+class WindowDragFilter(QObject):
+    """Permite arrastrar ventanas sin marco desde widgets hijos no interactivos."""
+
+    def __init__(self, target_window: QWidget):
+        super().__init__(target_window)
+        self._target_window = target_window
+        self._drag_offset: Optional[QPoint] = None
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if not isinstance(watched, QWidget):
+            return False
+
+        if watched.property("skip_window_drag_filter"):
+            return False
+
+        if isinstance(watched, (QPushButton, QComboBox, QSpinBox, QToolButton, QCheckBox, QFontComboBox)):
+            return False
+
+        if event.type() == QEvent.Type.MouseButtonPress and hasattr(event, "button"):
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._drag_offset = event.globalPosition().toPoint() - self._target_window.frameGeometry().topLeft()
+        elif event.type() == QEvent.Type.MouseMove and hasattr(event, "buttons"):
+            if self._drag_offset is not None and (event.buttons() & Qt.MouseButton.LeftButton):
+                self._target_window.move(event.globalPosition().toPoint() - self._drag_offset)
+                return True
+        elif event.type() == QEvent.Type.MouseButtonRelease:
+            self._drag_offset = None
+
+        return False
 
 INTERVAL_LABELS = {
     0: "f",
@@ -490,6 +521,7 @@ class PianoWidget(QWidget):
         self.base_color = QColor("cyan")
 
         self.setMinimumSize(300, 80)
+        self.setProperty("skip_window_drag_filter", True)
 
         # Fondo transparente
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
@@ -782,19 +814,30 @@ class PianoWidget(QWidget):
 
         # Etiquetas para las C
         if self.show_keyboard_labels:
-            painter.setPen(QPen(Qt.GlobalColor.black))
+            label_color = QColor(Qt.GlobalColor.black)
+            label_color.setAlphaF(0.65)
+            painter.setPen(QPen(label_color))
             font = QFont()
             font.setPointSize(self._keyboard_label_font_size(key_width, key_height))
             painter.setFont(font)
+            metrics = painter.fontMetrics()
             for n in white_notes:
                 if n % 12 == 0:  # C
                     idx = note_to_white_index[n]
                     x = x_offset + idx * key_width
                     key_rect = QRectF(x, y_offset, key_width, key_height)
                     label = midi_to_name(n)
+                    text_height = metrics.height()
+                    top = key_rect.bottom() - text_height - 3
+                    label_rect = QRectF(
+                        key_rect.left() + 1,
+                        max(key_rect.top(), top),
+                        max(0.0, key_rect.width() - 2),
+                        text_height + 2,
+                    )
                     painter.drawText(
-                        key_rect.adjusted(2, key_height - 20, -2, -2),
-                        Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignBottom,
+                        label_rect,
+                        Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
                         label,
                     )
 
@@ -933,8 +976,8 @@ class PianoWidget(QWidget):
         return chosen
 
     def _keyboard_label_font_size(self, key_width: float, key_height: float) -> int:
-        size = min(key_width * 0.6, key_height * 0.12)
-        return max(6, int(size))
+        size = min(key_width * 0.48, key_height * 0.09)
+        return max(5, int(size))
 
     def _interval_label_font_size(self, key_width: float, key_height: float) -> int:
         settings = self.interval_label_settings or {}
@@ -985,6 +1028,8 @@ class PianoWindow(QMainWindow):
 
         self._combined_container: Optional[QWidget] = None
         self._combined_background = QColor(Qt.GlobalColor.white)
+        self._drag_filter = WindowDragFilter(self)
+        self._install_drag_support(self.piano)
         self._apply_frameless(True)
         self.setContentsMargins(0, 0, 0, 0)
         self.resize(900, 220)
@@ -1008,6 +1053,11 @@ class PianoWindow(QMainWindow):
         if self.isVisible():
             self.show()
 
+    def _install_drag_support(self, root: QWidget) -> None:
+        root.installEventFilter(self._drag_filter)
+        for child in root.findChildren(QWidget):
+            child.installEventFilter(self._drag_filter)
+
     def show_keyboard_only(self) -> None:
         if self._combined_container is not None:
             self._combined_container.setParent(None)
@@ -1018,6 +1068,7 @@ class PianoWindow(QMainWindow):
             self.setCentralWidget(self.piano)
 
         self.setWindowTitle("MIDI Piano - Teclado")
+        self._install_drag_support(self.piano)
         self._apply_frameless(True)
 
     def set_combined_background_color(self, color: QColor) -> None:
@@ -1064,6 +1115,7 @@ class PianoWindow(QMainWindow):
         container.setLayout(layout)
         self.setCentralWidget(container)
         self._combined_container = container
+        self._install_drag_support(container)
         container.setStyleSheet(f"background: {self._combined_background.name()}; border: none;")
 
         self.setWindowTitle("MIDI Piano — Vista única")
@@ -2292,44 +2344,36 @@ class ControlWindow(QWidget):
             self._write_preferences(False)
 
     def _apply_single_view_styles(self, enabled: bool) -> None:
-        if enabled:
-            menu_style = (
-                "QMenuBar { background: #000000; color: #ffffff; }"
-                "QMenuBar::item { background: #000000; color: #ffffff; padding: 4px 10px; }"
-                "QMenuBar::item:selected { background: #222222; }"
-                "QMenu { background-color: #000000; color: #ffffff; border: 1px solid #333333; }"
-                "QMenu::item:selected { background-color: #333333; color: #ffffff; }"
-            )
-            control_style = (
-                "QWidget { color: #ffffff; background-color: transparent; }"
-                "QLabel, QCheckBox { color: #ffffff; }"
-                "QPushButton, QToolButton, QComboBox, QSpinBox {"
-                "  color: #ffffff;"
-                "  background-color: #1a1a1a;"
-                "  border: 1px solid #444444;"
-                "  padding: 2px 6px;"
-                "}"
-                "QPushButton:disabled, QComboBox:disabled, QSpinBox:disabled { color: #777777; }"
-                "QComboBox QAbstractItemView {"
-                "  background-color: #000000;"
-                "  color: #ffffff;"
-                "  selection-background-color: #333333;"
-                "}"
-            )
-            self.menu_bar.setStyleSheet(menu_style)
-            self.setStyleSheet(control_style)
-            self.display_panel_widget.setStyleSheet(control_style)
-            for widget in self._menu_panel_widgets:
-                widget.setStyleSheet(control_style)
-        else:
-            self.menu_bar.setStyleSheet(
-                "QMenuBar::item { color: #000000; }"
-                "QMenu::item { color: #000000; }"
-            )
-            self.setStyleSheet("")
-            self.display_panel_widget.setStyleSheet("")
-            for widget in self._menu_panel_widgets:
-                widget.setStyleSheet("")
+        menu_style = (
+            "QMenuBar { background: #f2f2f2; color: #000000; border-bottom: 1px solid #cfcfcf; }"
+            "QMenuBar::item { background: transparent; color: #000000; padding: 4px 10px; }"
+            "QMenuBar::item:selected { background: #dcdcdc; }"
+            "QMenu { background-color: #f8f8f8; color: #000000; border: 1px solid #cfcfcf; }"
+            "QMenu::item { color: #000000; }"
+            "QMenu::item:selected { background-color: #dcdcdc; color: #000000; }"
+        )
+        control_style = (
+            "QWidget { color: #000000; background-color: transparent; }"
+            "QLabel, QCheckBox { color: #000000; }"
+            "QPushButton, QToolButton, QComboBox, QSpinBox {"
+            "  color: #000000;"
+            "  background-color: #f4f4f4;"
+            "  border: 1px solid #bdbdbd;"
+            "  padding: 2px 6px;"
+            "}"
+            "QPushButton:disabled, QComboBox:disabled, QSpinBox:disabled { color: #666666; }"
+            "QComboBox QAbstractItemView {"
+            "  background-color: #ffffff;"
+            "  color: #000000;"
+            "  selection-background-color: #dcdcdc;"
+            "  selection-color: #000000;"
+            "}"
+        )
+        self.menu_bar.setStyleSheet(menu_style)
+        self.setStyleSheet(control_style)
+        self.display_panel_widget.setStyleSheet(control_style)
+        for widget in self._menu_panel_widgets:
+            widget.setStyleSheet(control_style)
 
     def _set_absolute_black_backgrounds(self, persist: bool) -> None:
         black = QColor(0, 0, 0)
