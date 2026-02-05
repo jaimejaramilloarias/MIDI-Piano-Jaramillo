@@ -1048,14 +1048,14 @@ class ChordDisplayWidget(QWidget):
 
     def __init__(self):
         super().__init__()
-        self.background_color = QColor(Qt.GlobalColor.white)
+        self.background_color = QColor(0, 0, 0)
 
         self.main_label = QLabel("")
         self.main_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         self.alt_label = QLabel("")
         self.alt_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
-        self.alt_label.setStyleSheet("color: #000000;")
+        self.alt_label.setStyleSheet("color: #ffffff;")
 
         layout = QHBoxLayout()
         layout.setContentsMargins(14, 10, 14, 10)
@@ -1065,7 +1065,7 @@ class ChordDisplayWidget(QWidget):
         self.setLayout(layout)
 
         self.set_font_from_family_size("Avenir Next", 80)
-        self.set_chord_color(QColor(Qt.GlobalColor.black))
+        self.set_chord_color(QColor(Qt.GlobalColor.white))
         self.set_background_color(self.background_color)
 
     def set_font_from_family_size(self, family: str, size: int):
@@ -1860,9 +1860,9 @@ class ControlWindow(QWidget):
         self.learning_capture_notes: Set[int] = set()
         self.capture_window_ms: int = 500
         self._learn_button_default_text = "Midi learn: nuevo cifrado"
-        self.chord_text_color = QColor(Qt.GlobalColor.black)
-        self.chord_bg_color = QColor(Qt.GlobalColor.white)
-        self.single_window_bg_color = QColor(Qt.GlobalColor.white)
+        self.chord_text_color = QColor(Qt.GlobalColor.white)
+        self.chord_bg_color = QColor(0, 0, 0)
+        self.single_window_bg_color = QColor(0, 0, 0)
         self.interval_label_settings = self._default_interval_label_settings()
         self.custom_chord_spellings: Dict[Tuple[int, ...], Dict[int, str]] = {}
         self.custom_chord_quality_spellings: Dict[str, Dict[int, Dict[str, object]]] = {}
@@ -1878,6 +1878,7 @@ class ControlWindow(QWidget):
         self.capture_timer = QTimer()
         self.capture_timer.setSingleShot(True)
         self.capture_timer.timeout.connect(self._finish_capture_window)
+        self._menu_panel_widgets: List[QWidget] = []
 
         # Widgets
         self.input_combo = MenuComboBox()
@@ -2072,6 +2073,7 @@ class ControlWindow(QWidget):
         self.refresh_inputs()
         self._populate_display_controls()
         self.load_preferences()
+        self._set_absolute_black_backgrounds(False)
         self._apply_chord_font()
         self._refresh_learned_chords_ui()
         self._update_display_overlays()
@@ -2250,7 +2252,54 @@ class ControlWindow(QWidget):
             self.view_single_action.setChecked(True)
         else:
             self.view_separate_action.setChecked(True)
+        self._apply_single_view_styles(mode == "single")
         self._update_window_actions()
+        if persist:
+            self._write_preferences(False)
+
+    def _apply_single_view_styles(self, enabled: bool) -> None:
+        if enabled:
+            menu_style = (
+                "QMenuBar { background: #000000; color: #ffffff; }"
+                "QMenuBar::item { background: #000000; color: #ffffff; padding: 4px 10px; }"
+                "QMenuBar::item:selected { background: #222222; }"
+                "QMenu { background-color: #000000; color: #ffffff; border: 1px solid #333333; }"
+                "QMenu::item:selected { background-color: #333333; color: #ffffff; }"
+            )
+            control_style = (
+                "QWidget { color: #ffffff; background-color: transparent; }"
+                "QLabel, QCheckBox { color: #ffffff; }"
+                "QPushButton, QComboBox, QSpinBox {"
+                "  color: #ffffff;"
+                "  background-color: #1a1a1a;"
+                "  border: 1px solid #444444;"
+                "  padding: 2px 6px;"
+                "}"
+                "QPushButton:disabled, QComboBox:disabled, QSpinBox:disabled { color: #777777; }"
+                "QComboBox QAbstractItemView {"
+                "  background-color: #000000;"
+                "  color: #ffffff;"
+                "  selection-background-color: #333333;"
+                "}"
+            )
+            self.menu_bar.setStyleSheet(menu_style)
+            self.setStyleSheet(control_style)
+            self.display_panel_widget.setStyleSheet(control_style)
+            for widget in self._menu_panel_widgets:
+                widget.setStyleSheet(control_style)
+        else:
+            self.menu_bar.setStyleSheet("")
+            self.setStyleSheet("")
+            self.display_panel_widget.setStyleSheet("")
+            for widget in self._menu_panel_widgets:
+                widget.setStyleSheet("")
+
+    def _set_absolute_black_backgrounds(self, persist: bool) -> None:
+        black = QColor(0, 0, 0)
+        self.chord_bg_color = black
+        self.chord_window.set_background_color(black)
+        self.single_window_bg_color = black
+        self.piano_window.set_combined_background_color(black)
         if persist:
             self._write_preferences(False)
 
@@ -2554,6 +2603,7 @@ class ControlWindow(QWidget):
         chord_action = QWidgetAction(chord_menu)
         chord_action.setDefaultWidget(chord_widget)
         chord_menu.addAction(chord_action)
+        self._menu_panel_widgets.append(chord_widget)
 
         scale_menu = PersistentMenu("Escalas", self.menu_bar)
         self.menu_bar.addMenu(scale_menu)
@@ -2573,6 +2623,7 @@ class ControlWindow(QWidget):
         scale_action = QWidgetAction(scale_menu)
         scale_action.setDefaultWidget(scale_widget)
         scale_menu.addAction(scale_action)
+        self._menu_panel_widgets.append(scale_widget)
 
     def _setup_controls_menu(self):
         controls_menu = self.menu_bar.addMenu("Controles")
@@ -3862,26 +3913,6 @@ class ControlWindow(QWidget):
             except Exception:
                 pass
 
-        chord_bg = prefs.get("chord_background")
-        if isinstance(chord_bg, str):
-            try:
-                color = QColor(chord_bg)
-                if color.isValid():
-                    self.chord_bg_color = color
-                    self.chord_window.set_background_color(color)
-            except Exception:
-                pass
-
-        single_bg = prefs.get("single_window_background")
-        if isinstance(single_bg, str):
-            try:
-                color = QColor(single_bg)
-                if color.isValid():
-                    self.single_window_bg_color = color
-                    self.piano_window.set_combined_background_color(color)
-            except Exception:
-                pass
-
         display_root = prefs.get("display_root_pc")
         if isinstance(display_root, int):
             self._select_combo_value(self.display_root_combo, display_root % 12)
@@ -4177,22 +4208,10 @@ class ControlWindow(QWidget):
             self._write_preferences(False)
 
     def choose_chord_background(self):
-        color = QColorDialog.getColor(
-            self.chord_bg_color, self, "Seleccionar fondo de la ventana de acordes"
-        )
-        if color.isValid():
-            self.chord_bg_color = color
-            self.chord_window.set_background_color(color)
-            self._write_preferences(False)
+        self._set_absolute_black_backgrounds(True)
 
     def choose_single_window_background(self):
-        color = QColorDialog.getColor(
-            self.single_window_bg_color, self, "Seleccionar fondo de la vista única"
-        )
-        if color.isValid():
-            self.single_window_bg_color = color
-            self.piano_window.set_combined_background_color(color)
-            self._write_preferences(False)
+        self._set_absolute_black_backgrounds(True)
 
     def _apply_chord_font(self):
         family = self.font_combo.currentFont().family()
