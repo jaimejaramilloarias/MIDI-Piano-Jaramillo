@@ -67,6 +67,13 @@ MAX_NOTE = 108  # C8
 
 
 class PersistentMenu(QMenu):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._combo_popup_open = False
+
+    def set_combo_popup_open(self, is_open: bool) -> None:
+        self._combo_popup_open = is_open
+
     def _is_widget_action_pos(self, pos):
         action = self.actionAt(pos)
         if isinstance(action, QWidgetAction):
@@ -86,6 +93,46 @@ class PersistentMenu(QMenu):
             event.accept()
             return
         super().mouseReleaseEvent(event)
+
+    def focusOutEvent(self, event):
+        if self._combo_popup_open:
+            event.accept()
+            return
+        super().focusOutEvent(event)
+
+
+class MenuComboBox(QComboBox):
+    def __init__(self, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        view = self.view()
+        view.setMouseTracking(True)
+        view.viewport().setMouseTracking(True)
+        view.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.activated.connect(self._close_menu_after_select)
+
+    def showPopup(self) -> None:
+        menu = self._find_menu_parent()
+        if isinstance(menu, PersistentMenu):
+            menu.set_combo_popup_open(True)
+        super().showPopup()
+
+    def hidePopup(self) -> None:
+        super().hidePopup()
+        menu = self._find_menu_parent()
+        if isinstance(menu, PersistentMenu):
+            menu.set_combo_popup_open(False)
+
+    def _close_menu_after_select(self, _index: int) -> None:
+        menu = self._find_menu_parent()
+        if isinstance(menu, PersistentMenu):
+            QTimer.singleShot(0, menu.close)
+
+    def _find_menu_parent(self) -> Optional[QMenu]:
+        parent = self.parentWidget()
+        while parent is not None and not isinstance(parent, QMenu):
+            parent = parent.parentWidget()
+        return parent
 
 INTERVAL_LABELS = {
     0: "f",
@@ -1749,10 +1796,10 @@ class ControlWindow(QWidget):
         self.capture_timer.timeout.connect(self._finish_capture_window)
 
         # Widgets
-        self.input_combo = QComboBox()
+        self.input_combo = MenuComboBox()
         self.refresh_button = QPushButton("Actualizar dispositivos")
 
-        self.start_combo = QComboBox()
+        self.start_combo = MenuComboBox()
         self.octaves_spin = QSpinBox()
         self.octaves_spin.setRange(1, 7)
         self.octaves_spin.setValue(3)
@@ -1867,12 +1914,12 @@ class ControlWindow(QWidget):
 
         # Visualización de acordes y escalas (pregrabados) se configura en el menú superior
         self.display_chord_checkbox = QCheckBox("Mostrar acorde")
-        self.display_root_combo = QComboBox()
-        self.display_chord_combo = QComboBox()
+        self.display_root_combo = MenuComboBox()
+        self.display_chord_combo = MenuComboBox()
         self.display_inversion_spin = QSpinBox()
         self.display_inversion_spin.setRange(-4, 4)
         self.display_inversion_spin.setValue(0)
-        self.display_drop_combo = QComboBox()
+        self.display_drop_combo = MenuComboBox()
         self.display_drop_combo.addItem("No Drop", "none")
         self.display_drop_combo.addItem("Drop 2", "drop2")
         self.display_drop_combo.addItem("Drop 3", "drop3")
@@ -1881,7 +1928,7 @@ class ControlWindow(QWidget):
         self.display_transpose_spin.setRange(-24, 24)
         self.display_transpose_spin.setValue(0)
         self.display_scale_checkbox = QCheckBox("Mostrar escala")
-        self.display_scale_combo = QComboBox()
+        self.display_scale_combo = MenuComboBox()
 
         self._setup_window_menu()
 
