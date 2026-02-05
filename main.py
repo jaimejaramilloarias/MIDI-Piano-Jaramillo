@@ -947,52 +947,99 @@ class PianoWidget(QWidget):
 
 
 class PianoWindow(QMainWindow):
-    """Ventana que SOLO muestra el teclado, sin bordes ni barra de título."""
+    """Ventana que muestra el teclado y puede alojar una vista combinada."""
 
     def __init__(self):
         super().__init__()
-
-        # Ventana sin marco / botones
-        flags = self.windowFlags()
-        flags |= Qt.WindowType.FramelessWindowHint
-        self.setWindowFlags(flags)
-
-        # Fondo transparente
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
-        self.setAutoFillBackground(False)
 
         self.setWindowTitle("MIDI Piano - Teclado")
 
         self.piano = PianoWidget()
         self.setCentralWidget(self.piano)
 
-        # Sin márgenes extra
+        self._combined_container: Optional[QWidget] = None
+        self._apply_frameless(True)
         self.setContentsMargins(0, 0, 0, 0)
-
         self.resize(900, 220)
 
+    def _apply_frameless(self, enabled: bool) -> None:
+        flags = self.windowFlags()
+        if enabled:
+            flags |= Qt.WindowType.FramelessWindowHint
+        else:
+            flags &= ~Qt.WindowType.FramelessWindowHint
+        self.setWindowFlags(flags)
+
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, enabled)
+        self.setAutoFillBackground(not enabled)
+
+        if enabled:
+            self.setContentsMargins(0, 0, 0, 0)
+        else:
+            self.setContentsMargins(8, 8, 8, 8)
+
+        if self.isVisible():
+            self.show()
+
+    def show_keyboard_only(self) -> None:
+        if self._combined_container is not None:
+            self._combined_container.setParent(None)
+            self._combined_container.deleteLater()
+            self._combined_container = None
+
+        if self.centralWidget() is not self.piano:
+            self.setCentralWidget(self.piano)
+
+        self.setWindowTitle("MIDI Piano - Teclado")
+        self._apply_frameless(True)
+
+    def show_combined_view(
+        self,
+        staff_widget: QWidget,
+        chord_widget: QWidget,
+        display_panel: Optional[QWidget],
+    ) -> None:
+        if self._combined_container is not None:
+            self._combined_container.setParent(None)
+            self._combined_container.deleteLater()
+            self._combined_container = None
+
+        if self.centralWidget() is self.piano:
+            self.takeCentralWidget()
+
+        container = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(8)
+
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(8)
+        top_row.addWidget(staff_widget, stretch=3)
+        top_row.addWidget(chord_widget, stretch=2)
+        layout.addLayout(top_row)
+
+        if display_panel is not None:
+            layout.addWidget(display_panel)
+
+        layout.addWidget(self.piano, stretch=0)
+        container.setLayout(layout)
+        self.setCentralWidget(container)
+        self._combined_container = container
+
+        self.setWindowTitle("MIDI Piano — Vista única")
+        self._apply_frameless(False)
+        self.resize(1200, 820)
 
 
 
-class ChordWindow(QMainWindow):
-    """Ventana que muestra el cifrado de acordes detectados en vivo."""
+
+class ChordDisplayWidget(QWidget):
+    """Widget reutilizable para mostrar el cifrado de acordes."""
 
     def __init__(self):
         super().__init__()
-
-        # Ventana sin marco
-        flags = self.windowFlags()
-        flags |= Qt.WindowType.FramelessWindowHint
-        self.setWindowFlags(flags)
-
-        self.setWindowTitle("MIDI Piano Jaramillo — Acordes")
-
-        self._drag_offset: Optional[QPoint] = None
-
-        # Contenedor blanco puro
         self.background_color = QColor(Qt.GlobalColor.white)
-        self.central = QWidget()
-        self.setCentralWidget(self.central)
 
         self.main_label = QLabel("")
         self.main_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -1006,36 +1053,11 @@ class ChordWindow(QMainWindow):
         layout.setSpacing(8)
         layout.addWidget(self.main_label, stretch=0)
         layout.addWidget(self.alt_label, stretch=0)
-        self.central.setLayout(layout)
+        self.setLayout(layout)
 
-        # Fuente por defecto
         self.set_font_from_family_size("Avenir Next", 80)
-
-        # Color por defecto
         self.set_chord_color(QColor(Qt.GlobalColor.black))
-
-        self.resize(740, 200)
-
         self.set_background_color(self.background_color)
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
-            event.accept()
-        else:
-            super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self._drag_offset is not None and (event.buttons() & Qt.MouseButton.LeftButton):
-            new_top_left = event.globalPosition().toPoint() - self._drag_offset
-            self.move(new_top_left)
-            event.accept()
-        else:
-            super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        self._drag_offset = None
-        super().mouseReleaseEvent(event)
 
     def set_font_from_family_size(self, family: str, size: int):
         """Actualiza la fuente del cifrado principal y alternativo."""
@@ -1061,7 +1083,7 @@ class ChordWindow(QMainWindow):
         if not color.isValid():
             return
         self.background_color = color
-        self.central.setStyleSheet(f"background: {color.name()};")
+        self.setStyleSheet(f"background: {color.name()};")
 
     def update_chord(self, notas):
         info = analizar_cifrado_alternativos(notas)
@@ -1082,6 +1104,58 @@ class ChordWindow(QMainWindow):
             self.alt_label.setText("")
 
         return info
+
+
+class ChordWindow(QMainWindow):
+    """Ventana que muestra el cifrado de acordes detectados en vivo."""
+
+    def __init__(self):
+        super().__init__()
+
+        # Ventana sin marco
+        flags = self.windowFlags()
+        flags |= Qt.WindowType.FramelessWindowHint
+        self.setWindowFlags(flags)
+
+        self.setWindowTitle("MIDI Piano Jaramillo — Acordes")
+
+        self._drag_offset: Optional[QPoint] = None
+
+        self.display_widget = ChordDisplayWidget()
+        self.setCentralWidget(self.display_widget)
+
+        self.resize(740, 200)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self._drag_offset = event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+            event.accept()
+        else:
+            super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self._drag_offset is not None and (event.buttons() & Qt.MouseButton.LeftButton):
+            new_top_left = event.globalPosition().toPoint() - self._drag_offset
+            self.move(new_top_left)
+            event.accept()
+        else:
+            super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self._drag_offset = None
+        super().mouseReleaseEvent(event)
+
+    def set_font_from_family_size(self, family: str, size: int):
+        self.display_widget.set_font_from_family_size(family, size)
+
+    def set_chord_color(self, color: QColor):
+        self.display_widget.set_chord_color(color)
+
+    def set_background_color(self, color: QColor):
+        self.display_widget.set_background_color(color)
+
+    def update_chord(self, notas):
+        return self.display_widget.update_chord(notas)
 
 
 class StaffWidget(QWidget):
@@ -1929,6 +2003,9 @@ class ControlWindow(QWidget):
         self.display_transpose_spin.setValue(0)
         self.display_scale_checkbox = QCheckBox("Mostrar escala")
         self.display_scale_combo = MenuComboBox()
+        self.display_panel_widget = self._build_display_panel()
+        self.view_mode = "separate"
+        self._syncing_display_panel = False
 
         self._setup_window_menu()
 
@@ -1970,6 +2047,7 @@ class ControlWindow(QWidget):
         self.display_inversion_spin.valueChanged.connect(self._update_display_overlays)
         self.display_drop_combo.currentIndexChanged.connect(self._update_display_overlays)
         self.display_transpose_spin.valueChanged.connect(self._update_display_overlays)
+        self._connect_display_panel_signals()
 
         # Timer para leer MIDI
 
@@ -2022,6 +2100,7 @@ class ControlWindow(QWidget):
         load_dict = dictionary_menu.addAction("Cargar diccionario…")
         load_dict.triggered.connect(self.load_chord_dictionary_from_dialog)
 
+        self._setup_view_menu()
         self._setup_display_menus()
         self._setup_controls_menu()
         self._setup_interval_menu()
@@ -2031,6 +2110,26 @@ class ControlWindow(QWidget):
             win.installEventFilter(self)
 
         QTimer.singleShot(0, self._update_window_actions)
+
+    def _setup_view_menu(self):
+        view_menu = self.menu_bar.addMenu("Visualización")
+        self.view_mode_group = QActionGroup(self)
+        self.view_mode_group.setExclusive(True)
+
+        self.view_single_action = view_menu.addAction("Una sola ventana")
+        self.view_single_action.setCheckable(True)
+        self.view_single_action.setData("single")
+        self.view_mode_group.addAction(self.view_single_action)
+
+        self.view_separate_action = view_menu.addAction("Ventanas separadas")
+        self.view_separate_action.setCheckable(True)
+        self.view_separate_action.setData("separate")
+        self.view_mode_group.addAction(self.view_separate_action)
+
+        self.view_separate_action.setChecked(True)
+        self.view_mode_group.triggered.connect(
+            lambda action: self.set_view_mode(str(action.data()))
+        )
 
     def _window_is_visible(self, window: QMainWindow) -> bool:
         if not window.isVisible():
@@ -2059,27 +2158,86 @@ class ControlWindow(QWidget):
         keyboard_visible = self._window_is_visible(self.piano_window)
         chords_visible = self._window_is_visible(self.chord_window)
         staff_visible = self._window_is_visible(self.staff_window)
+        single_view = self.view_mode == "single"
 
         self.keyboard_action.blockSignals(True)
-        self.keyboard_action.setChecked(keyboard_visible)
+        self.keyboard_action.setChecked(keyboard_visible or single_view)
         self.keyboard_action.setText(
-            "Ocultar Teclado" if keyboard_visible else "Mostrar Teclado"
+            "Teclado (vista única)"
+            if single_view
+            else ("Ocultar Teclado" if keyboard_visible else "Mostrar Teclado")
         )
+        self.keyboard_action.setEnabled(not single_view)
         self.keyboard_action.blockSignals(False)
 
         self.chord_action.blockSignals(True)
-        self.chord_action.setChecked(chords_visible)
+        self.chord_action.setChecked(chords_visible or single_view)
         self.chord_action.setText(
-            "Ocultar Acordes" if chords_visible else "Mostrar Acordes"
+            "Cifrado (vista única)"
+            if single_view
+            else ("Ocultar Acordes" if chords_visible else "Mostrar Acordes")
         )
+        self.chord_action.setEnabled(not single_view)
         self.chord_action.blockSignals(False)
 
         self.staff_action.blockSignals(True)
-        self.staff_action.setChecked(staff_visible)
+        self.staff_action.setChecked(staff_visible or single_view)
         self.staff_action.setText(
-            "Ocultar Partitura" if staff_visible else "Mostrar Partitura"
+            "Partitura (vista única)"
+            if single_view
+            else ("Ocultar Partitura" if staff_visible else "Mostrar Partitura")
         )
+        self.staff_action.setEnabled(not single_view)
         self.staff_action.blockSignals(False)
+
+    def _take_window_widget(self, window: QMainWindow) -> Optional[QWidget]:
+        widget = window.takeCentralWidget()
+        if widget is not None:
+            widget.setParent(None)
+        return widget
+
+    def _restore_window_widget(self, window: QMainWindow, widget: Optional[QWidget]) -> None:
+        if widget is None:
+            return
+        if window.centralWidget() is None:
+            window.setCentralWidget(widget)
+        else:
+            widget.setParent(window)
+
+    def set_view_mode(self, mode: str, persist: bool = True) -> None:
+        if mode not in ("single", "separate"):
+            return
+        if mode == self.view_mode:
+            return
+
+        if mode == "single":
+            staff_widget = self._take_window_widget(self.staff_window) or self.staff_window.widget
+            chord_widget = self._take_window_widget(self.chord_window) or self.chord_window.display_widget
+            self.piano_window.show_combined_view(
+                staff_widget,
+                chord_widget,
+                self.display_panel_widget,
+            )
+            self.staff_window.hide()
+            self.chord_window.hide()
+            self._bring_to_front(self.piano_window)
+        else:
+            self._restore_window_widget(self.staff_window, self.staff_window.widget)
+            self._restore_window_widget(self.chord_window, self.chord_window.display_widget)
+            self.display_panel_widget.setParent(None)
+            self.piano_window.show_keyboard_only()
+            self.staff_window.show()
+            self.chord_window.show()
+            self._bring_to_front(self.piano_window)
+
+        self.view_mode = mode
+        if mode == "single":
+            self.view_single_action.setChecked(True)
+        else:
+            self.view_separate_action.setChecked(True)
+        self._update_window_actions()
+        if persist:
+            self._write_preferences(False)
 
     def _setup_interval_menu(self):
         view_menu = self.menu_bar.addMenu("Ver")
@@ -2149,6 +2307,143 @@ class ControlWindow(QWidget):
 
         frame_border_width_action = frame_menu.addAction("Grosor del borde…")
         frame_border_width_action.triggered.connect(self._choose_interval_frame_border_width)
+
+    def _build_display_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QVBoxLayout()
+        layout.setContentsMargins(8, 6, 8, 6)
+        layout.setSpacing(6)
+
+        chord_row = QHBoxLayout()
+        self.display_panel_chord_checkbox = QCheckBox("Mostrar acorde")
+        self.display_panel_root_combo = QComboBox()
+        self.display_panel_chord_combo = QComboBox()
+        self.display_panel_inversion_spin = QSpinBox()
+        self.display_panel_inversion_spin.setRange(-4, 4)
+        self.display_panel_drop_combo = QComboBox()
+        self.display_panel_drop_combo.addItem("No Drop", "none")
+        self.display_panel_drop_combo.addItem("Drop 2", "drop2")
+        self.display_panel_drop_combo.addItem("Drop 3", "drop3")
+        self.display_panel_drop_combo.addItem("Drop 2-4", "drop2-4")
+        self.display_panel_transpose_spin = QSpinBox()
+        self.display_panel_transpose_spin.setRange(-24, 24)
+
+        chord_row.addWidget(self.display_panel_chord_checkbox)
+        chord_row.addWidget(QLabel("Fundamental:"))
+        chord_row.addWidget(self.display_panel_root_combo)
+        chord_row.addWidget(QLabel("Acorde:"))
+        chord_row.addWidget(self.display_panel_chord_combo)
+        chord_row.addWidget(QLabel("Inversión:"))
+        chord_row.addWidget(self.display_panel_inversion_spin)
+        chord_row.addWidget(QLabel("Drops:"))
+        chord_row.addWidget(self.display_panel_drop_combo)
+        chord_row.addWidget(QLabel("Transposición (st):"))
+        chord_row.addWidget(self.display_panel_transpose_spin)
+        chord_row.addStretch()
+        layout.addLayout(chord_row)
+
+        scale_row = QHBoxLayout()
+        self.display_panel_scale_checkbox = QCheckBox("Mostrar escala")
+        self.display_panel_scale_combo = QComboBox()
+        scale_row.addWidget(self.display_panel_scale_checkbox)
+        scale_row.addWidget(QLabel("Escala:"))
+        scale_row.addWidget(self.display_panel_scale_combo)
+        scale_row.addStretch()
+        layout.addLayout(scale_row)
+
+        panel.setLayout(layout)
+        return panel
+
+    def _connect_display_panel_signals(self) -> None:
+        self.display_panel_chord_checkbox.toggled.connect(self._mirror_panel_to_primary)
+        self.display_panel_root_combo.currentIndexChanged.connect(self._mirror_panel_to_primary)
+        self.display_panel_chord_combo.currentIndexChanged.connect(self._mirror_panel_to_primary)
+        self.display_panel_inversion_spin.valueChanged.connect(self._mirror_panel_to_primary)
+        self.display_panel_drop_combo.currentIndexChanged.connect(self._mirror_panel_to_primary)
+        self.display_panel_transpose_spin.valueChanged.connect(self._mirror_panel_to_primary)
+        self.display_panel_scale_checkbox.toggled.connect(self._mirror_panel_to_primary)
+        self.display_panel_scale_combo.currentIndexChanged.connect(self._mirror_panel_to_primary)
+
+    def _mirror_panel_to_primary(self, *_args) -> None:
+        if self._syncing_display_panel:
+            return
+        self._syncing_display_panel = True
+        try:
+            self.display_chord_checkbox.blockSignals(True)
+            self.display_chord_checkbox.setChecked(self.display_panel_chord_checkbox.isChecked())
+            self.display_chord_checkbox.blockSignals(False)
+
+            self._select_combo_value(
+                self.display_root_combo,
+                int(self.display_panel_root_combo.currentData() or 0),
+            )
+            self._select_combo_value(
+                self.display_chord_combo,
+                str(self.display_panel_chord_combo.currentData() or ""),
+            )
+
+            self.display_inversion_spin.blockSignals(True)
+            self.display_inversion_spin.setValue(int(self.display_panel_inversion_spin.value()))
+            self.display_inversion_spin.blockSignals(False)
+
+            self.display_drop_combo.blockSignals(True)
+            self.display_drop_combo.setCurrentIndex(self.display_panel_drop_combo.currentIndex())
+            self.display_drop_combo.blockSignals(False)
+
+            self.display_transpose_spin.blockSignals(True)
+            self.display_transpose_spin.setValue(int(self.display_panel_transpose_spin.value()))
+            self.display_transpose_spin.blockSignals(False)
+
+            self.display_scale_checkbox.blockSignals(True)
+            self.display_scale_checkbox.setChecked(self.display_panel_scale_checkbox.isChecked())
+            self.display_scale_checkbox.blockSignals(False)
+
+            self.display_scale_combo.blockSignals(True)
+            self.display_scale_combo.setCurrentIndex(self.display_panel_scale_combo.currentIndex())
+            self.display_scale_combo.blockSignals(False)
+        finally:
+            self._syncing_display_panel = False
+
+        self._update_display_overlays()
+
+    def _sync_panel_from_primary(self) -> None:
+        if self._syncing_display_panel:
+            return
+        self._syncing_display_panel = True
+        try:
+            self.display_panel_chord_checkbox.blockSignals(True)
+            self.display_panel_chord_checkbox.setChecked(self.display_chord_checkbox.isChecked())
+            self.display_panel_chord_checkbox.blockSignals(False)
+
+            self.display_panel_root_combo.blockSignals(True)
+            self.display_panel_root_combo.setCurrentIndex(self.display_root_combo.currentIndex())
+            self.display_panel_root_combo.blockSignals(False)
+
+            self.display_panel_chord_combo.blockSignals(True)
+            self.display_panel_chord_combo.setCurrentIndex(self.display_chord_combo.currentIndex())
+            self.display_panel_chord_combo.blockSignals(False)
+
+            self.display_panel_inversion_spin.blockSignals(True)
+            self.display_panel_inversion_spin.setValue(int(self.display_inversion_spin.value()))
+            self.display_panel_inversion_spin.blockSignals(False)
+
+            self.display_panel_drop_combo.blockSignals(True)
+            self.display_panel_drop_combo.setCurrentIndex(self.display_drop_combo.currentIndex())
+            self.display_panel_drop_combo.blockSignals(False)
+
+            self.display_panel_transpose_spin.blockSignals(True)
+            self.display_panel_transpose_spin.setValue(int(self.display_transpose_spin.value()))
+            self.display_panel_transpose_spin.blockSignals(False)
+
+            self.display_panel_scale_checkbox.blockSignals(True)
+            self.display_panel_scale_checkbox.setChecked(self.display_scale_checkbox.isChecked())
+            self.display_panel_scale_checkbox.blockSignals(False)
+
+            self.display_panel_scale_combo.blockSignals(True)
+            self.display_panel_scale_combo.setCurrentIndex(self.display_scale_combo.currentIndex())
+            self.display_panel_scale_combo.blockSignals(False)
+        finally:
+            self._syncing_display_panel = False
 
     def _setup_display_menus(self):
         chord_menu = PersistentMenu("Acordes", self.menu_bar)
@@ -3088,7 +3383,7 @@ class ControlWindow(QWidget):
         self._import_dictionary_from_path(config_dict, record_extra=True)
         self._import_dictionary_from_path(project_dict, record_extra=False)
 
-    def _select_combo_value(self, combo: QComboBox, value: int):
+    def _select_combo_value(self, combo: QComboBox, value: object):
         for i in range(combo.count()):
             if combo.itemData(i) == value:
                 combo.setCurrentIndex(i)
@@ -3115,18 +3410,33 @@ class ControlWindow(QWidget):
         return cleaned
 
     def _populate_display_controls(self):
-        if self.display_root_combo.count() == 0:
-            for idx, name in enumerate(DETECT_NOTE_NAMES):
-                self.display_root_combo.addItem(name, idx)
-        if self.display_chord_combo.count() == 0:
-            self.display_chord_combo.addItem("-", "")
-            for name in sorted(self.jazzscope_chords.keys()):
-                label = name.replace("_", " ")
-                self.display_chord_combo.addItem(label, name)
-        if self.display_scale_combo.count() == 0:
-            self.display_scale_combo.addItem("-", "")
-            for label, key in SCALE_OPTIONS:
-                self.display_scale_combo.addItem(label, key)
+        def fill_root(combo: QComboBox) -> None:
+            if combo.count() == 0:
+                for idx, name in enumerate(DETECT_NOTE_NAMES):
+                    combo.addItem(name, idx)
+
+        def fill_chords(combo: QComboBox) -> None:
+            if combo.count() == 0:
+                combo.addItem("-", "")
+                for name in sorted(self.jazzscope_chords.keys()):
+                    label = name.replace("_", " ")
+                    combo.addItem(label, name)
+
+        def fill_scales(combo: QComboBox) -> None:
+            if combo.count() == 0:
+                combo.addItem("-", "")
+                for label, key in SCALE_OPTIONS:
+                    combo.addItem(label, key)
+
+        fill_root(self.display_root_combo)
+        fill_chords(self.display_chord_combo)
+        fill_scales(self.display_scale_combo)
+
+        fill_root(self.display_panel_root_combo)
+        fill_chords(self.display_panel_chord_combo)
+        fill_scales(self.display_panel_scale_combo)
+
+        self._sync_panel_from_primary()
 
     def _apply_inversion(self, notes: List[int], inversion: int) -> List[int]:
         result = list(sorted(notes))
@@ -3174,6 +3484,7 @@ class ControlWindow(QWidget):
         if root_pc is None:
             self.piano.set_display_chord_notes({})
             self.piano.set_display_scale_notes({})
+            self._sync_panel_from_primary()
             return
 
         root_pc = int(root_pc)
@@ -3241,6 +3552,7 @@ class ControlWindow(QWidget):
 
         self.piano.set_display_chord_notes(chord_overlays)
         self.piano.set_display_scale_notes(scale_overlays)
+        self._sync_panel_from_primary()
 
     # --- preferencias persistentes ---
 
@@ -3312,6 +3624,7 @@ class ControlWindow(QWidget):
             "display_inversion": int(self.display_inversion_spin.value()),
             "display_drop": str(self.display_drop_combo.currentData() or "none"),
             "display_transpose": int(self.display_transpose_spin.value()),
+            "view_mode": str(self.view_mode),
             "window_geometries": {
                 "keyboard": self._geometry_payload_for(self.piano_window),
                 "chords": self._geometry_payload_for(self.chord_window),
@@ -3519,6 +3832,10 @@ class ControlWindow(QWidget):
         self._update_display_overlays()
 
         self._restore_window_geometries(prefs)
+
+        view_mode = prefs.get("view_mode")
+        if isinstance(view_mode, str):
+            self.set_view_mode(view_mode, persist=False)
 
         capture_window_ms = prefs.get("capture_window_ms")
         if isinstance(capture_window_ms, int) and 50 <= capture_window_ms <= 10000:
