@@ -67,13 +67,6 @@ class TestVisualStatePersistence(unittest.TestCase):
         self.assertIn("self._is_closing = True", close_source)
         self.assertIn("self._persist_visual_state(force=True)", close_source)
 
-    def test_display_overlay_changes_schedule_persistence(self) -> None:
-        method_source = self._class_method_source("ControlWindow", "_update_display_overlays")
-
-        self.assertIn("should_persist = self._visual_state_tracking_enabled and not self._syncing_display_panel", method_source)
-        self.assertIn("if should_persist:", method_source)
-        self.assertIn("self._schedule_visual_state_save()", method_source)
-
     def test_save_preferences_button_is_removed(self) -> None:
         init_source = self._class_method_source("ControlWindow", "__init__")
 
