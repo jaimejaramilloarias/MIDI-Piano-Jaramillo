@@ -2181,19 +2181,6 @@ class ControlWindow(QWidget):
         for window in (self.piano_window, self.chord_window, self.staff_window):
             window.installEventFilter(self)
 
-    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched in {self.piano_window, self.chord_window, self.staff_window}:
-            if event.type() in {
-                QEvent.Type.Move,
-                QEvent.Type.Resize,
-                QEvent.Type.Show,
-                QEvent.Type.Hide,
-                QEvent.Type.Close,
-                QEvent.Type.WindowStateChange,
-            }:
-                self._schedule_visual_state_save()
-        return super().eventFilter(watched, event)
-
     def _schedule_visual_state_save(self) -> None:
         if self._visual_state_save_timer.isActive():
             self._visual_state_save_timer.stop()
@@ -3539,15 +3526,25 @@ class ControlWindow(QWidget):
         self._save_interval_settings()
         self._sync_interval_position_actions()
 
-    def eventFilter(self, source, event):
-        if source in (self.piano_window, self.chord_window, self.staff_window):
-            if event.type() in (
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if watched in {self.piano_window, self.chord_window, self.staff_window}:
+            if event.type() in {
+                QEvent.Type.Move,
+                QEvent.Type.Resize,
+                QEvent.Type.Show,
+                QEvent.Type.Hide,
+                QEvent.Type.Close,
+                QEvent.Type.WindowStateChange,
+            }:
+                self._schedule_visual_state_save()
+
+            if event.type() in {
                 QEvent.Type.WindowStateChange,
                 QEvent.Type.Hide,
                 QEvent.Type.Show,
-            ):
+            }:
                 QTimer.singleShot(0, self._update_window_actions)
-        return super().eventFilter(source, event)
+        return super().eventFilter(watched, event)
 
     # --- helpers ---
 
