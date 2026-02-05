@@ -25,6 +25,7 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QComboBox,
+    QCheckBox,
     QPushButton,
     QSpinBox,
     QMessageBox,
@@ -174,6 +175,97 @@ for _pattern in BASE_CHORD_PATTERNS:
 
 CHORD_PATTERNS = [dict(ptn) for ptn in BASE_CHORD_PATTERNS]
 
+SCALE_PATTERNS = {
+    "mayor": [2, 2, 1, 2, 2, 2, 1],
+    "mayor_armonica": [2, 2, 1, 2, 1, 3, 1],
+    "menor_melodica": [2, 1, 2, 2, 2, 2, 1],
+    "menor_armonica": [2, 1, 2, 2, 1, 3, 1],
+    "jonico": [2, 2, 1, 2, 2, 2, 1],
+    "dorico": [2, 1, 2, 2, 2, 1, 2],
+    "frigio": [1, 2, 2, 2, 1, 2, 2],
+    "lidio": [2, 2, 2, 1, 2, 2, 1],
+    "mixolidio": [2, 2, 1, 2, 2, 1, 2],
+    "eolico": [2, 1, 2, 2, 1, 2, 2],
+    "locrio": [1, 2, 2, 1, 2, 2, 2],
+    "jonico_b6": [2, 2, 1, 2, 1, 3, 1],
+    "locrio_s2s6": [2, 1, 2, 1, 3, 1, 2],
+    "mixolidio_b2_s2_no4": [1, 2, 1, 3, 1, 2, 2],
+    "dorico_s4_s7": [2, 1, 3, 1, 2, 2, 1],
+    "mixolidio_b2": [1, 3, 1, 2, 2, 1, 2],
+    "lidio_s2_s5": [3, 1, 2, 2, 1, 2, 1],
+    "locrio_b7": [1, 2, 2, 1, 2, 1, 3],
+    "eolico_s7": [2, 1, 2, 2, 1, 3, 1],
+    "locrio_s6": [1, 2, 2, 1, 3, 1, 2],
+    "jonico_aumentado": [2, 2, 1, 3, 1, 2, 1],
+    "dorico_s4": [2, 1, 3, 1, 2, 1, 2],
+    "mixolidio_b2b6": [1, 3, 1, 2, 1, 2, 2],
+    "lidio_s2": [3, 1, 2, 1, 2, 2, 1],
+    "locrio_b4b7": [1, 2, 1, 2, 2, 1, 3],
+    "dorico_s7": [2, 1, 2, 2, 2, 2, 1],
+    "dorico_b2": [1, 2, 2, 2, 2, 1, 2],
+    "lidio_aumentado": [2, 2, 2, 2, 1, 2, 1],
+    "lidio_dominante": [2, 2, 2, 1, 2, 1, 2],
+    "mixolidio_b6": [2, 2, 1, 2, 1, 2, 2],
+    "locrio_s2": [2, 1, 2, 1, 2, 2, 2],
+    "alterado": [1, 2, 1, 2, 2, 2, 2],
+    "pentatonica_mayor": [2, 2, 3, 2, 3],
+    "pentatonica_dominante": [2, 2, 3, 3, 2],
+    "blues": [3, 2, 1, 1, 3, 2],
+    "por_tonos": [2, 2, 2, 2, 2, 2],
+    "disminuida_HW": [1, 2, 1, 2, 1, 2, 1, 2],
+    "disminuida_WH": [2, 1, 2, 1, 2, 1, 2, 1],
+}
+
+SPECIAL_SCALES = {
+    "pentatonica_mayor",
+    "pentatonica_dominante",
+    "blues",
+    "por_tonos",
+    "disminuida_HW",
+    "disminuida_WH",
+}
+
+SCALE_OPTIONS = [
+    ("Mayor", "mayor"),
+    ("Mayor armónica", "mayor_armonica"),
+    ("Menor melódica", "menor_melodica"),
+    ("Menor armónica", "menor_armonica"),
+    ("Jónico", "jonico"),
+    ("Dórico", "dorico"),
+    ("Frigio", "frigio"),
+    ("Lidio", "lidio"),
+    ("Mixolidio", "mixolidio"),
+    ("Eólico", "eolico"),
+    ("Locrio", "locrio"),
+    ("Jónico♭6", "jonico_b6"),
+    ("Locrio♯2♯6", "locrio_s2s6"),
+    ("Mixolidio♭2♯2 no 4", "mixolidio_b2_s2_no4"),
+    ("Dórico♯4♯7", "dorico_s4_s7"),
+    ("Mixolidio♭2", "mixolidio_b2"),
+    ("Lidio♯2♯5", "lidio_s2_s5"),
+    ("Locrio♭7", "locrio_b7"),
+    ("Eólico♯7", "eolico_s7"),
+    ("Locrio♯6", "locrio_s6"),
+    ("Jónico aumentado", "jonico_aumentado"),
+    ("Dórico♯4", "dorico_s4"),
+    ("Mixolidio♭2♭6", "mixolidio_b2b6"),
+    ("Lidio♯2", "lidio_s2"),
+    ("Locrio♭4♭7", "locrio_b4b7"),
+    ("Dórico♯7", "dorico_s7"),
+    ("Dórico♭2", "dorico_b2"),
+    ("Lidio aumentado", "lidio_aumentado"),
+    ("Lidio dominante", "lidio_dominante"),
+    ("Mixolidio♭6", "mixolidio_b6"),
+    ("Locrio♯2", "locrio_s2"),
+    ("Alterado", "alterado"),
+    ("Pentatónica mayor", "pentatonica_mayor"),
+    ("Pentatónica dominante", "pentatonica_dominante"),
+    ("Escala blues", "blues"),
+    ("Por tonos (Whole-tone)", "por_tonos"),
+    ("Disminuida H-W", "disminuida_HW"),
+    ("Disminuida W-H", "disminuida_WH"),
+]
+
 
 def _normalize_intervals(intervals: List[int]) -> List[int]:
     normalized = sorted({int(ivl) % 12 for ivl in intervals} | {0})
@@ -316,6 +408,8 @@ class PianoWidget(QWidget):
         self.sustain_opacity: float = 0.4  # 0.0–1.0
         self.interval_labels: Dict[int, str] = {}
         self.show_keyboard_labels = True
+        self.display_chord_notes: Dict[int, QColor] = {}
+        self.display_scale_notes: Dict[int, QColor] = {}
 
         # Proporción alto/ancho de una tecla blanca (alto = ancho * aspect)
         self.key_aspect_ratio = 4.5
@@ -412,6 +506,14 @@ class PianoWidget(QWidget):
     def set_keyboard_labels_visible(self, visible: bool):
         self.show_keyboard_labels = bool(visible)
         self.update()
+        self.update()
+
+    def set_display_chord_notes(self, notes: Dict[int, QColor]):
+        self.display_chord_notes = dict(notes)
+        self.update()
+
+    def set_display_scale_notes(self, notes: Dict[int, QColor]):
+        self.display_scale_notes = dict(notes)
         self.update()
 
     def set_base_color_name(self, name: str):
@@ -610,6 +712,42 @@ class PianoWidget(QWidget):
                 painter.setBrush(QBrush(Qt.GlobalColor.black))
             painter.setPen(QPen(Qt.GlobalColor.black))
             painter.drawRect(key_rect)
+
+        # Superposiciones de acordes y escalas (visualización)
+        if self.display_chord_notes or self.display_scale_notes:
+            chord_notes = self.display_chord_notes
+            scale_notes = self.display_scale_notes
+
+            for n in range(self.start_note, self.end_note + 1):
+                idx = note_to_white_index[n]
+                if is_white(n):
+                    x = x_offset + idx * key_width
+                    key_rect = QRectF(x, y_offset, key_width, key_height)
+                    if n in chord_notes:
+                        painter.setBrush(QBrush(chord_notes[n]))
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.drawRect(key_rect)
+                    if n in scale_notes:
+                        color = scale_notes[n]
+                        radius = max(4.0, min(key_width, key_height) * 0.18)
+                        center = QPointF(key_rect.center().x(), key_rect.bottom() - radius * 1.8)
+                        painter.setBrush(QBrush(color))
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.drawEllipse(center, radius, radius)
+                else:
+                    x = x_offset + idx * key_width + key_width - black_width / 2
+                    key_rect = QRectF(x, y_offset, black_width, black_height)
+                    if n in chord_notes:
+                        painter.setBrush(QBrush(chord_notes[n]))
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.drawRect(key_rect)
+                    if n in scale_notes:
+                        color = scale_notes[n]
+                        radius = max(3.0, min(black_width, black_height) * 0.2)
+                        center = QPointF(key_rect.center().x(), key_rect.bottom() - radius * 1.6)
+                        painter.setBrush(QBrush(color))
+                        painter.setPen(Qt.PenStyle.NoPen)
+                        painter.drawEllipse(center, radius, radius)
 
         # Etiquetas de intervalos para notas activas
         if self.show_keyboard_labels and self.interval_labels:
@@ -1567,6 +1705,15 @@ class ControlWindow(QWidget):
         self.interval_label_settings = self._default_interval_label_settings()
         self.custom_chord_spellings: Dict[Tuple[int, ...], Dict[int, str]] = {}
         self.custom_chord_quality_spellings: Dict[str, Dict[int, Dict[str, object]]] = {}
+        self.display_chord_color = QColor(80, 160, 255, 140)
+        self.display_chord_warning_color = QColor(230, 70, 70, 180)
+        self.display_scale_colors = {
+            "green": QColor(60, 200, 120, 200),
+            "blue": QColor(60, 120, 240, 200),
+            "orange": QColor(240, 160, 60, 200),
+            "red": QColor(230, 80, 80, 200),
+        }
+        self.jazzscope_chords = self._load_jazzscope_chord_library()
         self.capture_timer = QTimer()
         self.capture_timer.setSingleShot(True)
         self.capture_timer.timeout.connect(self._finish_capture_window)
@@ -1692,6 +1839,51 @@ class ControlWindow(QWidget):
         capture_row.addStretch()
         top_layout.addLayout(capture_row)
 
+        # Fila 8: visualización de acordes y escalas (pregrabados)
+        top_layout.addWidget(QLabel("Visualización (acordes y escalas)"))
+
+        display_row1 = QHBoxLayout()
+        self.display_chord_checkbox = QCheckBox("Mostrar acorde")
+        display_row1.addWidget(self.display_chord_checkbox)
+        display_row1.addWidget(QLabel("Fundamental:"))
+        self.display_root_combo = QComboBox()
+        display_row1.addWidget(self.display_root_combo)
+        display_row1.addWidget(QLabel("Acorde:"))
+        self.display_chord_combo = QComboBox()
+        display_row1.addWidget(self.display_chord_combo)
+        display_row1.addStretch()
+        top_layout.addLayout(display_row1)
+
+        display_row2 = QHBoxLayout()
+        display_row2.addWidget(QLabel("Inversión:"))
+        self.display_inversion_spin = QSpinBox()
+        self.display_inversion_spin.setRange(-4, 4)
+        self.display_inversion_spin.setValue(0)
+        display_row2.addWidget(self.display_inversion_spin)
+        display_row2.addWidget(QLabel("Drops:"))
+        self.display_drop_combo = QComboBox()
+        self.display_drop_combo.addItem("No Drop", "none")
+        self.display_drop_combo.addItem("Drop 2", "drop2")
+        self.display_drop_combo.addItem("Drop 3", "drop3")
+        self.display_drop_combo.addItem("Drop 2-4", "drop2-4")
+        display_row2.addWidget(self.display_drop_combo)
+        display_row2.addWidget(QLabel("Transposición (st):"))
+        self.display_transpose_spin = QSpinBox()
+        self.display_transpose_spin.setRange(-24, 24)
+        self.display_transpose_spin.setValue(0)
+        display_row2.addWidget(self.display_transpose_spin)
+        display_row2.addStretch()
+        top_layout.addLayout(display_row2)
+
+        display_row3 = QHBoxLayout()
+        self.display_scale_checkbox = QCheckBox("Mostrar escala")
+        display_row3.addWidget(self.display_scale_checkbox)
+        display_row3.addWidget(QLabel("Escala:"))
+        self.display_scale_combo = QComboBox()
+        display_row3.addWidget(self.display_scale_combo)
+        display_row3.addStretch()
+        top_layout.addLayout(display_row3)
+
         # Lista de acordes aprendidos
         top_layout.addWidget(QLabel("Acordes aprendidos:"))
         self.learned_chords_container = QWidget()
@@ -1720,6 +1912,14 @@ class ControlWindow(QWidget):
         self.save_button.clicked.connect(self.save_preferences)
         self.export_button.clicked.connect(self.export_chord_dictionary)
         self.learn_button.clicked.connect(self.start_learning_mode)
+        self.display_chord_checkbox.toggled.connect(self._update_display_overlays)
+        self.display_scale_checkbox.toggled.connect(self._update_display_overlays)
+        self.display_root_combo.currentIndexChanged.connect(self._update_display_overlays)
+        self.display_chord_combo.currentIndexChanged.connect(self._update_display_overlays)
+        self.display_scale_combo.currentIndexChanged.connect(self._update_display_overlays)
+        self.display_inversion_spin.valueChanged.connect(self._update_display_overlays)
+        self.display_drop_combo.currentIndexChanged.connect(self._update_display_overlays)
+        self.display_transpose_spin.valueChanged.connect(self._update_display_overlays)
 
         # Timer para leer MIDI
 
@@ -1732,9 +1932,11 @@ class ControlWindow(QWidget):
         self._load_interval_settings()
         self._load_staff_settings()
         self.refresh_inputs()
+        self._populate_display_controls()
         self.load_preferences()
         self._apply_chord_font()
         self._refresh_learned_chords_ui()
+        self._update_display_overlays()
 
     # --- menú de ventanas ---
 
@@ -2790,6 +2992,154 @@ class ControlWindow(QWidget):
                 combo.setCurrentIndex(i)
                 return
 
+    def _load_jazzscope_chord_library(self) -> Dict[str, List[int]]:
+        library_path = Path(__file__).resolve().parent / "assets" / "jazzscope_chords.json"
+        if not library_path.exists():
+            return {}
+        try:
+            data = json.loads(library_path.read_text(encoding="utf-8"))
+        except Exception:
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        cleaned: Dict[str, List[int]] = {}
+        for name, intervals in data.items():
+            if not isinstance(name, str) or not isinstance(intervals, list):
+                continue
+            try:
+                cleaned[name] = [int(ivl) for ivl in intervals]
+            except Exception:
+                continue
+        return cleaned
+
+    def _populate_display_controls(self):
+        if self.display_root_combo.count() == 0:
+            for idx, name in enumerate(DETECT_NOTE_NAMES):
+                self.display_root_combo.addItem(name, idx)
+        if self.display_chord_combo.count() == 0:
+            self.display_chord_combo.addItem("-", "")
+            for name in sorted(self.jazzscope_chords.keys()):
+                label = name.replace("_", " ")
+                self.display_chord_combo.addItem(label, name)
+        if self.display_scale_combo.count() == 0:
+            self.display_scale_combo.addItem("-", "")
+            for label, key in SCALE_OPTIONS:
+                self.display_scale_combo.addItem(label, key)
+
+    def _apply_inversion(self, notes: List[int], inversion: int) -> List[int]:
+        result = list(sorted(notes))
+        if inversion > 0:
+            for _ in range(inversion):
+                if not result:
+                    break
+                note = result.pop(0)
+                result.append(note + 12)
+        elif inversion < 0:
+            for _ in range(-inversion):
+                if not result:
+                    break
+                note = result.pop()
+                result.insert(0, note - 12)
+        return sorted(result)
+
+    def _apply_drop(self, notes: List[int], drop_type: str) -> List[int]:
+        result = list(sorted(notes))
+        if drop_type == "none":
+            return result
+        if drop_type == "drop2" and len(result) >= 3:
+            result[-2] -= 12
+        elif drop_type == "drop3" and len(result) >= 4:
+            result[-3] -= 12
+        elif drop_type == "drop2-4" and len(result) >= 4:
+            result[-2] -= 12
+            result[-4] -= 12
+        return sorted(result)
+
+    def _find_minor_ninth_warnings(self, notes: List[int]) -> Set[int]:
+        warnings: Set[int] = set()
+        for i in range(len(notes)):
+            for j in range(i + 1, len(notes)):
+                if abs(notes[i] - notes[j]) == 13:
+                    warnings.add(notes[i])
+                    warnings.add(notes[j])
+        return warnings
+
+    def _update_display_overlays(self):
+        chord_overlays: Dict[int, QColor] = {}
+        scale_overlays: Dict[int, QColor] = {}
+
+        root_pc = self.display_root_combo.currentData()
+        if root_pc is None:
+            self.piano.set_display_chord_notes({})
+            self.piano.set_display_scale_notes({})
+            return
+
+        root_pc = int(root_pc)
+        transpose = int(self.display_transpose_spin.value())
+
+        if self.display_chord_checkbox.isChecked():
+            chord_key = self.display_chord_combo.currentData()
+            intervals = self.jazzscope_chords.get(chord_key, [])
+            if intervals:
+                start_oct = note_octave(self.piano.start_note)
+                end_oct = note_octave(self.piano.end_note)
+                base_oct = (start_oct + end_oct) // 2
+                base_midi = midi_of_C(base_oct) + root_pc
+                if base_midi < self.piano.start_note:
+                    base_midi += 12 * ((self.piano.start_note - base_midi) // 12 + 1)
+                if base_midi > self.piano.end_note:
+                    base_midi -= 12 * ((base_midi - self.piano.end_note) // 12 + 1)
+                notes = [base_midi + ivl for ivl in intervals]
+                notes = self._apply_inversion(notes, int(self.display_inversion_spin.value()))
+                drop_type = str(self.display_drop_combo.currentData() or "none")
+                notes = self._apply_drop(notes, drop_type)
+                notes = [note + transpose for note in notes]
+                bass_note = base_midi - 12 + transpose
+                if bass_note not in notes:
+                    notes.append(bass_note)
+                warnings = self._find_minor_ninth_warnings(notes)
+                for note in notes:
+                    if self.piano.start_note <= note <= self.piano.end_note:
+                        if note in warnings:
+                            chord_overlays[note] = QColor(self.display_chord_warning_color)
+                        else:
+                            chord_overlays[note] = QColor(self.display_chord_color)
+
+        if self.display_scale_checkbox.isChecked():
+            scale_key = self.display_scale_combo.currentData()
+            intervals = SCALE_PATTERNS.get(scale_key or "")
+            if intervals:
+                scale_pcs = [root_pc]
+                cursor = root_pc
+                for ivl in intervals:
+                    cursor = (cursor + ivl) % 12
+                    scale_pcs.append(cursor)
+                scale_pcs = scale_pcs[:-1]
+                scale_colors: Dict[int, QColor] = {}
+                for idx, pc in enumerate(scale_pcs):
+                    if scale_key in SPECIAL_SCALES:
+                        color = self.display_scale_colors["blue"]
+                    elif idx == 0:
+                        color = self.display_scale_colors["green"]
+                    elif idx in (2, 4, 6):
+                        color = self.display_scale_colors["blue"]
+                    else:
+                        prev_pc = scale_pcs[idx - 1]
+                        is_semitone = ((pc - prev_pc + 12) % 12) == 1
+                        color = (
+                            self.display_scale_colors["red"]
+                            if idx in (1, 3, 5) and is_semitone
+                            else self.display_scale_colors["orange"]
+                        )
+                    scale_colors[pc] = QColor(color)
+                for note in range(self.piano.start_note, self.piano.end_note + 1):
+                    pc = note % 12
+                    if pc in scale_colors:
+                        scale_overlays[note] = QColor(scale_colors[pc])
+
+        self.piano.set_display_chord_notes(chord_overlays)
+        self.piano.set_display_scale_notes(scale_overlays)
+
     # --- preferencias persistentes ---
 
     def _preferences_payload(self):
@@ -2852,6 +3202,14 @@ class ControlWindow(QWidget):
                 }
                 for quality, intervals in sorted(self.custom_chord_quality_spellings.items())
             ],
+            "display_chord_enabled": bool(self.display_chord_checkbox.isChecked()),
+            "display_scale_enabled": bool(self.display_scale_checkbox.isChecked()),
+            "display_root_pc": int(self.display_root_combo.currentData() or 0),
+            "display_chord_type": str(self.display_chord_combo.currentData() or ""),
+            "display_scale_type": str(self.display_scale_combo.currentData() or ""),
+            "display_inversion": int(self.display_inversion_spin.value()),
+            "display_drop": str(self.display_drop_combo.currentData() or "none"),
+            "display_transpose": int(self.display_transpose_spin.value()),
             "window_geometries": {
                 "keyboard": self._geometry_payload_for(self.piano_window),
                 "chords": self._geometry_payload_for(self.chord_window),
@@ -3017,6 +3375,46 @@ class ControlWindow(QWidget):
                     self.chord_window.set_background_color(color)
             except Exception:
                 pass
+
+        display_root = prefs.get("display_root_pc")
+        if isinstance(display_root, int):
+            self._select_combo_value(self.display_root_combo, display_root % 12)
+
+        display_chord = prefs.get("display_chord_type")
+        if isinstance(display_chord, str):
+            idx = self.display_chord_combo.findData(display_chord)
+            if idx >= 0:
+                self.display_chord_combo.setCurrentIndex(idx)
+
+        display_scale = prefs.get("display_scale_type")
+        if isinstance(display_scale, str):
+            idx = self.display_scale_combo.findData(display_scale)
+            if idx >= 0:
+                self.display_scale_combo.setCurrentIndex(idx)
+
+        display_inversion = prefs.get("display_inversion")
+        if isinstance(display_inversion, int):
+            self.display_inversion_spin.setValue(max(-4, min(4, display_inversion)))
+
+        display_drop = prefs.get("display_drop")
+        if isinstance(display_drop, str):
+            idx = self.display_drop_combo.findData(display_drop)
+            if idx >= 0:
+                self.display_drop_combo.setCurrentIndex(idx)
+
+        display_transpose = prefs.get("display_transpose")
+        if isinstance(display_transpose, int):
+            self.display_transpose_spin.setValue(max(-24, min(24, display_transpose)))
+
+        display_chord_enabled = prefs.get("display_chord_enabled")
+        if isinstance(display_chord_enabled, bool):
+            self.display_chord_checkbox.setChecked(display_chord_enabled)
+
+        display_scale_enabled = prefs.get("display_scale_enabled")
+        if isinstance(display_scale_enabled, bool):
+            self.display_scale_checkbox.setChecked(display_scale_enabled)
+
+        self._update_display_overlays()
 
         self._restore_window_geometries(prefs)
 
@@ -3252,6 +3650,7 @@ class ControlWindow(QWidget):
         if start is None:
             return
         self.piano.set_range_from_start_and_octaves(int(start), int(octaves))
+        self._update_display_overlays()
 
     def choose_color(self):
         color = QColorDialog.getColor(self.piano.base_color, self, "Seleccionar color de notas")
