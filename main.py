@@ -2167,7 +2167,7 @@ class ControlWindow(QWidget):
         self._populate_display_controls()
         self.load_preferences()
         self._visual_state_tracking_enabled = True
-        self.range_changed()
+        self.range_changed(fit_window=False)
         self._apply_chord_font()
         self._refresh_learned_chords_ui()
         self._update_display_overlays()
@@ -4293,7 +4293,7 @@ class ControlWindow(QWidget):
                     self.custom_chord_quality_spellings[str(quality)] = interval_map
 
         # Aplicar rango con las preferencias cargadas
-        self.range_changed()
+        self.range_changed(fit_window=False)
 
     def _apply_interval_settings_payload(self, payload: Dict) -> None:
         merged = dict(self._default_interval_label_settings())
@@ -4449,13 +4449,14 @@ class ControlWindow(QWidget):
             QMessageBox.critical(self, "Error MIDI", f"No se pudo abrir el dispositivo MIDI:\n{e}")
             self.midi_in = None
 
-    def range_changed(self):
+    def range_changed(self, *_args, fit_window: bool = True):
         start = self.start_combo.currentData()
         octaves = self.octaves_spin.value()
         if start is None:
             return
         self.piano.set_range_from_start_and_octaves(int(start), int(octaves))
-        self._fit_keyboard_window_to_available_width()
+        if fit_window:
+            self._fit_keyboard_window_to_available_width()
         self._update_display_overlays()
 
     def _fit_keyboard_window_to_available_width(self):
