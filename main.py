@@ -3789,6 +3789,7 @@ class ControlWindow(QWidget):
     def _update_display_overlays(self):
         chord_overlays: Dict[int, QColor] = {}
         scale_overlays: Dict[int, QColor] = {}
+        should_persist = self._visual_state_tracking_enabled and not self._syncing_display_panel
 
         root_pc = self.display_root_combo.currentData()
         if root_pc is None:
@@ -3863,6 +3864,8 @@ class ControlWindow(QWidget):
         self.piano.set_display_chord_notes(chord_overlays)
         self.piano.set_display_scale_notes(scale_overlays)
         self._sync_panel_from_primary()
+        if should_persist:
+            self._schedule_visual_state_save()
 
     # --- preferencias persistentes ---
 
