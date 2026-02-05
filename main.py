@@ -24,7 +24,6 @@ from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
-    QSizePolicy,
     QLabel,
     QComboBox,
     QCheckBox,
@@ -959,7 +958,7 @@ class PianoWindow(QMainWindow):
         self.setCentralWidget(self.piano)
 
         self._combined_container: Optional[QWidget] = None
-        self.combined_background_color = QColor(Qt.GlobalColor.white)
+        self._combined_background = QColor(Qt.GlobalColor.white)
         self._apply_frameless(True)
         self.setContentsMargins(0, 0, 0, 0)
         self.resize(900, 220)
@@ -996,9 +995,9 @@ class PianoWindow(QMainWindow):
         self._apply_frameless(True)
 
     def set_combined_background_color(self, color: QColor) -> None:
-        if not isinstance(color, QColor) or not color.isValid():
+        if not color.isValid():
             return
-        self.combined_background_color = color
+        self._combined_background = QColor(color)
         if self._combined_container is not None:
             self._combined_container.setStyleSheet(f"background: {color.name()};")
 
@@ -1019,23 +1018,23 @@ class PianoWindow(QMainWindow):
         container = QWidget()
         layout = QVBoxLayout()
         layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setSpacing(6)
 
         if display_panel is not None:
             layout.addWidget(display_panel)
 
         top_row = QHBoxLayout()
         top_row.setContentsMargins(0, 0, 0, 0)
-        top_row.setSpacing(8)
+        top_row.setSpacing(6)
         top_row.addWidget(staff_widget, stretch=1)
-        top_row.addWidget(chord_widget, stretch=2)
+        top_row.addWidget(chord_widget, stretch=3)
         layout.addLayout(top_row)
 
-        layout.addWidget(self.piano, stretch=0)
+        layout.addWidget(self.piano, stretch=1)
         container.setLayout(layout)
         self.setCentralWidget(container)
         self._combined_container = container
-        self.set_combined_background_color(self.combined_background_color)
+        container.setStyleSheet(f"background: {self._combined_background.name()};")
 
         self.setWindowTitle("MIDI Piano — Vista única")
         self._apply_frameless(False)
@@ -1109,7 +1108,7 @@ class ChordDisplayWidget(QWidget):
 
         # Alternativos a la derecha, pegados al principal
         if alternativos:
-            self.alt_label.setText("  ".join(alternativos))
+            self.alt_label.setText("   ".join(alternativos))
         else:
             self.alt_label.setText("")
 
@@ -1832,9 +1831,6 @@ class ControlWindow(QWidget):
     - Guardar preferencias de forma persistente
     """
 
-    DEFAULT_STAFF_MIN_WIDTH = 520
-    SINGLE_VIEW_STAFF_MIN_WIDTH = 260
-
     CONFIG_PATH = Path.home() / ".midi_piano_prefs.json"
 
     def __init__(
@@ -1866,7 +1862,7 @@ class ControlWindow(QWidget):
         self._learn_button_default_text = "Midi learn: nuevo cifrado"
         self.chord_text_color = QColor(Qt.GlobalColor.black)
         self.chord_bg_color = QColor(Qt.GlobalColor.white)
-        self.single_view_bg_color = QColor(Qt.GlobalColor.white)
+        self.single_window_bg_color = QColor(Qt.GlobalColor.white)
         self.interval_label_settings = self._default_interval_label_settings()
         self.custom_chord_spellings: Dict[Tuple[int, ...], Dict[int, str]] = {}
         self.custom_chord_quality_spellings: Dict[str, Dict[int, Dict[str, object]]] = {}
@@ -1993,7 +1989,7 @@ class ControlWindow(QWidget):
         capture_row = QHBoxLayout()
         capture_row.addWidget(QLabel("Ventana captura (ms):"))
         self.capture_window_spin = QSpinBox()
-        self.capture_window_spin.setRange(50, 10000)
+        self.capture_window_spin.setRange(100, 5000)
         self.capture_window_spin.setSingleStep(50)
         self.capture_window_spin.setValue(self.capture_window_ms)
         capture_row.addWidget(self.capture_window_spin)
@@ -2050,7 +2046,6 @@ class ControlWindow(QWidget):
         self.font_combo.currentFontChanged.connect(self.font_changed)
         self.font_size_spin.valueChanged.connect(self.font_size_changed)
         self.always_on_top.toggled.connect(self.toggle_on_top)
-        self.always_on_top.toggled.connect(self._sync_always_on_top_action)
         self.save_button.clicked.connect(self.save_preferences)
         self.export_button.clicked.connect(self.export_chord_dictionary)
         self.learn_button.clicked.connect(self.start_learning_mode)
@@ -2228,29 +2223,23 @@ class ControlWindow(QWidget):
         if mode == "single":
             staff_widget = self._take_window_widget(self.staff_window) or self.staff_window.widget
             chord_widget = self._take_window_widget(self.chord_window) or self.chord_window.display_widget
-            staff_widget.setMinimumWidth(self.SINGLE_VIEW_STAFF_MIN_WIDTH)
-            staff_widget.setSizePolicy(
-                QSizePolicy.Policy.Preferred,
-                QSizePolicy.Policy.Expanding,
-            )
-            chord_widget.setSizePolicy(
-                QSizePolicy.Policy.Expanding,
-                QSizePolicy.Policy.Expanding,
-            )
-            self.piano_window.set_combined_background_color(self.single_view_bg_color)
+            staff_widget.setMaximumHeight(160)
+            chord_widget.setMaximumHeight(160)
             self.piano_window.show_combined_view(
                 staff_widget,
                 chord_widget,
                 self.display_panel_widget,
             )
+            self.piano_window.set_combined_background_color(self.single_window_bg_color)
             self.staff_window.hide()
             self.chord_window.hide()
             self._bring_to_front(self.piano_window)
         else:
+            self.staff_window.widget.setMaximumHeight(16777215)
+            self.chord_window.display_widget.setMaximumHeight(16777215)
             self._restore_window_widget(self.staff_window, self.staff_window.widget)
             self._restore_window_widget(self.chord_window, self.chord_window.display_widget)
             self.display_panel_widget.setParent(None)
-            self.staff_window.widget.setMinimumWidth(self.DEFAULT_STAFF_MIN_WIDTH)
             self.piano_window.show_keyboard_only()
             self.staff_window.show()
             self.chord_window.show()
@@ -2377,6 +2366,34 @@ class ControlWindow(QWidget):
         scale_row.addStretch()
         layout.addLayout(scale_row)
 
+        control_row1 = QHBoxLayout()
+        self.display_panel_keyboard_labels = QCheckBox("Etiquetas del teclado")
+        self.display_panel_on_top = QCheckBox("Teclado siempre al frente")
+        self.display_panel_edit_chords = QPushButton("Editar etiquetas de acordes…")
+        control_row1.addWidget(self.display_panel_keyboard_labels)
+        control_row1.addWidget(self.display_panel_on_top)
+        control_row1.addWidget(self.display_panel_edit_chords)
+        control_row1.addStretch()
+        layout.addLayout(control_row1)
+
+        control_row2 = QHBoxLayout()
+        self.display_panel_midi_learn = QPushButton("Midi learn: nuevo cifrado")
+        self.display_panel_capture_spin = QSpinBox()
+        self.display_panel_capture_spin.setRange(100, 5000)
+        self.display_panel_capture_spin.setSingleStep(50)
+        self.display_panel_capture_spin.setValue(self.capture_window_ms)
+        control_row2.addWidget(self.display_panel_midi_learn)
+        control_row2.addWidget(QLabel("Ventana captura (ms):"))
+        control_row2.addWidget(self.display_panel_capture_spin)
+        control_row2.addStretch()
+        layout.addLayout(control_row2)
+
+        control_row3 = QHBoxLayout()
+        self.display_panel_single_bg_button = QPushButton("Fondo vista única…")
+        control_row3.addWidget(self.display_panel_single_bg_button)
+        control_row3.addStretch()
+        layout.addLayout(control_row3)
+
         panel.setLayout(layout)
         return panel
 
@@ -2389,6 +2406,12 @@ class ControlWindow(QWidget):
         self.display_panel_transpose_spin.valueChanged.connect(self._mirror_panel_to_primary)
         self.display_panel_scale_checkbox.toggled.connect(self._mirror_panel_to_primary)
         self.display_panel_scale_combo.currentIndexChanged.connect(self._mirror_panel_to_primary)
+        self.display_panel_keyboard_labels.toggled.connect(self._mirror_panel_to_primary)
+        self.display_panel_on_top.toggled.connect(self._mirror_panel_to_primary)
+        self.display_panel_capture_spin.valueChanged.connect(self._mirror_panel_to_primary)
+        self.display_panel_edit_chords.clicked.connect(self._edit_chord_labels)
+        self.display_panel_midi_learn.clicked.connect(self.start_learning_mode)
+        self.display_panel_single_bg_button.clicked.connect(self.choose_single_window_background)
 
     def _mirror_panel_to_primary(self, *_args) -> None:
         if self._syncing_display_panel:
@@ -2427,8 +2450,23 @@ class ControlWindow(QWidget):
             self.display_scale_combo.blockSignals(True)
             self.display_scale_combo.setCurrentIndex(self.display_panel_scale_combo.currentIndex())
             self.display_scale_combo.blockSignals(False)
+
+            self.keyboard_labels_action.blockSignals(True)
+            self.keyboard_labels_action.setChecked(self.display_panel_keyboard_labels.isChecked())
+            self.keyboard_labels_action.blockSignals(False)
+
+            self.always_on_top.blockSignals(True)
+            self.always_on_top.setChecked(self.display_panel_on_top.isChecked())
+            self.always_on_top.blockSignals(False)
+
+            self.capture_window_spin.blockSignals(True)
+            self.capture_window_spin.setValue(int(self.display_panel_capture_spin.value()))
+            self.capture_window_spin.blockSignals(False)
         finally:
             self._syncing_display_panel = False
+
+        self._toggle_keyboard_labels(self.keyboard_labels_action.isChecked())
+        self.toggle_on_top(self.always_on_top.isChecked())
 
         self._update_display_overlays()
 
@@ -2468,6 +2506,20 @@ class ControlWindow(QWidget):
             self.display_panel_scale_combo.blockSignals(True)
             self.display_panel_scale_combo.setCurrentIndex(self.display_scale_combo.currentIndex())
             self.display_panel_scale_combo.blockSignals(False)
+
+            self.display_panel_keyboard_labels.blockSignals(True)
+            self.display_panel_keyboard_labels.setChecked(self.keyboard_labels_action.isChecked())
+            self.display_panel_keyboard_labels.blockSignals(False)
+
+            self.display_panel_on_top.blockSignals(True)
+            self.display_panel_on_top.setChecked(self.always_on_top.isChecked())
+            self.display_panel_on_top.blockSignals(False)
+
+            self.display_panel_capture_spin.blockSignals(True)
+            self.display_panel_capture_spin.setValue(int(self.capture_window_spin.value()))
+            self.display_panel_capture_spin.blockSignals(False)
+
+            self.display_panel_midi_learn.setText(self.learn_button.text())
         finally:
             self._syncing_display_panel = False
 
@@ -2530,46 +2582,8 @@ class ControlWindow(QWidget):
         self.keyboard_labels_action.setCheckable(True)
         self.keyboard_labels_action.setChecked(True)
         self.keyboard_labels_action.toggled.connect(self._toggle_keyboard_labels)
-        controls_menu.addSeparator()
-
-        refresh_action = controls_menu.addAction("Actualizar dispositivos MIDI")
-        refresh_action.triggered.connect(self.refresh_inputs)
-
-        color_action = controls_menu.addAction("Color base de notas…")
-        color_action.triggered.connect(self.choose_color)
-
-        chord_color_action = controls_menu.addAction("Color del cifrado…")
-        chord_color_action.triggered.connect(self.choose_chord_color)
-
-        chord_bg_action = controls_menu.addAction("Fondo de acordes…")
-        chord_bg_action.triggered.connect(self.choose_chord_background)
-
-        single_bg_action = controls_menu.addAction("Fondo vista única…")
-        single_bg_action.triggered.connect(self.choose_single_view_background)
-
-        font_action = controls_menu.addAction("Fuente de acordes…")
-        font_action.triggered.connect(self._choose_chord_font)
-
-        font_size_action = controls_menu.addAction("Tamaño de acordes…")
-        font_size_action.triggered.connect(self._choose_chord_font_size)
-
-        self.always_on_top_action = controls_menu.addAction("Teclado siempre al frente")
-        self.always_on_top_action.setCheckable(True)
-        self.always_on_top_action.setChecked(self.always_on_top.isChecked())
-        self.always_on_top_action.toggled.connect(self.always_on_top.setChecked)
-
-        capture_window_action = controls_menu.addAction("Ventana de captura (ms)…")
-        capture_window_action.triggered.connect(self._prompt_capture_window)
-
-        learn_action = controls_menu.addAction("Midi learn: nuevo cifrado")
-        learn_action.triggered.connect(self.start_learning_mode)
-
-        save_action = controls_menu.addAction("Guardar preferencias")
-        save_action.triggered.connect(self.save_preferences)
-
-        export_action = controls_menu.addAction("Exportar diccionario…")
-        export_action.triggered.connect(self.export_chord_dictionary)
-
+        self.single_window_bg_action = controls_menu.addAction("Fondo vista única…")
+        self.single_window_bg_action.triggered.connect(self.choose_single_window_background)
         controls_menu.addSeparator()
 
         panel_action = QWidgetAction(controls_menu)
@@ -3646,7 +3660,7 @@ class ControlWindow(QWidget):
             "keyboard_labels_visible": bool(self.keyboard_labels_action.isChecked()),
             "chord_text_color": self.chord_text_color.name(),
             "chord_background": self.chord_bg_color.name(),
-            "single_view_background": self.single_view_bg_color.name(),
+            "single_window_background": self.single_window_bg_color.name(),
             "base_chords": [
                 {
                     "nombre": c.get("nombre", ""),
@@ -3858,12 +3872,12 @@ class ControlWindow(QWidget):
             except Exception:
                 pass
 
-        single_view_bg = prefs.get("single_view_background")
-        if isinstance(single_view_bg, str):
+        single_bg = prefs.get("single_window_background")
+        if isinstance(single_bg, str):
             try:
-                color = QColor(single_view_bg)
+                color = QColor(single_bg)
                 if color.isValid():
-                    self.single_view_bg_color = color
+                    self.single_window_bg_color = color
                     self.piano_window.set_combined_background_color(color)
             except Exception:
                 pass
@@ -4171,45 +4185,14 @@ class ControlWindow(QWidget):
             self.chord_window.set_background_color(color)
             self._write_preferences(False)
 
-    def choose_single_view_background(self):
+    def choose_single_window_background(self):
         color = QColorDialog.getColor(
-            self.single_view_bg_color, self, "Seleccionar fondo de la vista única"
+            self.single_window_bg_color, self, "Seleccionar fondo de la vista única"
         )
         if color.isValid():
-            self.single_view_bg_color = color
+            self.single_window_bg_color = color
             self.piano_window.set_combined_background_color(color)
             self._write_preferences(False)
-
-    def _choose_chord_font(self):
-        current_font = self.font_combo.currentFont()
-        font, ok = QFontDialog.getFont(current_font, self, "Fuente de acordes")
-        if ok:
-            self.font_combo.setCurrentFont(font)
-
-    def _choose_chord_font_size(self):
-        size, ok = QInputDialog.getInt(
-            self,
-            "Tamaño de acordes",
-            "Tamaño:",
-            int(self.font_size_spin.value()),
-            10,
-            160,
-        )
-        if ok:
-            self.font_size_spin.setValue(int(size))
-
-    def _prompt_capture_window(self):
-        value, ok = QInputDialog.getInt(
-            self,
-            "Ventana de captura",
-            "Milisegundos:",
-            int(self.capture_window_spin.value()),
-            50,
-            10000,
-        )
-        if ok:
-            self.capture_window_ms = int(value)
-            self.capture_window_spin.setValue(int(value))
 
     def _apply_chord_font(self):
         family = self.font_combo.currentFont().family()
@@ -4240,14 +4223,6 @@ class ControlWindow(QWidget):
     def toggle_on_top(self, on: bool):
         for win in (self.piano_window, self.chord_window):
             self._apply_on_top_to_window(win, on)
-
-    def _sync_always_on_top_action(self, checked: bool) -> None:
-        action = getattr(self, "always_on_top_action", None)
-        if action is None:
-            return
-        action.blockSignals(True)
-        action.setChecked(checked)
-        action.blockSignals(False)
 
     def _refresh_learned_chords_ui(self):
         while self.learned_chords_layout.count():
@@ -4588,13 +4563,13 @@ class ControlWindow(QWidget):
         current_notes = set(self.active_notes) | set(self.sustained_notes)
         if current_notes:
             self.learning_chord = True
-            self.learn_button.setText("Midi learn: capturando acorde…")
+            self._set_learn_button_text("Midi learn: capturando acorde…")
             self._complete_learning_with_notes(current_notes)
             return
 
         self.learning_chord = True
         self.learning_waiting_first_note = True
-        self.learn_button.setText("Midi learn: esperando acorde…")
+        self._set_learn_button_text("Midi learn: esperando acorde…")
         QMessageBox.information(
             self,
             "Midi learn",
@@ -4637,12 +4612,17 @@ class ControlWindow(QWidget):
         self.learning_capture_notes.clear()
         if self.capture_timer.isActive():
             self.capture_timer.stop()
-        self.learn_button.setText(self._learn_button_default_text)
+        self._set_learn_button_text(self._learn_button_default_text)
+
+    def _set_learn_button_text(self, text: str) -> None:
+        self.learn_button.setText(text)
+        if hasattr(self, "display_panel_midi_learn"):
+            self.display_panel_midi_learn.setText(text)
 
     def _begin_capture_window(self, notas_actuales: Set[int]):
         self.learning_waiting_first_note = False
         self.learning_capture_notes = set(notas_actuales)
-        self.learn_button.setText("Midi learn: capturando acorde…")
+        self._set_learn_button_text("Midi learn: capturando acorde…")
         self.capture_timer.start(int(self.capture_window_spin.value()))
 
     def _absorb_capture_notes(self, notas_actuales: Set[int]):
