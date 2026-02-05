@@ -675,6 +675,26 @@ class PianoWidget(QWidget):
 
             painter.drawRect(key_rect)
 
+        # Superposiciones de acordes y escalas (visualización) en teclas blancas
+        if self.display_chord_notes or self.display_scale_notes:
+            chord_notes = self.display_chord_notes
+            scale_notes = self.display_scale_notes
+            for n in white_notes:
+                idx = note_to_white_index[n]
+                x = x_offset + idx * key_width
+                key_rect = QRectF(x, y_offset, key_width, key_height)
+                if n in chord_notes:
+                    painter.setBrush(QBrush(chord_notes[n]))
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.drawRect(key_rect)
+                if n in scale_notes:
+                    color = scale_notes[n]
+                    radius = max(4.0, min(key_width, key_height) * 0.18)
+                    center = QPointF(key_rect.center().x(), key_rect.bottom() - radius * 1.8)
+                    painter.setBrush(QBrush(color))
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.drawEllipse(center, radius, radius)
+
         # Etiquetas para las C
         if self.show_keyboard_labels:
             painter.setPen(QPen(Qt.GlobalColor.black))
@@ -713,41 +733,28 @@ class PianoWidget(QWidget):
             painter.setPen(QPen(Qt.GlobalColor.black))
             painter.drawRect(key_rect)
 
-        # Superposiciones de acordes y escalas (visualización)
+        # Superposiciones de acordes y escalas (visualización) en teclas negras
         if self.display_chord_notes or self.display_scale_notes:
             chord_notes = self.display_chord_notes
             scale_notes = self.display_scale_notes
 
             for n in range(self.start_note, self.end_note + 1):
-                idx = note_to_white_index[n]
                 if is_white(n):
-                    x = x_offset + idx * key_width
-                    key_rect = QRectF(x, y_offset, key_width, key_height)
-                    if n in chord_notes:
-                        painter.setBrush(QBrush(chord_notes[n]))
-                        painter.setPen(Qt.PenStyle.NoPen)
-                        painter.drawRect(key_rect)
-                    if n in scale_notes:
-                        color = scale_notes[n]
-                        radius = max(4.0, min(key_width, key_height) * 0.18)
-                        center = QPointF(key_rect.center().x(), key_rect.bottom() - radius * 1.8)
-                        painter.setBrush(QBrush(color))
-                        painter.setPen(Qt.PenStyle.NoPen)
-                        painter.drawEllipse(center, radius, radius)
-                else:
-                    x = x_offset + idx * key_width + key_width - black_width / 2
-                    key_rect = QRectF(x, y_offset, black_width, black_height)
-                    if n in chord_notes:
-                        painter.setBrush(QBrush(chord_notes[n]))
-                        painter.setPen(Qt.PenStyle.NoPen)
-                        painter.drawRect(key_rect)
-                    if n in scale_notes:
-                        color = scale_notes[n]
-                        radius = max(3.0, min(black_width, black_height) * 0.2)
-                        center = QPointF(key_rect.center().x(), key_rect.bottom() - radius * 1.6)
-                        painter.setBrush(QBrush(color))
-                        painter.setPen(Qt.PenStyle.NoPen)
-                        painter.drawEllipse(center, radius, radius)
+                    continue
+                idx = note_to_white_index[n]
+                x = x_offset + idx * key_width + key_width - black_width / 2
+                key_rect = QRectF(x, y_offset, black_width, black_height)
+                if n in chord_notes:
+                    painter.setBrush(QBrush(chord_notes[n]))
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.drawRect(key_rect)
+                if n in scale_notes:
+                    color = scale_notes[n]
+                    radius = max(3.0, min(black_width, black_height) * 0.2)
+                    center = QPointF(key_rect.center().x(), key_rect.bottom() - radius * 1.6)
+                    painter.setBrush(QBrush(color))
+                    painter.setPen(Qt.PenStyle.NoPen)
+                    painter.drawEllipse(center, radius, radius)
 
         # Etiquetas de intervalos para notas activas
         if self.show_keyboard_labels and self.interval_labels:
@@ -1839,50 +1846,23 @@ class ControlWindow(QWidget):
         capture_row.addStretch()
         top_layout.addLayout(capture_row)
 
-        # Fila 8: visualización de acordes y escalas (pregrabados)
-        top_layout.addWidget(QLabel("Visualización (acordes y escalas)"))
-
-        display_row1 = QHBoxLayout()
+        # Visualización de acordes y escalas (pregrabados) se configura en el menú superior
         self.display_chord_checkbox = QCheckBox("Mostrar acorde")
-        display_row1.addWidget(self.display_chord_checkbox)
-        display_row1.addWidget(QLabel("Fundamental:"))
         self.display_root_combo = QComboBox()
-        display_row1.addWidget(self.display_root_combo)
-        display_row1.addWidget(QLabel("Acorde:"))
         self.display_chord_combo = QComboBox()
-        display_row1.addWidget(self.display_chord_combo)
-        display_row1.addStretch()
-        top_layout.addLayout(display_row1)
-
-        display_row2 = QHBoxLayout()
-        display_row2.addWidget(QLabel("Inversión:"))
         self.display_inversion_spin = QSpinBox()
         self.display_inversion_spin.setRange(-4, 4)
         self.display_inversion_spin.setValue(0)
-        display_row2.addWidget(self.display_inversion_spin)
-        display_row2.addWidget(QLabel("Drops:"))
         self.display_drop_combo = QComboBox()
         self.display_drop_combo.addItem("No Drop", "none")
         self.display_drop_combo.addItem("Drop 2", "drop2")
         self.display_drop_combo.addItem("Drop 3", "drop3")
         self.display_drop_combo.addItem("Drop 2-4", "drop2-4")
-        display_row2.addWidget(self.display_drop_combo)
-        display_row2.addWidget(QLabel("Transposición (st):"))
         self.display_transpose_spin = QSpinBox()
         self.display_transpose_spin.setRange(-24, 24)
         self.display_transpose_spin.setValue(0)
-        display_row2.addWidget(self.display_transpose_spin)
-        display_row2.addStretch()
-        top_layout.addLayout(display_row2)
-
-        display_row3 = QHBoxLayout()
         self.display_scale_checkbox = QCheckBox("Mostrar escala")
-        display_row3.addWidget(self.display_scale_checkbox)
-        display_row3.addWidget(QLabel("Escala:"))
         self.display_scale_combo = QComboBox()
-        display_row3.addWidget(self.display_scale_combo)
-        display_row3.addStretch()
-        top_layout.addLayout(display_row3)
 
         # Lista de acordes aprendidos
         top_layout.addWidget(QLabel("Acordes aprendidos:"))
@@ -1972,6 +1952,7 @@ class ControlWindow(QWidget):
         load_dict = dictionary_menu.addAction("Cargar diccionario…")
         load_dict.triggered.connect(self.load_chord_dictionary_from_dialog)
 
+        self._setup_display_menus()
         self._setup_controls_menu()
         self._setup_interval_menu()
         self._setup_staff_menu()
@@ -2098,6 +2079,55 @@ class ControlWindow(QWidget):
 
         frame_border_width_action = frame_menu.addAction("Grosor del borde…")
         frame_border_width_action.triggered.connect(self._choose_interval_frame_border_width)
+
+    def _setup_display_menus(self):
+        chord_menu = self.menu_bar.addMenu("Acordes")
+        chord_widget = QWidget()
+        chord_layout = QVBoxLayout()
+        chord_layout.setContentsMargins(8, 6, 8, 6)
+        chord_layout.setSpacing(6)
+
+        chord_row1 = QHBoxLayout()
+        chord_row1.addWidget(self.display_chord_checkbox)
+        chord_row1.addWidget(QLabel("Fundamental:"))
+        chord_row1.addWidget(self.display_root_combo)
+        chord_row1.addWidget(QLabel("Acorde:"))
+        chord_row1.addWidget(self.display_chord_combo)
+        chord_row1.addStretch()
+        chord_layout.addLayout(chord_row1)
+
+        chord_row2 = QHBoxLayout()
+        chord_row2.addWidget(QLabel("Inversión:"))
+        chord_row2.addWidget(self.display_inversion_spin)
+        chord_row2.addWidget(QLabel("Drops:"))
+        chord_row2.addWidget(self.display_drop_combo)
+        chord_row2.addWidget(QLabel("Transposición (st):"))
+        chord_row2.addWidget(self.display_transpose_spin)
+        chord_row2.addStretch()
+        chord_layout.addLayout(chord_row2)
+
+        chord_widget.setLayout(chord_layout)
+        chord_action = QWidgetAction(chord_menu)
+        chord_action.setDefaultWidget(chord_widget)
+        chord_menu.addAction(chord_action)
+
+        scale_menu = self.menu_bar.addMenu("Escalas")
+        scale_widget = QWidget()
+        scale_layout = QVBoxLayout()
+        scale_layout.setContentsMargins(8, 6, 8, 6)
+        scale_layout.setSpacing(6)
+
+        scale_row = QHBoxLayout()
+        scale_row.addWidget(self.display_scale_checkbox)
+        scale_row.addWidget(QLabel("Escala:"))
+        scale_row.addWidget(self.display_scale_combo)
+        scale_row.addStretch()
+        scale_layout.addLayout(scale_row)
+
+        scale_widget.setLayout(scale_layout)
+        scale_action = QWidgetAction(scale_menu)
+        scale_action.setDefaultWidget(scale_widget)
+        scale_menu.addAction(scale_action)
 
     def _setup_controls_menu(self):
         controls_menu = self.menu_bar.addMenu("Controles")
