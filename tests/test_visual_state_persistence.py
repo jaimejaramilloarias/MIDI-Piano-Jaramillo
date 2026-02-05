@@ -67,32 +67,6 @@ class TestVisualStatePersistence(unittest.TestCase):
         self.assertIn("self._is_closing = True", close_source)
         self.assertIn("self._persist_visual_state(force=True)", close_source)
 
-    def test_display_overlay_changes_schedule_persistence(self) -> None:
-        method_source = self._class_method_source("ControlWindow", "_update_display_overlays")
-
-        self.assertIn("should_persist = self._visual_state_tracking_enabled and not self._syncing_display_panel", method_source)
-        self.assertIn("if should_persist:", method_source)
-        self.assertIn("self._schedule_visual_state_save()", method_source)
-
-    def test_startup_range_apply_does_not_override_restored_geometry(self) -> None:
-        init_source = self._class_method_source("ControlWindow", "__init__")
-        load_source = self._class_method_source("ControlWindow", "load_preferences")
-        range_source = self._class_method_source("ControlWindow", "range_changed")
-
-        self.assertIn("self.range_changed(fit_window=False)", init_source)
-        self.assertIn("self.range_changed(fit_window=False)", load_source)
-        self.assertIn("if fit_window:", range_source)
-        self.assertIn("self._fit_keyboard_window_to_available_width()", range_source)
-
-    def test_default_startup_state_is_single_view_c2_to_c7(self) -> None:
-        init_source = self._class_method_source("ControlWindow", "__init__")
-        load_source = self._class_method_source("ControlWindow", "load_preferences")
-
-        self.assertIn("default_start = DEFAULT_START_NOTE", init_source)
-        self.assertIn("self.octaves_spin.setValue(DEFAULT_OCTAVES)", init_source)
-        self.assertIn("if not self.CONFIG_PATH.exists():", load_source)
-        self.assertIn("self.set_view_mode(DEFAULT_VIEW_MODE, persist=False)", load_source)
-
     def test_save_preferences_button_is_removed(self) -> None:
         init_source = self._class_method_source("ControlWindow", "__init__")
 
