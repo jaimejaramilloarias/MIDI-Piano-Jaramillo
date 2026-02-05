@@ -534,6 +534,10 @@ class PianoWidget(QWidget):
         start_note = max(MIN_NOTE, min(start_note, MAX_NOTE))
         start_oct = note_octave(start_note)
         target_oct = start_oct + octaves
+        # Si el teclado inicia en A0 (u otra nota que no sea C), el conteo
+        # de octavas debe empezar en C de la octava siguiente.
+        if NOTE_NAMES[start_note % 12] != "C":
+            target_oct += 1
         end_note = midi_of_C(target_oct)
         if end_note > MAX_NOTE:
             end_note = MAX_NOTE
@@ -1029,22 +1033,27 @@ class PianoWindow(QMainWindow):
 
         container = QWidget()
         layout = QVBoxLayout()
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(6)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         if display_panel is not None:
             layout.addWidget(display_panel)
 
-        layout.addWidget(staff_widget)
-        layout.addWidget(chord_widget)
+        top_layout = QHBoxLayout()
+        top_layout.setContentsMargins(0, 0, 0, 0)
+        top_layout.setSpacing(0)
+        top_layout.addWidget(staff_widget, stretch=1)
+        top_layout.addWidget(chord_widget, stretch=0)
+
+        layout.addLayout(top_layout, stretch=1)
         layout.addWidget(self.piano, stretch=1)
         container.setLayout(layout)
         self.setCentralWidget(container)
         self._combined_container = container
-        container.setStyleSheet(f"background: {self._combined_background.name()};")
+        container.setStyleSheet(f"background: {self._combined_background.name()}; border: none;")
 
         self.setWindowTitle("MIDI Piano — Vista única")
-        self._apply_frameless(False)
+        self._apply_frameless(True)
         self.resize(1200, 820)
 
 
@@ -2297,7 +2306,10 @@ class ControlWindow(QWidget):
             for widget in self._menu_panel_widgets:
                 widget.setStyleSheet(control_style)
         else:
-            self.menu_bar.setStyleSheet("")
+            self.menu_bar.setStyleSheet(
+                "QMenuBar::item { color: #000000; }"
+                "QMenu::item { color: #000000; }"
+            )
             self.setStyleSheet("")
             self.display_panel_widget.setStyleSheet("")
             for widget in self._menu_panel_widgets:
