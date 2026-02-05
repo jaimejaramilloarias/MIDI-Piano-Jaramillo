@@ -1725,10 +1725,6 @@ class ControlWindow(QWidget):
         self.capture_timer.setSingleShot(True)
         self.capture_timer.timeout.connect(self._finish_capture_window)
 
-        self._setup_window_menu()
-
-        self._load_external_chord_dictionary()
-
         # Widgets
         self.input_combo = QComboBox()
         self.refresh_button = QPushButton("Actualizar dispositivos")
@@ -1863,6 +1859,10 @@ class ControlWindow(QWidget):
         self.display_transpose_spin.setValue(0)
         self.display_scale_checkbox = QCheckBox("Mostrar escala")
         self.display_scale_combo = QComboBox()
+
+        self._setup_window_menu()
+
+        self._load_external_chord_dictionary()
 
         # Lista de acordes aprendidos
         top_layout.addWidget(QLabel("Acordes aprendidos:"))
