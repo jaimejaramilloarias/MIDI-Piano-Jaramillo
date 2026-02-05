@@ -37,6 +37,7 @@ from PyQt6.QtWidgets import (
     QFileDialog,
     QWidgetAction,
     QToolButton,
+    QSizePolicy,
 )
 import mido
 
@@ -500,6 +501,7 @@ class PianoWidget(QWidget):
         self._resize_start_pos: Optional[QPoint] = None
         self._resize_start_size = None
         self._resize_margin = 16  # píxeles desde la esquina inferior derecha
+        self.force_full_width = False
 
         self.interval_label_settings = {
             "font_family": "",
@@ -694,6 +696,10 @@ class PianoWidget(QWidget):
 
     # --- dibujo ---
 
+    def set_force_full_width(self, enabled: bool) -> None:
+        self.force_full_width = bool(enabled)
+        self.update()
+
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
@@ -717,6 +723,10 @@ class PianoWidget(QWidget):
         max_width_from_height = rect.height() / self.key_aspect_ratio
         key_width = min(max_width_from_width, max_width_from_height)
         key_height = key_width * self.key_aspect_ratio
+
+        if self.force_full_width:
+            key_width = max_width_from_width
+            key_height = min(rect.height(), key_width * self.key_aspect_ratio)
 
         total_keys_width = key_width * num_white
 
@@ -1042,8 +1052,12 @@ class PianoWindow(QMainWindow):
         top_layout = QHBoxLayout()
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.setSpacing(0)
+
+        staff_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        chord_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
         top_layout.addWidget(staff_widget, stretch=1)
-        top_layout.addWidget(chord_widget, stretch=0)
+        top_layout.addWidget(chord_widget, stretch=3)
 
         layout.addLayout(top_layout, stretch=1)
         layout.addWidget(self.piano, stretch=1)
@@ -2246,6 +2260,7 @@ class ControlWindow(QWidget):
         if mode == "single":
             staff_widget = self._take_window_widget(self.staff_window) or self.staff_window.widget
             chord_widget = self._take_window_widget(self.chord_window) or self.chord_window.display_widget
+            self.piano_window.piano.set_force_full_width(True)
             self.piano_window.show_combined_view(
                 staff_widget,
                 chord_widget,
@@ -2256,6 +2271,7 @@ class ControlWindow(QWidget):
             self.chord_window.hide()
             self._bring_to_front(self.piano_window)
         else:
+            self.piano_window.piano.set_force_full_width(False)
             self._restore_window_widget(self.staff_window, self.staff_window.widget)
             self._restore_window_widget(self.chord_window, self.chord_window.display_widget)
             self.display_panel_widget.setParent(None)
