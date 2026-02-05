@@ -1917,7 +1917,7 @@ class ControlWindow(QWidget):
     - Número de octavas
     - Color base
     - Siempre al frente (para la ventana del teclado)
-    - Guardar preferencias de forma persistente
+    - Guardar preferencias de forma persistente al cerrar la app
     """
 
     CONFIG_PATH = Path.home() / ".midi_piano_prefs.json"
@@ -1969,6 +1969,7 @@ class ControlWindow(QWidget):
         self.capture_timer.timeout.connect(self._finish_capture_window)
         self._menu_panel_widgets: List[QWidget] = []
         self._visual_state_tracking_enabled = False
+        self._is_closing = False
         self._visual_state_save_timer = QTimer(self)
         self._visual_state_save_timer.setSingleShot(True)
         self._visual_state_save_timer.timeout.connect(self._persist_visual_state)
@@ -2005,7 +2006,6 @@ class ControlWindow(QWidget):
         self.always_on_top = QPushButton("Teclado siempre al frente")
         self.always_on_top.setCheckable(True)
 
-        self.save_button = QPushButton("Guardar preferencias")
         self.export_button = QPushButton("Exportar diccionario…")
 
         # Rellenar combo de nota inicial:
@@ -2068,7 +2068,6 @@ class ControlWindow(QWidget):
         # Fila 5: botones de ventana
         row5 = QHBoxLayout()
         row5.addWidget(self.always_on_top)
-        row5.addWidget(self.save_button)
         row5.addWidget(self.export_button)
         row5.addStretch()
         top_layout.addLayout(row5)
@@ -2141,7 +2140,6 @@ class ControlWindow(QWidget):
         self.font_combo.currentFontChanged.connect(self.font_changed)
         self.font_size_spin.valueChanged.connect(self.font_size_changed)
         self.always_on_top.toggled.connect(self.toggle_on_top)
-        self.save_button.clicked.connect(self.save_preferences)
         self.export_button.clicked.connect(self.export_chord_dictionary)
         self.learn_button.clicked.connect(self.start_learning_mode)
         self.display_chord_checkbox.toggled.connect(self._update_display_overlays)
@@ -2169,7 +2167,7 @@ class ControlWindow(QWidget):
         self._populate_display_controls()
         self.load_preferences()
         self._visual_state_tracking_enabled = True
-        self.range_changed()
+        self.range_changed(fit_window=False)
         self._apply_chord_font()
         self._refresh_learned_chords_ui()
         self._update_display_overlays()
@@ -2178,20 +2176,24 @@ class ControlWindow(QWidget):
         """Guarda estado visual automáticamente al cerrar/reubicar/redimensionar ventanas."""
         app = QApplication.instance()
         if app is not None:
-            app.aboutToQuit.connect(self._persist_visual_state)
+            app.aboutToQuit.connect(self._persist_preferences_on_close)
 
         for window in (self.piano_window, self.chord_window, self.staff_window):
             window.installEventFilter(self)
 
     def _schedule_visual_state_save(self) -> None:
-        if not self._visual_state_tracking_enabled:
+        if not self._visual_state_tracking_enabled or self._is_closing:
             return
         if self._visual_state_save_timer.isActive():
             self._visual_state_save_timer.stop()
         self._visual_state_save_timer.start(200)
 
-    def _persist_visual_state(self) -> None:
-        if not self._visual_state_tracking_enabled:
+    def _persist_preferences_on_close(self) -> None:
+        self._is_closing = True
+        self._persist_visual_state(force=True)
+
+    def _persist_visual_state(self, force: bool = False) -> None:
+        if not force and (not self._visual_state_tracking_enabled or self._is_closing):
             return
         if self._visual_state_save_timer.isActive():
             self._visual_state_save_timer.stop()
@@ -3787,6 +3789,7 @@ class ControlWindow(QWidget):
     def _update_display_overlays(self):
         chord_overlays: Dict[int, QColor] = {}
         scale_overlays: Dict[int, QColor] = {}
+        should_persist = self._visual_state_tracking_enabled and not self._syncing_display_panel
 
         root_pc = self.display_root_combo.currentData()
         if root_pc is None:
@@ -3861,6 +3864,8 @@ class ControlWindow(QWidget):
         self.piano.set_display_chord_notes(chord_overlays)
         self.piano.set_display_scale_notes(scale_overlays)
         self._sync_panel_from_primary()
+        if should_persist:
+            self._schedule_visual_state_save()
 
     # --- preferencias persistentes ---
 
@@ -3980,9 +3985,6 @@ class ControlWindow(QWidget):
         else:
             if show_message:
                 QMessageBox.information(self, "OK", "Preferencias guardadas correctamente.")
-
-    def save_preferences(self):
-        self._write_preferences(True)
 
     def export_chord_dictionary(self):
         default_path = str(Path.home() / "diccionario_acordes.json")
@@ -4291,7 +4293,7 @@ class ControlWindow(QWidget):
                     self.custom_chord_quality_spellings[str(quality)] = interval_map
 
         # Aplicar rango con las preferencias cargadas
-        self.range_changed()
+        self.range_changed(fit_window=False)
 
     def _apply_interval_settings_payload(self, payload: Dict) -> None:
         merged = dict(self._default_interval_label_settings())
@@ -4447,13 +4449,14 @@ class ControlWindow(QWidget):
             QMessageBox.critical(self, "Error MIDI", f"No se pudo abrir el dispositivo MIDI:\n{e}")
             self.midi_in = None
 
-    def range_changed(self):
+    def range_changed(self, *_args, fit_window: bool = True):
         start = self.start_combo.currentData()
         octaves = self.octaves_spin.value()
         if start is None:
             return
         self.piano.set_range_from_start_and_octaves(int(start), int(octaves))
-        self._fit_keyboard_window_to_available_width()
+        if fit_window:
+            self._fit_keyboard_window_to_available_width()
         self._update_display_overlays()
 
     def _fit_keyboard_window_to_available_width(self):
