@@ -1035,13 +1035,8 @@ class PianoWindow(QMainWindow):
         if display_panel is not None:
             layout.addWidget(display_panel)
 
-        top_row = QHBoxLayout()
-        top_row.setContentsMargins(0, 0, 0, 0)
-        top_row.setSpacing(6)
-        top_row.addWidget(staff_widget, stretch=1)
-        top_row.addWidget(chord_widget, stretch=3)
-        layout.addLayout(top_row)
-
+        layout.addWidget(staff_widget)
+        layout.addWidget(chord_widget)
         layout.addWidget(self.piano, stretch=1)
         container.setLayout(layout)
         self.setCentralWidget(container)
@@ -1938,9 +1933,10 @@ class ControlWindow(QWidget):
                 label = f"{midi_to_name(n)} ({n})"
                 self.start_combo.addItem(label, n)
 
-        # Por defecto: C3, 3 octavas (C3–C6)
-        default_start = midi_of_C(3)  # C3
+        # Por defecto: teclado completo (A0–C8)
+        default_start = MIN_NOTE
         self._select_combo_value(self.start_combo, default_start)
+        self.octaves_spin.setValue(7)
         self.piano.set_range_from_start_and_octaves(default_start, self.octaves_spin.value())
 
         # Layout
@@ -2088,6 +2084,7 @@ class ControlWindow(QWidget):
         self.refresh_inputs()
         self._populate_display_controls()
         self.load_preferences()
+        self.range_changed()
         self._set_absolute_black_backgrounds(False)
         self._apply_chord_font()
         self._refresh_learned_chords_ui()
@@ -2240,20 +2237,16 @@ class ControlWindow(QWidget):
         if mode == "single":
             staff_widget = self._take_window_widget(self.staff_window) or self.staff_window.widget
             chord_widget = self._take_window_widget(self.chord_window) or self.chord_window.display_widget
-            staff_widget.setMaximumHeight(160)
-            chord_widget.setMaximumHeight(160)
             self.piano_window.show_combined_view(
                 staff_widget,
                 chord_widget,
-                self.display_panel_widget,
+                None,
             )
             self.piano_window.set_combined_background_color(self.single_window_bg_color)
             self.staff_window.hide()
             self.chord_window.hide()
             self._bring_to_front(self.piano_window)
         else:
-            self.staff_window.widget.setMaximumHeight(16777215)
-            self.chord_window.display_widget.setMaximumHeight(16777215)
             self._restore_window_widget(self.staff_window, self.staff_window.widget)
             self._restore_window_widget(self.chord_window, self.chord_window.display_widget)
             self.display_panel_widget.setParent(None)
@@ -2268,6 +2261,7 @@ class ControlWindow(QWidget):
         else:
             self.view_separate_action.setChecked(True)
         self._apply_single_view_styles(mode == "single")
+        self._fit_keyboard_window_to_available_width()
         self._update_window_actions()
         if persist:
             self._write_preferences(False)
@@ -3902,13 +3896,8 @@ class ControlWindow(QWidget):
         except Exception:
             return
 
-        start = prefs.get("start_note")
-        if isinstance(start, int):
-            self._select_combo_value(self.start_combo, start)
-
-        octaves = prefs.get("octaves")
-        if isinstance(octaves, int) and 1 <= octaves <= 7:
-            self.octaves_spin.setValue(octaves)
+        self._select_combo_value(self.start_combo, MIN_NOTE)
+        self.octaves_spin.setValue(7)
 
         rgba = prefs.get("base_color_rgba")
         if (
@@ -3999,9 +3988,6 @@ class ControlWindow(QWidget):
 
         self._restore_window_geometries(prefs)
 
-        view_mode = prefs.get("view_mode")
-        if isinstance(view_mode, str):
-            self.set_view_mode(view_mode, persist=False)
 
         capture_window_ms = prefs.get("capture_window_ms")
         if isinstance(capture_window_ms, int) and 50 <= capture_window_ms <= 10000:
@@ -4126,7 +4112,7 @@ class ControlWindow(QWidget):
                 return None
             return QRect(x, y, w, h)
 
-        self._apply_geometry_if_valid(self.piano_window, rect_from_payload(geoms.get("keyboard")))
+        # La geometría del teclado no se restaura para abrir siempre a ancho completo.
         self._apply_geometry_if_valid(self.chord_window, rect_from_payload(geoms.get("chords")))
         self._apply_geometry_if_valid(self.staff_window, rect_from_payload(geoms.get("staff")))
 
@@ -4235,7 +4221,40 @@ class ControlWindow(QWidget):
         if start is None:
             return
         self.piano.set_range_from_start_and_octaves(int(start), int(octaves))
+        self._fit_keyboard_window_to_available_width()
         self._update_display_overlays()
+
+    def _fit_keyboard_window_to_available_width(self):
+        screen = self.piano_window.screen() or QApplication.primaryScreen()
+        if screen is None:
+            return
+
+        available = screen.availableGeometry()
+        current = self.piano_window.geometry()
+
+        keyboard_height = max(120, int(current.height()))
+        if self.view_mode == "single":
+            keyboard_height = max(120, int(self.piano_window.piano.height()))
+
+        white_notes = [n for n in range(self.piano.start_note, self.piano.end_note + 1) if is_white(n)]
+        if white_notes:
+            key_width = available.width() / max(1, len(white_notes))
+            ideal_keyboard_height = int(key_width * self.piano.key_aspect_ratio)
+            keyboard_height = max(120, ideal_keyboard_height)
+
+        if self.view_mode == "single":
+            top_min_height = max(
+                self.staff_window.widget.minimumSizeHint().height(),
+                self.chord_window.display_widget.minimumSizeHint().height(),
+            )
+            margins = 16
+            spacing = 6
+            target_height = max(220, top_min_height + keyboard_height + margins + spacing)
+        else:
+            target_height = keyboard_height
+
+        target_width = max(720, available.width())
+        self.piano_window.resize(target_width, target_height)
 
     def choose_color(self):
         color = QColorDialog.getColor(self.piano.base_color, self, "Seleccionar color de notas")
