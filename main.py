@@ -2168,12 +2168,19 @@ class ControlWindow(QWidget):
         self._install_visual_state_tracking()
         self.refresh_inputs()
         self._populate_display_controls()
-        self.load_preferences()
+        self._apply_startup_defaults()
         self._visual_state_tracking_enabled = True
         self.range_changed(fit_window=False)
         self._apply_chord_font()
         self._refresh_learned_chords_ui()
         self._update_display_overlays()
+
+    def _apply_startup_defaults(self) -> None:
+        self._select_combo_value(self.start_combo, DEFAULT_START_NOTE)
+        self.octaves_spin.setValue(DEFAULT_OCTAVES)
+        self.set_view_mode(DEFAULT_VIEW_MODE, persist=False)
+        self.range_changed(fit_window=False)
+        self._update_window_actions()
 
     def _install_visual_state_tracking(self) -> None:
         """Guarda estado visual automáticamente al cerrar/reubicar/redimensionar ventanas."""

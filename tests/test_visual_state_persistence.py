@@ -41,16 +41,16 @@ class TestVisualStatePersistence(unittest.TestCase):
         self.assertIn("QEvent.Type.Show", method_source)
         self.assertIn("QTimer.singleShot(0, self._update_window_actions)", method_source)
 
-    def test_visual_state_tracking_is_enabled_after_loading_preferences(self) -> None:
+    def test_visual_state_tracking_is_enabled_after_startup_defaults(self) -> None:
         init_source = self._class_method_source("ControlWindow", "__init__")
 
         self.assertIn("self._visual_state_tracking_enabled = False", init_source)
-        load_index = init_source.find("self.load_preferences()")
+        defaults_index = init_source.find("self._apply_startup_defaults()")
         enable_index = init_source.find("self._visual_state_tracking_enabled = True")
 
-        self.assertNotEqual(load_index, -1)
+        self.assertNotEqual(defaults_index, -1)
         self.assertNotEqual(enable_index, -1)
-        self.assertGreater(enable_index, load_index)
+        self.assertGreater(enable_index, defaults_index)
 
     def test_visual_state_save_methods_guard_during_startup(self) -> None:
         schedule_source = self._class_method_source("ControlWindow", "_schedule_visual_state_save")
