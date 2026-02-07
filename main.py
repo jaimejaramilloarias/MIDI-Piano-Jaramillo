@@ -2265,6 +2265,15 @@ class ControlWindow(QWidget):
         self._show_status_message(text, timeout_ms=10000)
         return True
 
+    def _prompt_text_foreground(self, title: str, label: str, default_text: str = "") -> Tuple[str, bool]:
+        parent = self.window() if isinstance(self.window(), QWidget) else self
+        try:
+            text, ok = QInputDialog.getText(parent, title, label, text=default_text)
+        except Exception as exc:
+            self._show_status_message(f"Midi learn: no se pudo abrir el diálogo ({exc}).")
+            return "", False
+        return str(text), bool(ok)
+
     def _apply_startup_defaults(self) -> None:
         self._select_combo_value(self.start_combo, DEFAULT_START_NOTE)
         self.octaves_spin.setValue(DEFAULT_OCTAVES)
@@ -3878,19 +3887,59 @@ class ControlWindow(QWidget):
         self.display_chord_popup_button.setText(f"Seleccionar acorde… ({chord_label})")
         self.display_scale_popup_button.setText(f"Seleccionar escala… ({scale_label})")
 
+    def _run_selection_popup(self, title: str, combo: Optional[QComboBox]) -> bool:
+        if combo is None or combo.count() <= 0:
+            return False
+
+        parent = self.window() if isinstance(self.window(), QWidget) else self
+        dialog = QDialog(parent)
+        dialog.setWindowTitle(title)
+        dialog.setModal(True)
+        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
+
+        layout = QVBoxLayout(dialog)
+        list_widget = QListWidget(dialog)
+        for idx in range(combo.count()):
+            list_widget.addItem(combo.itemText(idx))
+
+        current_row = combo.currentIndex()
+        if current_row < 0:
+            current_row = 0
+        if list_widget.count() > 0:
+            list_widget.setCurrentRow(current_row)
+
+        layout.addWidget(list_widget)
+
+        buttons = QHBoxLayout()
+        accept_btn = QPushButton("Aceptar", dialog)
+        cancel_btn = QPushButton("Cancelar", dialog)
+        buttons.addStretch()
+        buttons.addWidget(accept_btn)
+        buttons.addWidget(cancel_btn)
+        layout.addLayout(buttons)
+
+        accept_btn.clicked.connect(dialog.accept)
+        cancel_btn.clicked.connect(dialog.reject)
+        list_widget.itemDoubleClicked.connect(lambda _item: dialog.accept())
+
+        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+            return False
+
+        row = list_widget.currentRow()
+        if 0 <= row < combo.count():
+            combo.setCurrentIndex(row)
+            return True
+        return False
+
     def _open_chord_selector_popup(self, *args, **kwargs) -> None:
         _ = (args, kwargs)
-        if hasattr(self, "display_chord_combo") and self.display_chord_combo is not None:
-            self.display_chord_combo.setFocus(Qt.FocusReason.MouseFocusReason)
-            self.display_chord_combo.showPopup()
+        if self._run_selection_popup("Seleccionar acorde", getattr(self, "display_chord_combo", None)):
             return
         self._show_status_message("No se pudo abrir el selector de acordes.")
 
     def _open_scale_selector_popup(self, *args, **kwargs) -> None:
         _ = (args, kwargs)
-        if hasattr(self, "display_scale_combo") and self.display_scale_combo is not None:
-            self.display_scale_combo.setFocus(Qt.FocusReason.MouseFocusReason)
-            self.display_scale_combo.showPopup()
+        if self._run_selection_popup("Seleccionar escala", getattr(self, "display_scale_combo", None)):
             return
         self._show_status_message("No se pudo abrir el selector de escalas.")
 
@@ -4003,16 +4052,9 @@ class ControlWindow(QWidget):
                         )
                     scale_colors[pc] = QColor(color)
 
-                first_root = None
-                for note in range(self.piano.start_note, self.piano.end_note + 1):
-                    if note % 12 == root_pc:
-                        first_root = note
-                        break
-                if first_root is None:
-                    first_root = self.piano.start_note
-
-                octave_end = min(self.piano.end_note, first_root + 11)
-                for note in range(first_root, octave_end + 1):
+                octave4_start = midi_of_C(4)
+                octave4_end = octave4_start + 11
+                for note in range(octave4_start, octave4_end + 1):
                     pc = note % 12
                     if pc in scale_colors:
                         if self.piano.start_note <= note <= self.piano.end_note:
@@ -5254,9 +5296,17 @@ class ControlWindow(QWidget):
         self._set_learn_button_text(self._learn_button_default_text)
 
     def _set_learn_button_text(self, text: str) -> None:
-        self.learn_button.setText(text)
-        if hasattr(self, "display_panel_midi_learn"):
-            self.display_panel_midi_learn.setText(text)
+        self._set_button_text_safe(getattr(self, "learn_button", None), text)
+        self._set_button_text_safe(getattr(self, "display_panel_midi_learn", None), text)
+
+    def _set_button_text_safe(self, button: Optional[QPushButton], text: str) -> None:
+        if button is None:
+            return
+        try:
+            button.setText(text)
+        except RuntimeError:
+            # El botón puede haber sido destruido al reconstruir el panel de visualización.
+            return
 
     def _begin_capture_window(self, notas_actuales: Set[int]):
         self.learning_waiting_first_note = False
@@ -5269,7 +5319,11 @@ class ControlWindow(QWidget):
 
     def _finish_capture_window(self):
         notas = set(self.learning_capture_notes)
-        self._complete_learning_with_notes(notas)
+        try:
+            self._complete_learning_with_notes(notas)
+        except Exception as exc:
+            self._reset_learning_state()
+            self._show_status_message(f"Midi learn: error durante captura ({exc}).")
 
     # --- MIDI polling ---
 
