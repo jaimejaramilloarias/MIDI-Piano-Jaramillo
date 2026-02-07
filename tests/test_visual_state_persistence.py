@@ -67,6 +67,18 @@ class TestVisualStatePersistence(unittest.TestCase):
         self.assertIn("self._is_closing = True", close_source)
         self.assertIn("self._persist_visual_state(force=True)", close_source)
 
+
+    def test_default_appearance_can_be_saved_from_controls_menu(self) -> None:
+        controls_source = self._class_method_source("ControlWindow", "_setup_controls_menu")
+
+        self.assertIn("Guardar apariencia actual como predeterminada", controls_source)
+        self.assertIn("save_default_appearance", controls_source)
+
+    def test_default_appearance_is_loaded_during_startup(self) -> None:
+        init_source = self._class_method_source("ControlWindow", "__init__")
+
+        self.assertIn("self._load_default_appearance()", init_source)
+
     def test_save_preferences_button_is_removed(self) -> None:
         init_source = self._class_method_source("ControlWindow", "__init__")
 
