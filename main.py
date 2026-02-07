@@ -4060,6 +4060,8 @@ class ControlWindow(QWidget):
             self.scale_edit_mode_button.setText(f"Modo edición de categorías: {label}")
         status = "activado" if self.scale_edit_mode_enabled else "desactivado"
         self._show_status_message(f"Modo edición de categorías {status}.")
+        if not self.scale_edit_mode_enabled:
+            self._schedule_visual_state_save()
 
     def _choose_scale_circle_size(self) -> None:
         value, ok = QInputDialog.getInt(
@@ -4079,7 +4081,7 @@ class ControlWindow(QWidget):
         self._schedule_visual_state_save()
 
     def _next_scale_role(self, role: str) -> str:
-        order = ["stable", "tension", "critical", "root"]
+        order = ["stable", "tension", "critical"]
         if role not in order:
             return "stable"
         idx = order.index(role)
@@ -4095,6 +4097,21 @@ class ControlWindow(QWidget):
         if not isinstance(scale_key, str) or not scale_key:
             self._show_status_message("Selecciona una escala antes de editar categorías.")
             return
+        root_pc = self.display_root_combo.currentData()
+        if root_pc is None:
+            self._show_status_message("Selecciona una tónica para editar categorías.")
+            return
+        intervals = SCALE_PATTERNS.get(scale_key)
+        if not intervals:
+            return
+        transpose = int(self.display_transpose_spin.value())
+        scale_pcs = build_scale_pcs(root_pc, intervals, transpose)
+        degree_idx = degree_index_for_note_pc(note % 12, scale_pcs)
+        if degree_idx is None:
+            return
+        if int(degree_idx) == 0:
+            self._show_status_message("La fundamental mantiene siempre la categoría root (verde).")
+            return
         if note not in self.piano.display_scale_notes:
             return
 
@@ -4107,13 +4124,20 @@ class ControlWindow(QWidget):
 
         next_role = self._next_scale_role(current_role)
         role_overrides = self.scale_role_overrides.setdefault(scale_key, {})
-        role_overrides[note % 12] = next_role
+        role_overrides[int(degree_idx)] = next_role
         self._update_display_overlays()
         self._show_status_message(f"Escala '{self.display_scale_combo.currentText()}': {midi_to_name(note)} -> {next_role}")
 
     def _category_role_for_scale_note(self, scale_key: str, idx: int, pc: int, scale_pcs: List[int]) -> str:
+        if idx == 0:
+            return "root"
+
         overrides = self.scale_role_overrides.get(scale_key, {})
-        role_override = overrides.get(pc)
+        role_override = overrides.get(idx)
+        if role_override not in self._role_to_scale_color:
+            role_override = overrides.get(pc)
+        if role_override == "root":
+            role_override = None
         if role_override in self._role_to_scale_color:
             return str(role_override)
 
@@ -4121,8 +4145,6 @@ class ControlWindow(QWidget):
             if idx == 0:
                 return "root"
             return "stable"
-        if idx == 0:
-            return "root"
         if idx in (2, 4, 6):
             return "stable"
         prev_pc = scale_pcs[idx - 1]
@@ -4216,26 +4238,27 @@ class ControlWindow(QWidget):
             scale_key = self.display_scale_combo.currentData()
             intervals = SCALE_PATTERNS.get(scale_key or "")
             if intervals:
-                scale_pcs = [((root_pc + transpose) % 12)]
-                cursor = scale_pcs[0]
-                for ivl in intervals:
-                    cursor = (cursor + ivl) % 12
-                    scale_pcs.append(cursor)
-                scale_pcs = scale_pcs[:-1]
-                scale_colors: Dict[int, QColor] = {}
+                scale_pcs = build_scale_pcs(root_pc, intervals, transpose)
+                scale_colors_by_degree: Dict[int, QColor] = {}
                 for idx, pc in enumerate(scale_pcs):
                     role = self._category_role_for_scale_note(str(scale_key), idx, pc, scale_pcs)
                     color_key = self._role_to_scale_color.get(role, "blue")
                     color = self.display_scale_colors[color_key]
-                    scale_colors[pc] = QColor(color)
+                    scale_colors_by_degree[idx] = QColor(color)
 
                 octave4_start = midi_of_C(4)
                 overlay_start = max(self.piano.start_note, octave4_start)
-                overlay_end = self.piano.end_note
-                for note in range(overlay_start, overlay_end + 1):
-                    pc = note % 12
-                    if pc in scale_colors:
-                        scale_overlays[note] = QColor(scale_colors[pc])
+                first_root_note = overlay_start + ((scale_pcs[0] - (overlay_start % 12)) % 12)
+
+                scale_notes: List[int] = [first_root_note]
+                for step in intervals[:-1]:
+                    scale_notes.append(scale_notes[-1] + int(step))
+
+                for idx, note in enumerate(scale_notes):
+                    if self.piano.start_note <= note <= self.piano.end_note:
+                        color = scale_colors_by_degree.get(idx)
+                        if color is not None:
+                            scale_overlays[note] = QColor(color)
 
         self.piano.set_display_chord_notes(chord_overlays)
         self.piano.set_display_scale_notes(scale_overlays)
