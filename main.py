@@ -100,6 +100,12 @@ class PersistentMenu(QMenu):
             return
         super().mouseReleaseEvent(event)
 
+    def mousePressEvent(self, event):
+        if self._is_widget_action_pos(event.pos()):
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
     def focusOutEvent(self, event):
         if self._combo_popup_open:
             event.accept()
@@ -119,7 +125,6 @@ class MenuComboBox(QComboBox):
             "QListView::item:hover { background-color: rgba(59, 130, 246, 0.25); }"
             "QListView::item:selected { background-color: rgba(59, 130, 246, 0.4); }"
         )
-        view.clicked.connect(self._select_from_view_click)
         self.activated.connect(self._close_menu_after_select)
 
     def showPopup(self) -> None:
@@ -2199,10 +2204,8 @@ class ControlWindow(QWidget):
         self.display_root_combo.currentIndexChanged.connect(self._update_display_overlays)
         self.display_chord_combo.currentIndexChanged.connect(self._update_display_overlays)
         self.display_scale_combo.currentIndexChanged.connect(self._update_display_overlays)
-        sync_selector_labels = getattr(self, "_sync_selector_button_labels", None)
-        if callable(sync_selector_labels):
-            self.display_chord_combo.currentIndexChanged.connect(sync_selector_labels)
-            self.display_scale_combo.currentIndexChanged.connect(sync_selector_labels)
+        self.display_chord_combo.currentIndexChanged.connect(self._sync_selector_button_labels)
+        self.display_scale_combo.currentIndexChanged.connect(self._sync_selector_button_labels)
         self.display_chord_popup_button.clicked.connect(self._open_chord_selector_popup)
         self.display_scale_popup_button.clicked.connect(self._open_scale_selector_popup)
         self.display_inversion_spin.valueChanged.connect(self._update_display_overlays)
@@ -2248,61 +2251,6 @@ class ControlWindow(QWidget):
         text = f"{title}: {message}" if title else message
         self._show_status_message(text, timeout_ms=10000)
         return True
-
-    def _run_selection_popup(self, title: str, combo: QComboBox) -> None:
-        dialog = QDialog(self)
-        dialog.setWindowTitle(title)
-        dialog.setModal(True)
-        dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-        layout = QVBoxLayout(dialog)
-        list_widget = QListWidget(dialog)
-
-        for idx in range(combo.count()):
-            list_widget.addItem(combo.itemText(idx))
-
-        current_index = combo.currentIndex()
-        if current_index >= 0:
-            list_widget.setCurrentRow(current_index)
-
-        def choose_current() -> None:
-            row = list_widget.currentRow()
-            if row >= 0:
-                combo.setCurrentIndex(row)
-            dialog.accept()
-
-        list_widget.itemClicked.connect(lambda *_: choose_current())
-        list_widget.itemActivated.connect(lambda *_: choose_current())
-
-        layout.addWidget(list_widget)
-        dialog.resize(420, 420)
-        dialog.raise_()
-        dialog.activateWindow()
-        dialog.exec()
-
-    def _open_chord_selector_popup(self) -> None:
-        self._run_selection_popup("Seleccionar acorde", self.display_chord_combo)
-
-    def _open_scale_selector_popup(self) -> None:
-        self._run_selection_popup("Seleccionar escala", self.display_scale_combo)
-
-    def _sync_selector_button_labels(self, *_args) -> None:
-        chord_text = self.display_chord_combo.currentText() or "-"
-        scale_text = self.display_scale_combo.currentText() or "-"
-        self.display_chord_popup_button.setText(f"Acorde: {chord_text}")
-        self.display_scale_popup_button.setText(f"Escala: {scale_text}")
-
-    def _prompt_text_foreground(self, title: str, prompt: str, text: str = "") -> Tuple[str, bool]:
-        dialog = QInputDialog(self)
-        dialog.setInputMode(QInputDialog.InputMode.TextInput)
-        dialog.setWindowTitle(title)
-        dialog.setLabelText(prompt)
-        dialog.setTextValue(text)
-        dialog.setModal(True)
-        dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
-        dialog.raise_()
-        dialog.activateWindow()
-        accepted = dialog.exec()
-        return dialog.textValue(), bool(accepted)
 
     def _apply_startup_defaults(self) -> None:
         self._select_combo_value(self.start_combo, DEFAULT_START_NOTE)
@@ -3908,9 +3856,7 @@ class ControlWindow(QWidget):
         fill_chords(self.display_panel_chord_combo)
         fill_scales(self.display_panel_scale_combo)
 
-        sync_selector_labels = getattr(self, "_sync_selector_button_labels", None)
-        if callable(sync_selector_labels):
-            sync_selector_labels()
+        self._sync_selector_button_labels()
         self._sync_panel_from_primary()
 
     def _apply_inversion(self, notes: List[int], inversion: int) -> List[int]:
@@ -4022,9 +3968,16 @@ class ControlWindow(QWidget):
                         )
                     scale_colors[pc] = QColor(color)
 
-                octave4_start = midi_of_C(4)
-                octave4_end = octave4_start + 11
-                for note in range(octave4_start, octave4_end + 1):
+                first_root = None
+                for note in range(self.piano.start_note, self.piano.end_note + 1):
+                    if note % 12 == root_pc:
+                        first_root = note
+                        break
+                if first_root is None:
+                    first_root = self.piano.start_note
+
+                octave_end = min(self.piano.end_note, first_root + 11)
+                for note in range(first_root, octave_end + 1):
                     pc = note % 12
                     if pc in scale_colors:
                         if self.piano.start_note <= note <= self.piano.end_note:
