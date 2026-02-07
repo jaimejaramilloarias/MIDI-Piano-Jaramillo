@@ -3859,6 +3859,12 @@ class ControlWindow(QWidget):
         self._sync_selector_button_labels()
         self._sync_panel_from_primary()
 
+    def _sync_selector_button_labels(self, *_args) -> None:
+        chord_label = str(self.display_chord_combo.currentText() or "-")
+        scale_label = str(self.display_scale_combo.currentText() or "-")
+        self.display_chord_popup_button.setText(f"Seleccionar acorde… ({chord_label})")
+        self.display_scale_popup_button.setText(f"Seleccionar escala… ({scale_label})")
+
     def _apply_inversion(self, notes: List[int], inversion: int) -> List[int]:
         result = list(sorted(notes))
         if inversion > 0:
