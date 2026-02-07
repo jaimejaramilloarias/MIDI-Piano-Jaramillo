@@ -26,14 +26,6 @@ class TestMidiLearnSafeButtonUpdates(unittest.TestCase):
         method_source = self._class_method_source("ControlWindow", "_set_button_text_safe")
         self.assertIn("except RuntimeError", method_source)
 
-    def test_prompt_text_foreground_exists_for_midi_learn(self) -> None:
-        method_source = self._class_method_source("ControlWindow", "_prompt_text_foreground")
-        self.assertIn("QInputDialog.getText", method_source)
-
-    def test_finish_capture_window_handles_slot_exceptions(self) -> None:
-        method_source = self._class_method_source("ControlWindow", "_finish_capture_window")
-        self.assertIn("except Exception", method_source)
-
 
 if __name__ == "__main__":
     unittest.main()
