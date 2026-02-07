@@ -4003,16 +4003,9 @@ class ControlWindow(QWidget):
                         )
                     scale_colors[pc] = QColor(color)
 
-                first_root = None
-                for note in range(self.piano.start_note, self.piano.end_note + 1):
-                    if note % 12 == root_pc:
-                        first_root = note
-                        break
-                if first_root is None:
-                    first_root = self.piano.start_note
-
-                octave_end = min(self.piano.end_note, first_root + 11)
-                for note in range(first_root, octave_end + 1):
+                octave4_start = midi_of_C(4)
+                octave4_end = octave4_start + 11
+                for note in range(octave4_start, octave4_end + 1):
                     pc = note % 12
                     if pc in scale_colors:
                         if self.piano.start_note <= note <= self.piano.end_note:
@@ -5254,9 +5247,17 @@ class ControlWindow(QWidget):
         self._set_learn_button_text(self._learn_button_default_text)
 
     def _set_learn_button_text(self, text: str) -> None:
-        self.learn_button.setText(text)
-        if hasattr(self, "display_panel_midi_learn"):
-            self.display_panel_midi_learn.setText(text)
+        self._set_button_text_safe(getattr(self, "learn_button", None), text)
+        self._set_button_text_safe(getattr(self, "display_panel_midi_learn", None), text)
+
+    def _set_button_text_safe(self, button: Optional[QPushButton], text: str) -> None:
+        if button is None:
+            return
+        try:
+            button.setText(text)
+        except RuntimeError:
+            # El botón puede haber sido destruido al reconstruir el panel de visualización.
+            return
 
     def _begin_capture_window(self, notas_actuales: Set[int]):
         self.learning_waiting_first_note = False
