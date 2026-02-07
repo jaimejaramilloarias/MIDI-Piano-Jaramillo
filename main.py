@@ -3859,6 +3859,82 @@ class ControlWindow(QWidget):
         self._sync_selector_button_labels()
         self._sync_panel_from_primary()
 
+    def _sync_selector_button_labels(self, *_args) -> None:
+        chord_label = str(self.display_chord_combo.currentText() or "-")
+        scale_label = str(self.display_scale_combo.currentText() or "-")
+        self.display_chord_popup_button.setText(f"Seleccionar acorde… ({chord_label})")
+        self.display_scale_popup_button.setText(f"Seleccionar escala… ({scale_label})")
+
+    def _open_chord_selector_popup(self) -> None:
+        labels: List[str] = []
+        values: List[str] = []
+        current_value = str(self.display_chord_combo.currentData() or "")
+        current_label = "-"
+
+        for idx in range(self.display_chord_combo.count()):
+            value = str(self.display_chord_combo.itemData(idx) or "")
+            if not value:
+                continue
+            label = str(self.display_chord_combo.itemText(idx))
+            labels.append(label)
+            values.append(value)
+            if value == current_value:
+                current_label = label
+
+        if not labels:
+            self._show_status_message("No hay acordes disponibles para seleccionar.")
+            return
+
+        selected_label, accepted = QInputDialog.getItem(
+            self,
+            "Seleccionar acorde",
+            "Acorde:",
+            labels,
+            max(0, labels.index(current_label)) if current_label in labels else 0,
+            False,
+        )
+        if not accepted:
+            return
+
+        selected_index = labels.index(selected_label)
+        selected_value = values[selected_index]
+        self._select_combo_value(self.display_chord_combo, selected_value)
+
+    def _open_scale_selector_popup(self) -> None:
+        labels: List[str] = []
+        values: List[str] = []
+        current_value = str(self.display_scale_combo.currentData() or "")
+        current_label = "-"
+
+        for idx in range(self.display_scale_combo.count()):
+            value = str(self.display_scale_combo.itemData(idx) or "")
+            if not value:
+                continue
+            label = str(self.display_scale_combo.itemText(idx))
+            labels.append(label)
+            values.append(value)
+            if value == current_value:
+                current_label = label
+
+        if not labels:
+            self._show_status_message("No hay escalas disponibles para seleccionar.")
+            return
+
+        selected_label, accepted = QInputDialog.getItem(
+            self,
+            "Seleccionar escala",
+            "Escala:",
+            labels,
+            max(0, labels.index(current_label)) if current_label in labels else 0,
+            False,
+        )
+        if not accepted:
+            return
+
+        selected_index = labels.index(selected_label)
+        selected_value = values[selected_index]
+        self._select_combo_value(self.display_scale_combo, selected_value)
+
     def _apply_inversion(self, notes: List[int], inversion: int) -> List[int]:
         result = list(sorted(notes))
         if inversion > 0:
