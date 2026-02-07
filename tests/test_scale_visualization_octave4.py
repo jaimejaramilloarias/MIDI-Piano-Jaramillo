@@ -18,14 +18,13 @@ class TestScaleVisualizationOctave4(unittest.TestCase):
                         return ast.get_source_segment(self.source, item) or ""
         return ""
 
-    def test_scale_overlay_is_fixed_to_octave4(self) -> None:
+    def test_scale_overlay_starts_at_octave4_and_uses_single_scale_cycle(self) -> None:
         method_source = self._class_method_source("ControlWindow", "_update_display_overlays")
 
-        self.assertIn("octave4_start = midi_of_C(4)", method_source)
-        self.assertIn("octave4_end = octave4_start + 11", method_source)
-        self.assertIn("for note in range(octave4_start, octave4_end + 1):", method_source)
+        self.assertIn("overlay_notes = build_scale_overlay_notes(", method_source)
+        self.assertIn("len(scale_pcs)", method_source)
+        self.assertIn("for note in overlay_notes:", method_source)
 
 
 if __name__ == "__main__":
     unittest.main()
-
