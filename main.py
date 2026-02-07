@@ -142,6 +142,14 @@ class MenuComboBox(QComboBox):
         if isinstance(menu, PersistentMenu):
             QTimer.singleShot(0, menu.close)
 
+    def _select_from_view_click(self, model_index) -> None:
+        row = int(model_index.row())
+        if row < 0:
+            return
+        self.setCurrentIndex(row)
+        self.hidePopup()
+        self._close_menu_after_select(row)
+
     def _find_menu_parent(self) -> Optional[QMenu]:
         parent = self.parentWidget()
         while parent is not None and not isinstance(parent, QMenu):
