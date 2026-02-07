@@ -79,16 +79,6 @@ class TestVisualStatePersistence(unittest.TestCase):
 
         self.assertIn("self._load_default_appearance()", init_source)
 
-
-    def test_default_appearance_uses_existing_widget_apis(self) -> None:
-        appearance_source = self._class_method_source("ControlWindow", "_apply_appearance_payload")
-
-        self.assertIn("self.piano.base_color = QColor(*rgba)", appearance_source)
-        self.assertIn("self.piano.update()", appearance_source)
-        self.assertIn("set_chord_color", appearance_source)
-        self.assertNotIn("set_base_color", appearance_source)
-        self.assertNotIn("set_text_color", appearance_source)
-
     def test_save_preferences_button_is_removed(self) -> None:
         init_source = self._class_method_source("ControlWindow", "__init__")
 

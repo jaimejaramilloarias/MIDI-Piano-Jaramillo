@@ -3960,13 +3960,12 @@ class ControlWindow(QWidget):
     def _apply_appearance_payload(self, prefs: Dict[str, object]) -> None:
         rgba = prefs.get("base_color_rgba")
         if isinstance(rgba, list) and len(rgba) == 4 and all(isinstance(x, int) for x in rgba):
-            self.piano.base_color = QColor(*rgba)
-            self.piano.update()
+            self.piano.set_base_color(QColor(*rgba))
 
         chord_rgba = prefs.get("chord_color_rgba")
         if isinstance(chord_rgba, list) and len(chord_rgba) == 4 and all(isinstance(x, int) for x in chord_rgba):
             self.chord_text_color = QColor(*chord_rgba)
-            self.chord_window.set_chord_color(self.chord_text_color)
+            self.chord_window.set_text_color(self.chord_text_color)
 
         font_family = prefs.get("font_family")
         if isinstance(font_family, str) and font_family:
@@ -3981,7 +3980,7 @@ class ControlWindow(QWidget):
             text_color = QColor(chord_text)
             if text_color.isValid():
                 self.chord_text_color = text_color
-                self.chord_window.set_chord_color(text_color)
+                self.chord_window.set_text_color(text_color)
 
         chord_bg = prefs.get("chord_background")
         if isinstance(chord_bg, str):
