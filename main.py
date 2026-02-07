@@ -37,6 +37,8 @@ from PyQt6.QtWidgets import (
     QWidgetAction,
     QToolButton,
     QSizePolicy,
+    QListWidget,
+    QDialog,
 )
 import mido
 
@@ -2145,6 +2147,7 @@ class ControlWindow(QWidget):
         self.display_chord_checkbox = QCheckBox("Mostrar acorde")
         self.display_root_combo = MenuComboBox()
         self.display_chord_combo = MenuComboBox()
+        self.display_chord_popup_button = QPushButton("Seleccionar acorde…")
         self.display_inversion_spin = QSpinBox()
         self.display_inversion_spin.setRange(-4, 4)
         self.display_inversion_spin.setValue(0)
@@ -2158,6 +2161,7 @@ class ControlWindow(QWidget):
         self.display_transpose_spin.setValue(0)
         self.display_scale_checkbox = QCheckBox("Mostrar escala")
         self.display_scale_combo = MenuComboBox()
+        self.display_scale_popup_button = QPushButton("Seleccionar escala…")
         self.view_mode = "separate"
         self._syncing_display_panel = False
 
@@ -2200,6 +2204,10 @@ class ControlWindow(QWidget):
         self.display_root_combo.currentIndexChanged.connect(self._update_display_overlays)
         self.display_chord_combo.currentIndexChanged.connect(self._update_display_overlays)
         self.display_scale_combo.currentIndexChanged.connect(self._update_display_overlays)
+        self.display_chord_combo.currentIndexChanged.connect(self._sync_selector_button_labels)
+        self.display_scale_combo.currentIndexChanged.connect(self._sync_selector_button_labels)
+        self.display_chord_popup_button.clicked.connect(self._open_chord_selector_popup)
+        self.display_scale_popup_button.clicked.connect(self._open_scale_selector_popup)
         self.display_inversion_spin.valueChanged.connect(self._update_display_overlays)
         self.display_drop_combo.currentIndexChanged.connect(self._update_display_overlays)
         self.display_transpose_spin.valueChanged.connect(self._update_display_overlays)
@@ -2857,8 +2865,7 @@ class ControlWindow(QWidget):
         chord_row1.addWidget(self.display_chord_checkbox)
         chord_row1.addWidget(QLabel("Fundamental:"))
         chord_row1.addWidget(self.display_root_combo)
-        chord_row1.addWidget(QLabel("Acorde:"))
-        chord_row1.addWidget(self.display_chord_combo)
+        chord_row1.addWidget(self.display_chord_popup_button)
         chord_row1.addStretch()
         chord_layout.addLayout(chord_row1)
 
@@ -2887,8 +2894,7 @@ class ControlWindow(QWidget):
 
         scale_row = QHBoxLayout()
         scale_row.addWidget(self.display_scale_checkbox)
-        scale_row.addWidget(QLabel("Escala:"))
-        scale_row.addWidget(self.display_scale_combo)
+        scale_row.addWidget(self.display_scale_popup_button)
         scale_row.addStretch()
         scale_layout.addLayout(scale_row)
 
@@ -3850,6 +3856,7 @@ class ControlWindow(QWidget):
         fill_chords(self.display_panel_chord_combo)
         fill_scales(self.display_panel_scale_combo)
 
+        self._sync_selector_button_labels()
         self._sync_panel_from_primary()
 
     def _apply_inversion(self, notes: List[int], inversion: int) -> List[int]:
@@ -5190,8 +5197,7 @@ class ControlWindow(QWidget):
         root_note = ordenadas[0]
         intervals = [(n - root_note) % 12 for n in ordenadas]
 
-        name, ok = QInputDialog.getText(
-            self,
+        name, ok = self._prompt_text_foreground(
             "Midi learn: nuevo cifrado",
             "Escribe el nombre/cifrado del acorde:",
         )
