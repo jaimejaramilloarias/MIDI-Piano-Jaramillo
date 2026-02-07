@@ -21,7 +21,6 @@ class TestMenuComboBehavior(unittest.TestCase):
         self.assertIn("setMouseTracking(True)", combo_source)
         self.assertIn("WA_Hover", combo_source)
         self.assertIn("QListView::item:hover", combo_source)
-        self.assertIn("view.clicked.connect", combo_source)
         self.assertIn("activated.connect", combo_source)
         self.assertIn("QTimer.singleShot", combo_source)
         self.assertIn("menu.close", combo_source)
@@ -30,6 +29,7 @@ class TestMenuComboBehavior(unittest.TestCase):
         menu_source = self._class_source("PersistentMenu")
         self.assertIn("_combo_popup_open", menu_source)
         self.assertIn("focusOutEvent", menu_source)
+        self.assertIn("mousePressEvent", menu_source)
 
 
 if __name__ == "__main__":
