@@ -517,6 +517,22 @@ def is_white(note: int) -> bool:
     return pc in (0, 2, 4, 5, 7, 9, 11)
 
 
+def build_scale_pcs(root_pc: int, intervals: List[int], transpose: int = 0) -> List[int]:
+    if not intervals:
+        return []
+    scale_pcs = [((int(root_pc) + int(transpose)) % 12)]
+    for step in intervals[:-1]:
+        scale_pcs.append((scale_pcs[-1] + int(step)) % 12)
+    return scale_pcs
+
+
+def degree_index_for_note_pc(note_pc: int, scale_pcs: List[int]) -> Optional[int]:
+    try:
+        return list(scale_pcs).index(int(note_pc) % 12)
+    except ValueError:
+        return None
+
+
 class PianoWidget(QWidget):
     """
     Solo dibuja el teclado, sin fondo de ventana.
