@@ -4081,7 +4081,7 @@ class ControlWindow(QWidget):
         self._schedule_visual_state_save()
 
     def _next_scale_role(self, role: str) -> str:
-        order = ["stable", "tension", "critical", "root"]
+        order = ["stable", "tension", "critical"]
         if role not in order:
             return "stable"
         idx = order.index(role)
@@ -4126,6 +4126,9 @@ class ControlWindow(QWidget):
         self._show_status_message(f"Escala '{self.display_scale_combo.currentText()}': {midi_to_name(note)} -> {next_role}")
 
     def _category_role_for_scale_note(self, scale_key: str, idx: int, pc: int, scale_pcs: List[int]) -> str:
+        if idx == 0:
+            return "root"
+
         overrides = self.scale_role_overrides.get(scale_key, {})
         role_override = overrides.get(idx)
         if role_override not in self._role_to_scale_color:
@@ -4137,8 +4140,6 @@ class ControlWindow(QWidget):
             if idx == 0:
                 return "root"
             return "stable"
-        if idx == 0:
-            return "root"
         if idx in (2, 4, 6):
             return "stable"
         prev_pc = scale_pcs[idx - 1]
@@ -4238,15 +4239,19 @@ class ControlWindow(QWidget):
                     role = self._category_role_for_scale_note(str(scale_key), idx, pc, scale_pcs)
                     color_key = self._role_to_scale_color.get(role, "blue")
                     color = self.display_scale_colors[color_key]
-                    scale_colors[pc] = QColor(color)
+                    scale_notes_with_colors.append((idx, QColor(color)))
 
                 octave4_start = midi_of_C(4)
                 overlay_start = max(self.piano.start_note, octave4_start)
-                overlay_end = self.piano.end_note
-                for note in range(overlay_start, overlay_end + 1):
-                    pc = note % 12
-                    if pc in scale_colors:
-                        scale_overlays[note] = QColor(scale_colors[pc])
+                first_root_note = overlay_start + ((scale_pcs[0] - (overlay_start % 12)) % 12)
+
+                scale_notes: List[int] = [first_root_note]
+                for step in intervals[:-1]:
+                    scale_notes.append(scale_notes[-1] + int(step))
+
+                for idx, note in enumerate(scale_notes):
+                    if self.piano.start_note <= note <= self.piano.end_note:
+                        scale_overlays[note] = QColor(scale_notes_with_colors[idx][1])
 
         self.piano.set_display_chord_notes(chord_overlays)
         self.piano.set_display_scale_notes(scale_overlays)

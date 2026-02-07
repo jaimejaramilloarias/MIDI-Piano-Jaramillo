@@ -58,6 +58,15 @@ class TestScalePatternTranspositionBehavior(unittest.TestCase):
         self.assertIn("if not self.scale_edit_mode_enabled:", method)
         self.assertIn("self._schedule_visual_state_save()", method)
 
+    def test_click_edit_keeps_root_fixed_as_green(self) -> None:
+        method = self._class_method_source("ControlWindow", "_handle_scale_circle_clicked")
+        self.assertIn("if int(degree_idx) == 0:", method)
+        self.assertIn("fundamental mantiene siempre la categoría root", method)
+
+    def test_role_cycle_excludes_root(self) -> None:
+        method = self._class_method_source("ControlWindow", "_next_scale_role")
+        self.assertIn("order = [\"stable\", \"tension\", \"critical\"]", method)
+
 
 if __name__ == "__main__":
     unittest.main()
