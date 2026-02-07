@@ -1068,6 +1068,11 @@ class PianoWindow(QMainWindow):
         for child in root.findChildren(QWidget):
             child.installEventFilter(self._drag_filter)
 
+    def _remove_drag_support(self, root: QWidget) -> None:
+        root.removeEventFilter(self._drag_filter)
+        for child in root.findChildren(QWidget):
+            child.removeEventFilter(self._drag_filter)
+
     def show_keyboard_only(self) -> None:
         if self._combined_container is not None:
             self._combined_container.setParent(None)
@@ -1228,11 +1233,18 @@ class ChordWindow(QMainWindow):
         self.setWindowTitle("MIDI Piano Jaramillo — Acordes")
 
         self._drag_offset: Optional[QPoint] = None
+        self._drag_filter = WindowDragFilter(self)
 
         self.display_widget = ChordDisplayWidget()
         self.setCentralWidget(self.display_widget)
+        self._install_drag_support(self.display_widget)
 
         self.resize(740, 200)
+
+    def _install_drag_support(self, root: QWidget) -> None:
+        root.installEventFilter(self._drag_filter)
+        for child in root.findChildren(QWidget):
+            child.installEventFilter(self._drag_filter)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -1897,10 +1909,17 @@ class StaffWindow(QMainWindow):
 
         self.setWindowTitle("MIDI Piano — Partitura")
         self._drag_offset: Optional[QPoint] = None
+        self._drag_filter = WindowDragFilter(self)
 
         self.widget = StaffWidget()
         self.setCentralWidget(self.widget)
+        self._install_drag_support(self.widget)
         self.resize(760, 320)
+
+    def _install_drag_support(self, root: QWidget) -> None:
+        root.installEventFilter(self._drag_filter)
+        for child in root.findChildren(QWidget):
+            child.installEventFilter(self._drag_filter)
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -2143,6 +2162,8 @@ class ControlWindow(QWidget):
 
         # MIDI
         self.midi_in = None
+        self.midi_inputs: List[object] = []
+        self._all_inputs_value = "__all_midi_inputs__"
 
         # Conexiones
         self.refresh_button.clicked.connect(self.refresh_inputs)
@@ -2280,9 +2301,27 @@ class ControlWindow(QWidget):
         self.view_mode_group.addAction(self.view_separate_action)
 
         self.view_separate_action.setChecked(True)
+
+        self.single_fullscreen_action = self.visualization_menu.addAction("Pantalla completa (vista única)")
+        self.single_fullscreen_action.setCheckable(True)
+        self.single_fullscreen_action.toggled.connect(self._toggle_single_fullscreen)
+
         self.view_mode_group.triggered.connect(
             lambda action: self.set_view_mode(str(action.data()))
         )
+
+    def _toggle_single_fullscreen(self, enabled: bool) -> None:
+        if self.view_mode != "single":
+            self.single_fullscreen_action.blockSignals(True)
+            self.single_fullscreen_action.setChecked(False)
+            self.single_fullscreen_action.blockSignals(False)
+            return
+
+        if enabled:
+            self.piano_window.showFullScreen()
+        else:
+            self.piano_window.showNormal()
+            self._fit_keyboard_window_to_available_width()
 
     def _window_is_visible(self, window: QMainWindow) -> bool:
         if not window.isVisible():
@@ -2380,6 +2419,8 @@ class ControlWindow(QWidget):
             self.piano_window.piano.set_force_full_width(False)
             self._restore_window_widget(self.staff_window, self.staff_window.widget)
             self._restore_window_widget(self.chord_window, self.chord_window.display_widget)
+            self.piano_window._remove_drag_support(self.staff_window.widget)
+            self.piano_window._remove_drag_support(self.chord_window.display_widget)
             self.display_panel_widget.setParent(None)
             self.piano_window.show_keyboard_only()
             self.staff_window.show()
@@ -2391,6 +2432,11 @@ class ControlWindow(QWidget):
             self.view_single_action.setChecked(True)
         else:
             self.view_separate_action.setChecked(True)
+            if self.single_fullscreen_action.isChecked():
+                self.single_fullscreen_action.blockSignals(True)
+                self.single_fullscreen_action.setChecked(False)
+                self.single_fullscreen_action.blockSignals(False)
+                self.piano_window.showNormal()
         self._apply_single_view_styles(mode == "single")
         self._fit_keyboard_window_to_available_width()
         self._update_window_actions()
@@ -3881,7 +3927,17 @@ class ControlWindow(QWidget):
                             else self.display_scale_colors["orange"]
                         )
                     scale_colors[pc] = QColor(color)
+
+                first_root = None
                 for note in range(self.piano.start_note, self.piano.end_note + 1):
+                    if note % 12 == root_pc:
+                        first_root = note
+                        break
+                if first_root is None:
+                    first_root = self.piano.start_note
+
+                octave_end = min(self.piano.end_note, first_root + 11)
+                for note in range(first_root, octave_end + 1):
                     pc = note % 12
                     if pc in scale_colors:
                         scale_overlays[note] = QColor(scale_colors[pc])
@@ -3923,6 +3979,8 @@ class ControlWindow(QWidget):
             "display_drop": str(self.display_drop_combo.currentData() or "none"),
             "display_transpose": int(self.display_transpose_spin.value()),
             "view_mode": str(self.view_mode),
+            "start_note": int(self.start_combo.currentData() or DEFAULT_START_NOTE),
+            "octaves": int(self.octaves_spin.value()),
             "interval_label_settings": self._serialize_interval_settings(self.interval_label_settings),
             "staff_settings": self._serialize_staff_settings(self.staff_settings),
         }
@@ -3995,6 +4053,14 @@ class ControlWindow(QWidget):
             if bg_color.isValid():
                 self.single_window_bg_color = bg_color
                 self.piano_window.set_combined_background_color(bg_color)
+
+        start_note = prefs.get("start_note")
+        if isinstance(start_note, int):
+            self._select_combo_value(self.start_combo, max(MIN_NOTE, min(MAX_NOTE, start_note)))
+
+        octaves = prefs.get("octaves")
+        if isinstance(octaves, int):
+            self.octaves_spin.setValue(max(1, min(7, octaves)))
 
         display_root = prefs.get("display_root_pc")
         if isinstance(display_root, int):
@@ -4612,6 +4678,7 @@ class ControlWindow(QWidget):
         if not names:
             self.input_combo.addItem("No hay dispositivos MIDI", None)
         else:
+            self.input_combo.addItem("Todos los dispositivos MIDI", self._all_inputs_value)
             for n in names:
                 self.input_combo.addItem(n, n)
         self.input_combo.blockSignals(False)
@@ -4622,9 +4689,13 @@ class ControlWindow(QWidget):
                 self.input_combo.setCurrentIndex(idx)
                 return
 
+        idx_all = self.input_combo.findData(self._all_inputs_value)
+        if idx_all >= 0:
+            self.input_combo.setCurrentIndex(idx_all)
+
         self.change_input()
 
-    def change_input(self):
+    def _close_midi_inputs(self) -> None:
         if self.midi_in is not None:
             try:
                 self.midi_in.close()
@@ -4632,14 +4703,37 @@ class ControlWindow(QWidget):
                 pass
             self.midi_in = None
 
-        name = self.input_combo.currentData()
-        if not name:
+        if self.midi_inputs:
+            for port in self.midi_inputs:
+                try:
+                    port.close()
+                except Exception:
+                    pass
+            self.midi_inputs = []
+
+    def change_input(self):
+        self._close_midi_inputs()
+
+        selected = self.input_combo.currentData()
+        if not selected:
             return
         try:
-            self.midi_in = mido.open_input(name)
-        except Exception as e:
-            QMessageBox.critical(self, "Error MIDI", f"No se pudo abrir el dispositivo MIDI:\n{e}")
+            if selected == self._all_inputs_value:
+                names = mido.get_input_names()
+                opened = []
+                for name in names:
+                    try:
+                        opened.append(mido.open_input(name))
+                    except Exception:
+                        continue
+                self.midi_inputs = opened
+                self.midi_in = opened[0] if opened else None
+            else:
+                self.midi_in = mido.open_input(selected)
+                self.midi_inputs = [self.midi_in]
+        except Exception:
             self.midi_in = None
+            self.midi_inputs = []
 
     def range_changed(self, *_args, fit_window: bool = True):
         start = self.start_combo.currentData()
@@ -5148,53 +5242,57 @@ class ControlWindow(QWidget):
 
     
     def poll_midi(self):
-        if self.midi_in is None:
+        inputs = [port for port in self.midi_inputs if port is not None]
+        if not inputs and self.midi_in is not None:
+            inputs = [self.midi_in]
+        if not inputs:
             return
         try:
             changed = False
             new_note_on = False
-            for msg in self.midi_in.iter_pending():
-                # Pedal de sustain (CC 64)
-                if msg.type == "control_change" and getattr(msg, "control", None) == 64:
-                    if msg.value >= 64:
-                        # Sustain ON
-                        self.sustain_on = True
-                    else:
-                        # Sustain OFF: limpiar todas las notas sostenidas
-                        self.sustain_on = False
-                        if self.sustained_notes:
-                            for n in list(self.sustained_notes):
-                                self.piano.set_sustained(n, False)
-                            self.sustained_notes.clear()
-                            changed = True
-                elif msg.type in ("note_on", "note_off"):
-                    note = msg.note
-                    if msg.type == "note_on" and msg.velocity > 0:
-                        # Pulsación física
-                        self.piano.set_pressed(note, True)
-                        self.active_notes.add(note)
-                        # Si estaba en sustain, lo quitamos de ahí
-                        if note in self.sustained_notes:
-                            self.sustained_notes.discard(note)
-                            self.piano.set_sustained(note, False)
-                        new_note_on = True
-                    else:
-                        # Nota liberada físicamente
-                        self.piano.set_pressed(note, False)
-                        if self.sustain_on:
-                            # Mientras el pedal está ON, pasamos la nota a sostenida
-                            if note in self.active_notes:
-                                self.active_notes.discard(note)
-                            self.sustained_notes.add(note)
-                            self.piano.set_sustained(note, True)
+            for midi_input in inputs:
+                for msg in midi_input.iter_pending():
+                    # Pedal de sustain (CC 64)
+                    if msg.type == "control_change" and getattr(msg, "control", None) == 64:
+                        if msg.value >= 64:
+                            # Sustain ON
+                            self.sustain_on = True
                         else:
-                            # Sin pedal: simplemente se apaga
-                            if note in self.active_notes:
-                                self.active_notes.discard(note)
+                            # Sustain OFF: limpiar todas las notas sostenidas
+                            self.sustain_on = False
+                            if self.sustained_notes:
+                                for n in list(self.sustained_notes):
+                                    self.piano.set_sustained(n, False)
+                                self.sustained_notes.clear()
+                                changed = True
+                    elif msg.type in ("note_on", "note_off"):
+                        note = msg.note
+                        if msg.type == "note_on" and msg.velocity > 0:
+                            # Pulsación física
+                            self.piano.set_pressed(note, True)
+                            self.active_notes.add(note)
+                            # Si estaba en sustain, lo quitamos de ahí
                             if note in self.sustained_notes:
                                 self.sustained_notes.discard(note)
                                 self.piano.set_sustained(note, False)
-                    changed = True
+                            new_note_on = True
+                        else:
+                            # Nota liberada físicamente
+                            self.piano.set_pressed(note, False)
+                            if self.sustain_on:
+                                # Mientras el pedal está ON, pasamos la nota a sostenida
+                                if note in self.active_notes:
+                                    self.active_notes.discard(note)
+                                self.sustained_notes.add(note)
+                                self.piano.set_sustained(note, True)
+                            else:
+                                # Sin pedal: simplemente se apaga
+                                if note in self.active_notes:
+                                    self.active_notes.discard(note)
+                                if note in self.sustained_notes:
+                                    self.sustained_notes.discard(note)
+                                    self.piano.set_sustained(note, False)
+                        changed = True
             if changed:
                 notas_para_acorde = set(self.active_notes) | set(self.sustained_notes)
                 chord_info = self.chord_window.update_chord(notas_para_acorde)
