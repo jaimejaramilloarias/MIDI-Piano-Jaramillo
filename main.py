@@ -4368,13 +4368,13 @@ class ControlWindow(QWidget):
             self.staff_settings.update({str(k): v for k, v in staff_settings.items()})
             self._apply_staff_settings()
 
-        self._restore_window_geometries(prefs)
-
         saved_view_mode = prefs.get("view_mode")
         if saved_view_mode in ("single", "separate"):
             self.set_view_mode(str(saved_view_mode), persist=False)
         else:
             self.set_view_mode(DEFAULT_VIEW_MODE, persist=False)
+
+        self._restore_window_geometries(prefs)
 
         visibility = prefs.get("window_visibility")
         if isinstance(visibility, dict) and self.view_mode == "separate":
