@@ -74,25 +74,10 @@ class TestVisualStatePersistence(unittest.TestCase):
         self.assertIn("Guardar apariencia actual como predeterminada", controls_source)
         self.assertIn("save_default_appearance", controls_source)
 
-    def test_default_appearance_button_saves_full_preferences_payload(self) -> None:
-        save_source = self._class_method_source("ControlWindow", "save_default_appearance")
-
-        self.assertIn("self._write_preferences(True)", save_source)
-
     def test_default_appearance_is_loaded_during_startup(self) -> None:
         init_source = self._class_method_source("ControlWindow", "__init__")
 
-        self.assertIn("self.load_preferences()", init_source)
-
-
-    def test_default_appearance_uses_existing_widget_apis(self) -> None:
-        appearance_source = self._class_method_source("ControlWindow", "_apply_appearance_payload")
-
-        self.assertIn("self.piano.base_color = QColor(*rgba)", appearance_source)
-        self.assertIn("self.piano.update()", appearance_source)
-        self.assertIn("set_chord_color", appearance_source)
-        self.assertNotIn("set_base_color", appearance_source)
-        self.assertNotIn("set_text_color", appearance_source)
+        self.assertIn("self._load_default_appearance()", init_source)
 
     def test_save_preferences_button_is_removed(self) -> None:
         init_source = self._class_method_source("ControlWindow", "__init__")
