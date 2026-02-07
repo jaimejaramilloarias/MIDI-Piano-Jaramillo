@@ -2186,31 +2186,31 @@ class ControlWindow(QWidget):
         self.midi_inputs: List[object] = []
         self._all_inputs_value = "__all_midi_inputs__"
 
-        # Conexiones
-        self.refresh_button.clicked.connect(self.refresh_inputs)
-        self.input_combo.currentIndexChanged.connect(self.change_input)
-        self.start_combo.currentIndexChanged.connect(self.range_changed)
-        self.octaves_spin.valueChanged.connect(self.range_changed)
-        self.color_button.clicked.connect(self.choose_color)
-        self.chord_color_button.clicked.connect(self.choose_chord_color)
-        self.chord_bg_button.clicked.connect(self.choose_chord_background)
-        self.font_combo.currentFontChanged.connect(self.font_changed)
-        self.font_size_spin.valueChanged.connect(self.font_size_changed)
-        self.always_on_top.toggled.connect(self.toggle_on_top)
-        self.export_button.clicked.connect(self.export_chord_dictionary)
-        self.learn_button.clicked.connect(self.start_learning_mode)
-        self.display_chord_checkbox.toggled.connect(self._update_display_overlays)
-        self.display_scale_checkbox.toggled.connect(self._update_display_overlays)
-        self.display_root_combo.currentIndexChanged.connect(self._update_display_overlays)
-        self.display_chord_combo.currentIndexChanged.connect(self._update_display_overlays)
-        self.display_scale_combo.currentIndexChanged.connect(self._update_display_overlays)
-        self.display_chord_combo.currentIndexChanged.connect(self._sync_selector_button_labels)
-        self.display_scale_combo.currentIndexChanged.connect(self._sync_selector_button_labels)
-        self.display_chord_popup_button.clicked.connect(self._open_chord_selector_popup)
-        self.display_scale_popup_button.clicked.connect(self._open_scale_selector_popup)
-        self.display_inversion_spin.valueChanged.connect(self._update_display_overlays)
-        self.display_drop_combo.currentIndexChanged.connect(self._update_display_overlays)
-        self.display_transpose_spin.valueChanged.connect(self._update_display_overlays)
+        # Conexiones (con validación de handlers para evitar fallos por métodos faltantes)
+        self._connect_signal_handler(self.refresh_button.clicked, "refresh_inputs", self.refresh_button, "Actualizar entradas MIDI")
+        self._connect_signal_handler(self.input_combo.currentIndexChanged, "change_input", self.input_combo, "Entrada MIDI")
+        self._connect_signal_handler(self.start_combo.currentIndexChanged, "range_changed", self.start_combo, "Nota inicial")
+        self._connect_signal_handler(self.octaves_spin.valueChanged, "range_changed", self.octaves_spin, "Número de octavas")
+        self._connect_signal_handler(self.color_button.clicked, "choose_color", self.color_button, "Color del teclado")
+        self._connect_signal_handler(self.chord_color_button.clicked, "choose_chord_color", self.chord_color_button, "Color del cifrado")
+        self._connect_signal_handler(self.chord_bg_button.clicked, "choose_chord_background", self.chord_bg_button, "Fondo de acordes")
+        self._connect_signal_handler(self.font_combo.currentFontChanged, "font_changed", self.font_combo, "Fuente")
+        self._connect_signal_handler(self.font_size_spin.valueChanged, "font_size_changed", self.font_size_spin, "Tamaño de fuente")
+        self._connect_signal_handler(self.always_on_top.toggled, "toggle_on_top", self.always_on_top, "Siempre al frente")
+        self._connect_signal_handler(self.export_button.clicked, "export_chord_dictionary", self.export_button, "Exportar diccionario")
+        self._connect_signal_handler(self.learn_button.clicked, "start_learning_mode", self.learn_button, "Midi learn")
+        self._connect_signal_handler(self.display_chord_checkbox.toggled, "_update_display_overlays", self.display_chord_checkbox, "Mostrar acorde")
+        self._connect_signal_handler(self.display_scale_checkbox.toggled, "_update_display_overlays", self.display_scale_checkbox, "Mostrar escala")
+        self._connect_signal_handler(self.display_root_combo.currentIndexChanged, "_update_display_overlays", self.display_root_combo, "Raíz del acorde")
+        self._connect_signal_handler(self.display_chord_combo.currentIndexChanged, "_update_display_overlays", self.display_chord_combo, "Tipo de acorde")
+        self._connect_signal_handler(self.display_scale_combo.currentIndexChanged, "_update_display_overlays", self.display_scale_combo, "Escala")
+        self._connect_signal_handler(self.display_chord_combo.currentIndexChanged, "_sync_selector_button_labels", self.display_chord_combo, "Sincronizar selector de acordes")
+        self._connect_signal_handler(self.display_scale_combo.currentIndexChanged, "_sync_selector_button_labels", self.display_scale_combo, "Sincronizar selector de escalas")
+        self._connect_signal_handler(self.display_chord_popup_button.clicked, "_open_chord_selector_popup", self.display_chord_popup_button, "Seleccionar acorde")
+        self._connect_signal_handler(self.display_scale_popup_button.clicked, "_open_scale_selector_popup", self.display_scale_popup_button, "Seleccionar escala")
+        self._connect_signal_handler(self.display_inversion_spin.valueChanged, "_update_display_overlays", self.display_inversion_spin, "Inversión")
+        self._connect_signal_handler(self.display_drop_combo.currentIndexChanged, "_update_display_overlays", self.display_drop_combo, "Drop")
+        self._connect_signal_handler(self.display_transpose_spin.valueChanged, "_update_display_overlays", self.display_transpose_spin, "Transposición")
         self._connect_display_panel_signals()
 
         # Timer para leer MIDI
@@ -2233,6 +2233,19 @@ class ControlWindow(QWidget):
         self._apply_chord_font()
         self._refresh_learned_chords_ui()
         self._update_display_overlays()
+
+    def _connect_signal_handler(self, signal, handler_name: str, widget: Optional[QWidget] = None, control_label: str = "control") -> None:
+        handler = getattr(self, handler_name, None)
+        if callable(handler):
+            signal.connect(handler)
+            return
+
+        warning = f"[ControlWindow] Handler faltante '{handler_name}' en '{control_label}'. Control deshabilitado."
+        print(warning)
+        self._show_status_message(warning, timeout_ms=10000)
+        if widget is not None:
+            widget.setEnabled(False)
+            widget.setToolTip(f"Deshabilitado: falta handler '{handler_name}'.")
 
     def _show_status_message(self, text: str, timeout_ms: int = 6000) -> None:
         window = self.window()
@@ -3864,6 +3877,22 @@ class ControlWindow(QWidget):
         scale_label = str(self.display_scale_combo.currentText() or "-")
         self.display_chord_popup_button.setText(f"Seleccionar acorde… ({chord_label})")
         self.display_scale_popup_button.setText(f"Seleccionar escala… ({scale_label})")
+
+    def _open_chord_selector_popup(self, *args, **kwargs) -> None:
+        _ = (args, kwargs)
+        if hasattr(self, "display_chord_combo") and self.display_chord_combo is not None:
+            self.display_chord_combo.setFocus(Qt.FocusReason.MouseFocusReason)
+            self.display_chord_combo.showPopup()
+            return
+        self._show_status_message("No se pudo abrir el selector de acordes.")
+
+    def _open_scale_selector_popup(self, *args, **kwargs) -> None:
+        _ = (args, kwargs)
+        if hasattr(self, "display_scale_combo") and self.display_scale_combo is not None:
+            self.display_scale_combo.setFocus(Qt.FocusReason.MouseFocusReason)
+            self.display_scale_combo.showPopup()
+            return
+        self._show_status_message("No se pudo abrir el selector de escalas.")
 
     def _apply_inversion(self, notes: List[int], inversion: int) -> List[int]:
         result = list(sorted(notes))
