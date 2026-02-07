@@ -4234,7 +4234,7 @@ class ControlWindow(QWidget):
             intervals = SCALE_PATTERNS.get(scale_key or "")
             if intervals:
                 scale_pcs = build_scale_pcs(root_pc, intervals, transpose)
-                scale_colors: Dict[int, QColor] = {}
+                scale_notes_with_colors: List[Tuple[int, QColor]] = []
                 for idx, pc in enumerate(scale_pcs):
                     role = self._category_role_for_scale_note(str(scale_key), idx, pc, scale_pcs)
                     color_key = self._role_to_scale_color.get(role, "blue")
