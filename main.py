@@ -3953,9 +3953,16 @@ class ControlWindow(QWidget):
                         )
                     scale_colors[pc] = QColor(color)
 
-                octave4_start = midi_of_C(4)
-                octave4_end = octave4_start + 11
-                for note in range(octave4_start, octave4_end + 1):
+                first_root = None
+                for note in range(self.piano.start_note, self.piano.end_note + 1):
+                    if note % 12 == root_pc:
+                        first_root = note
+                        break
+                if first_root is None:
+                    first_root = self.piano.start_note
+
+                octave_end = min(self.piano.end_note, first_root + 11)
+                for note in range(first_root, octave_end + 1):
                     pc = note % 12
                     if pc in scale_colors:
                         if self.piano.start_note <= note <= self.piano.end_note:
