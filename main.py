@@ -535,6 +535,8 @@ class PianoWidget(QWidget):
         self.show_keyboard_labels = True
         self.display_chord_notes: Dict[int, QColor] = {}
         self.display_scale_notes: Dict[int, QColor] = {}
+        self.scale_circle_size_factor: float = 1.0
+        self.on_scale_circle_clicked = None
 
         # Proporción alto/ancho de una tecla blanca (alto = ancho * aspect)
         self.key_aspect_ratio = 4.5
@@ -647,6 +649,10 @@ class PianoWidget(QWidget):
         self.display_scale_notes = dict(notes)
         self.update()
 
+    def set_scale_circle_size_factor(self, factor: float) -> None:
+        self.scale_circle_size_factor = max(0.5, min(2.0, float(factor)))
+        self.update()
+
     def set_base_color(self, color: QColor):
         """Compatibilidad: permite fijar color base directamente."""
         if not isinstance(color, QColor) or not color.isValid():
@@ -703,10 +709,75 @@ class PianoWidget(QWidget):
             and pos.y() >= rect.height() - self._resize_margin
         )
 
+    def _scale_circle_hit_regions(self) -> List[Tuple[int, QPointF, float]]:
+        regions: List[Tuple[int, QPointF, float]] = []
+        if not self.display_scale_notes:
+            return regions
+
+        rect = self.rect()
+        white_notes: List[int] = [n for n in range(self.start_note, self.end_note + 1) if is_white(n)]
+        if not white_notes:
+            return regions
+
+        num_white = len(white_notes)
+        key_width = rect.width() / num_white
+        key_height = min(rect.height(), key_width * self.key_aspect_ratio)
+        total_width = key_width * num_white
+        x_offset = (rect.width() - total_width) / 2
+        y_offset = (rect.height() - key_height) / 2
+
+        note_to_white_index: Dict[int, int] = {}
+        white_index = 0
+        for n in range(self.start_note, self.end_note + 1):
+            if is_white(n):
+                note_to_white_index[n] = white_index
+                white_index += 1
+            else:
+                note_to_white_index[n] = max(0, white_index - 1)
+
+        white_base_radius = max(4.0, min(key_width, key_height) * 0.18)
+        white_radius = white_base_radius * self.scale_circle_size_factor
+        for n in white_notes:
+            if n not in self.display_scale_notes:
+                continue
+            idx = note_to_white_index[n]
+            x = x_offset + idx * key_width
+            key_rect = QRectF(x, y_offset, key_width, key_height)
+            center = QPointF(key_rect.center().x(), key_rect.bottom() - white_radius * 1.8)
+            regions.append((n, center, white_radius))
+
+        black_height = key_height * 0.6
+        black_width = key_width * 0.6
+        black_base_radius = max(3.0, min(black_width, black_height) * 0.2)
+        black_radius = black_base_radius * self.scale_circle_size_factor
+        for n in range(self.start_note, self.end_note + 1):
+            if is_white(n) or n not in self.display_scale_notes:
+                continue
+            idx = note_to_white_index[n]
+            x = x_offset + idx * key_width + key_width - black_width / 2
+            key_rect = QRectF(x, y_offset, black_width, black_height)
+            center = QPointF(key_rect.center().x(), key_rect.bottom() - black_radius * 1.6)
+            regions.append((n, center, black_radius))
+        return regions
+
+    def _scale_note_at_pos(self, pos: QPoint) -> Optional[int]:
+        for note, center, radius in self._scale_circle_hit_regions():
+            dx = pos.x() - center.x()
+            dy = pos.y() - center.y()
+            if dx * dx + dy * dy <= radius * radius:
+                return note
+        return None
+
     # --- soporte para arrastrar y redimensionar ventana ---
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
+            if callable(self.on_scale_circle_clicked):
+                hit_note = self._scale_note_at_pos(event.pos())
+                if hit_note is not None:
+                    self.on_scale_circle_clicked(hit_note)
+                    event.accept()
+                    return
             if self._in_resize_zone(event.pos()):
                 # Empezar redimensionado
                 self._resizing = True
@@ -835,7 +906,7 @@ class PianoWidget(QWidget):
                     painter.drawRect(key_rect)
                 if n in scale_notes:
                     color = scale_notes[n]
-                    radius = max(4.0, min(key_width, key_height) * 0.18)
+                    radius = max(4.0, min(key_width, key_height) * 0.18) * self.scale_circle_size_factor
                     center = QPointF(key_rect.center().x(), key_rect.bottom() - radius * 1.8)
                     painter.setBrush(QBrush(color))
                     painter.setPen(Qt.PenStyle.NoPen)
@@ -907,7 +978,7 @@ class PianoWidget(QWidget):
                     painter.drawRect(key_rect)
                 if n in scale_notes:
                     color = scale_notes[n]
-                    radius = max(3.0, min(black_width, black_height) * 0.2)
+                    radius = max(3.0, min(black_width, black_height) * 0.2) * self.scale_circle_size_factor
                     center = QPointF(key_rect.center().x(), key_rect.bottom() - radius * 1.6)
                     painter.setBrush(QBrush(color))
                     painter.setPen(Qt.PenStyle.NoPen)
@@ -2016,6 +2087,21 @@ class ControlWindow(QWidget):
             "orange": QColor(240, 160, 60, 200),
             "red": QColor(230, 80, 80, 200),
         }
+        self.display_scale_circle_size_percent = 100
+        self.scale_edit_mode_enabled = False
+        self.scale_role_overrides: Dict[str, Dict[int, str]] = {}
+        self._scale_color_to_role = {
+            "green": "root",
+            "blue": "stable",
+            "orange": "tension",
+            "red": "critical",
+        }
+        self._role_to_scale_color = {
+            "root": "green",
+            "stable": "blue",
+            "tension": "orange",
+            "critical": "red",
+        }
         self.jazzscope_chords = self._load_jazzscope_chord_library()
         self.capture_timer = QTimer()
         self.capture_timer.setSingleShot(True)
@@ -2026,6 +2112,7 @@ class ControlWindow(QWidget):
         self._visual_state_save_timer = QTimer(self)
         self._visual_state_save_timer.setSingleShot(True)
         self._visual_state_save_timer.timeout.connect(self._persist_visual_state)
+        self.piano.on_scale_circle_clicked = self._handle_scale_circle_clicked
 
         # Widgets
         self.input_combo = MenuComboBox()
@@ -2917,6 +3004,11 @@ class ControlWindow(QWidget):
         scale_row = QHBoxLayout()
         scale_row.addWidget(self.display_scale_checkbox)
         scale_row.addWidget(self.display_scale_popup_button)
+        self.scale_edit_mode_button = QPushButton("Modo edición de categorías: OFF")
+        self.scale_edit_mode_button.setCheckable(True)
+        self.scale_edit_mode_button.setChecked(False)
+        self.scale_edit_mode_button.toggled.connect(self._toggle_scale_edit_mode)
+        scale_row.addWidget(self.scale_edit_mode_button)
         scale_row.addStretch()
         scale_layout.addLayout(scale_row)
 
@@ -2936,6 +3028,8 @@ class ControlWindow(QWidget):
         self.keyboard_labels_action.toggled.connect(self._toggle_keyboard_labels)
         self.single_window_bg_action = self.controls_menu.addAction("Fondo vista única…")
         self.single_window_bg_action.triggered.connect(self.choose_single_window_background)
+        scale_circle_size_action = self.controls_menu.addAction("Tamaño fijo de círculos de escala…")
+        scale_circle_size_action.triggered.connect(self._choose_scale_circle_size)
         save_appearance_action = self.controls_menu.addAction("Guardar apariencia actual como predeterminada")
         save_appearance_action.triggered.connect(self.save_default_appearance)
         self.controls_menu.addSeparator()
@@ -3943,6 +4037,105 @@ class ControlWindow(QWidget):
             return
         self._show_status_message("No se pudo abrir el selector de escalas.")
 
+    def _toggle_scale_edit_mode(self, enabled: bool) -> None:
+        self.scale_edit_mode_enabled = bool(enabled)
+        if hasattr(self, "scale_edit_mode_button"):
+            label = "ON" if self.scale_edit_mode_enabled else "OFF"
+            self.scale_edit_mode_button.setText(f"Modo edición de categorías: {label}")
+        status = "activado" if self.scale_edit_mode_enabled else "desactivado"
+        self._show_status_message(f"Modo edición de categorías {status}.")
+        if not self.scale_edit_mode_enabled:
+            self._schedule_visual_state_save()
+
+    def _choose_scale_circle_size(self) -> None:
+        value, ok = QInputDialog.getInt(
+            self,
+            "Tamaño de círculos de escala",
+            "Tamaño fijo (%):",
+            int(self.display_scale_circle_size_percent),
+            50,
+            200,
+            5,
+        )
+        if not ok:
+            return
+        self.display_scale_circle_size_percent = int(value)
+        self.piano.set_scale_circle_size_factor(self.display_scale_circle_size_percent / 100.0)
+        self._show_status_message(f"Tamaño de círculos de escala: {self.display_scale_circle_size_percent}%")
+        self._schedule_visual_state_save()
+
+    def _next_scale_role(self, role: str) -> str:
+        order = ["stable", "tension", "critical", "root"]
+        if role not in order:
+            return "stable"
+        idx = order.index(role)
+        return order[(idx + 1) % len(order)]
+
+    def _handle_scale_circle_clicked(self, note: int) -> None:
+        if not self.scale_edit_mode_enabled:
+            return
+        if not self.display_scale_checkbox.isChecked():
+            self._show_status_message("Activa 'Mostrar escala' para editar categorías.")
+            return
+        scale_key = self.display_scale_combo.currentData()
+        if not isinstance(scale_key, str) or not scale_key:
+            self._show_status_message("Selecciona una escala antes de editar categorías.")
+            return
+        if note not in self.piano.display_scale_notes:
+            return
+
+        intervals = SCALE_PATTERNS.get(scale_key)
+        root_pc_data = self.display_root_combo.currentData()
+        if not intervals or root_pc_data is None:
+            return
+
+        root_pc = int(root_pc_data)
+        transpose = int(self.display_transpose_spin.value())
+        scale_pcs = [((root_pc + transpose) % 12)]
+        for step in intervals[:-1]:
+            scale_pcs.append((scale_pcs[-1] + step) % 12)
+
+        note_pc = note % 12
+        try:
+            degree_idx = scale_pcs.index(note_pc)
+        except ValueError:
+            return
+
+        current_color = self.piano.display_scale_notes[note]
+        current_role = "stable"
+        for color_key, color in self.display_scale_colors.items():
+            if QColor(color) == QColor(current_color):
+                current_role = self._scale_color_to_role.get(color_key, "stable")
+                break
+
+        next_role = self._next_scale_role(current_role)
+        role_overrides = self.scale_role_overrides.setdefault(scale_key, {})
+        role_overrides[degree_idx] = next_role
+        self._update_display_overlays()
+        self._show_status_message(
+            f"Escala '{self.display_scale_combo.currentText()}': grado {degree_idx + 1} ({midi_to_name(note)}) -> {next_role}"
+        )
+
+    def _category_role_for_scale_note(self, scale_key: str, idx: int, pc: int, scale_pcs: List[int]) -> str:
+        overrides = self.scale_role_overrides.get(scale_key, {})
+        role_override = overrides.get(idx)
+        if role_override in self._role_to_scale_color:
+            return str(role_override)
+
+        if scale_key in SPECIAL_SCALES:
+            if idx == 0:
+                return "root"
+            return "stable"
+        if idx == 0:
+            return "root"
+        if idx in (2, 4, 6):
+            return "stable"
+        prev_pc = scale_pcs[idx - 1]
+        is_semitone = ((pc - prev_pc + 12) % 12) == 1
+        if idx in (1, 3, 5) and is_semitone:
+            return "critical"
+        return "tension"
+
     def _apply_inversion(self, notes: List[int], inversion: int) -> List[int]:
         result = list(sorted(notes))
         if inversion > 0:
@@ -4028,28 +4221,17 @@ class ControlWindow(QWidget):
             scale_key = self.display_scale_combo.currentData()
             intervals = SCALE_PATTERNS.get(scale_key or "")
             if intervals:
-                scale_pcs = [root_pc]
-                cursor = root_pc
+                scale_pcs = [((root_pc + transpose) % 12)]
+                cursor = scale_pcs[0]
                 for ivl in intervals:
                     cursor = (cursor + ivl) % 12
                     scale_pcs.append(cursor)
                 scale_pcs = scale_pcs[:-1]
                 scale_colors: Dict[int, QColor] = {}
                 for idx, pc in enumerate(scale_pcs):
-                    if scale_key in SPECIAL_SCALES:
-                        color = self.display_scale_colors["blue"]
-                    elif idx == 0:
-                        color = self.display_scale_colors["green"]
-                    elif idx in (2, 4, 6):
-                        color = self.display_scale_colors["blue"]
-                    else:
-                        prev_pc = scale_pcs[idx - 1]
-                        is_semitone = ((pc - prev_pc + 12) % 12) == 1
-                        color = (
-                            self.display_scale_colors["red"]
-                            if idx in (1, 3, 5) and is_semitone
-                            else self.display_scale_colors["orange"]
-                        )
+                    role = self._category_role_for_scale_note(str(scale_key), idx, pc, scale_pcs)
+                    color_key = self._role_to_scale_color.get(role, "blue")
+                    color = self.display_scale_colors[color_key]
                     scale_colors[pc] = QColor(color)
 
                 octave4_start = midi_of_C(4)
@@ -4093,6 +4275,12 @@ class ControlWindow(QWidget):
             "display_root_pc": int(self.display_root_combo.currentData() or 0),
             "display_chord_type": str(self.display_chord_combo.currentData() or ""),
             "display_scale_type": str(self.display_scale_combo.currentData() or ""),
+            "display_scale_circle_size_percent": int(self.display_scale_circle_size_percent),
+            "scale_edit_mode_enabled": bool(self.scale_edit_mode_enabled),
+            "scale_role_overrides": {
+                str(scale): {str(pc): str(role) for pc, role in overrides.items()}
+                for scale, overrides in self.scale_role_overrides.items()
+            },
             "display_inversion": int(self.display_inversion_spin.value()),
             "display_drop": str(self.display_drop_combo.currentData() or "none"),
             "display_transpose": int(self.display_transpose_spin.value()),
@@ -4189,6 +4377,39 @@ class ControlWindow(QWidget):
             idx = self.display_scale_combo.findData(display_scale)
             if idx >= 0:
                 self.display_scale_combo.setCurrentIndex(idx)
+
+        size_percent = prefs.get("display_scale_circle_size_percent")
+        if isinstance(size_percent, int):
+            self.display_scale_circle_size_percent = max(50, min(200, size_percent))
+            self.piano.set_scale_circle_size_factor(self.display_scale_circle_size_percent / 100.0)
+
+        role_overrides = prefs.get("scale_role_overrides")
+        if isinstance(role_overrides, dict):
+            cleaned_overrides: Dict[str, Dict[int, str]] = {}
+            valid_roles = set(self._role_to_scale_color.keys())
+            for scale_key, mapping in role_overrides.items():
+                if not isinstance(scale_key, str) or not isinstance(mapping, dict):
+                    continue
+                parsed: Dict[int, str] = {}
+                for pc_key, role in mapping.items():
+                    try:
+                        pc = int(pc_key) % 12
+                    except Exception:
+                        continue
+                    if isinstance(role, str) and role in valid_roles:
+                        parsed[pc] = role
+                if parsed:
+                    cleaned_overrides[scale_key] = parsed
+            self.scale_role_overrides = cleaned_overrides
+
+        edit_mode_enabled = prefs.get("scale_edit_mode_enabled")
+        if isinstance(edit_mode_enabled, bool):
+            self.scale_edit_mode_enabled = edit_mode_enabled
+            if hasattr(self, "scale_edit_mode_button"):
+                self.scale_edit_mode_button.blockSignals(True)
+                self.scale_edit_mode_button.setChecked(edit_mode_enabled)
+                self.scale_edit_mode_button.blockSignals(False)
+                self._toggle_scale_edit_mode(edit_mode_enabled)
 
         display_inversion = prefs.get("display_inversion")
         if isinstance(display_inversion, int):
@@ -4299,6 +4520,12 @@ class ControlWindow(QWidget):
             "display_root_pc": int(self.display_root_combo.currentData() or 0),
             "display_chord_type": str(self.display_chord_combo.currentData() or ""),
             "display_scale_type": str(self.display_scale_combo.currentData() or ""),
+            "display_scale_circle_size_percent": int(self.display_scale_circle_size_percent),
+            "scale_edit_mode_enabled": bool(self.scale_edit_mode_enabled),
+            "scale_role_overrides": {
+                str(scale): {str(pc): str(role) for pc, role in overrides.items()}
+                for scale, overrides in self.scale_role_overrides.items()
+            },
             "display_inversion": int(self.display_inversion_spin.value()),
             "display_drop": str(self.display_drop_combo.currentData() or "none"),
             "display_transpose": int(self.display_transpose_spin.value()),
@@ -4502,6 +4729,39 @@ class ControlWindow(QWidget):
             idx = self.display_scale_combo.findData(display_scale)
             if idx >= 0:
                 self.display_scale_combo.setCurrentIndex(idx)
+
+        size_percent = prefs.get("display_scale_circle_size_percent")
+        if isinstance(size_percent, int):
+            self.display_scale_circle_size_percent = max(50, min(200, size_percent))
+            self.piano.set_scale_circle_size_factor(self.display_scale_circle_size_percent / 100.0)
+
+        role_overrides = prefs.get("scale_role_overrides")
+        if isinstance(role_overrides, dict):
+            cleaned_overrides: Dict[str, Dict[int, str]] = {}
+            valid_roles = set(self._role_to_scale_color.keys())
+            for scale_key, mapping in role_overrides.items():
+                if not isinstance(scale_key, str) or not isinstance(mapping, dict):
+                    continue
+                parsed: Dict[int, str] = {}
+                for pc_key, role in mapping.items():
+                    try:
+                        pc = int(pc_key) % 12
+                    except Exception:
+                        continue
+                    if isinstance(role, str) and role in valid_roles:
+                        parsed[pc] = role
+                if parsed:
+                    cleaned_overrides[scale_key] = parsed
+            self.scale_role_overrides = cleaned_overrides
+
+        edit_mode_enabled = prefs.get("scale_edit_mode_enabled")
+        if isinstance(edit_mode_enabled, bool):
+            self.scale_edit_mode_enabled = edit_mode_enabled
+            if hasattr(self, "scale_edit_mode_button"):
+                self.scale_edit_mode_button.blockSignals(True)
+                self.scale_edit_mode_button.setChecked(edit_mode_enabled)
+                self.scale_edit_mode_button.blockSignals(False)
+                self._toggle_scale_edit_mode(edit_mode_enabled)
 
         display_inversion = prefs.get("display_inversion")
         if isinstance(display_inversion, int):
