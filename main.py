@@ -4200,8 +4200,8 @@ class ControlWindow(QWidget):
             scale_key = self.display_scale_combo.currentData()
             intervals = SCALE_PATTERNS.get(scale_key or "")
             if intervals:
-                scale_pcs = [root_pc]
-                cursor = root_pc
+                scale_pcs = [((root_pc + transpose) % 12)]
+                cursor = scale_pcs[0]
                 for ivl in intervals:
                     cursor = (cursor + ivl) % 12
                     scale_pcs.append(cursor)
