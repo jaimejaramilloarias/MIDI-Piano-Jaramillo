@@ -3965,7 +3965,8 @@ class ControlWindow(QWidget):
                 for note in range(first_root, octave_end + 1):
                     pc = note % 12
                     if pc in scale_colors:
-                        scale_overlays[note] = QColor(scale_colors[pc])
+                        if self.piano.start_note <= note <= self.piano.end_note:
+                            scale_overlays[note] = QColor(scale_colors[pc])
 
         self.piano.set_display_chord_notes(chord_overlays)
         self.piano.set_display_scale_notes(scale_overlays)
