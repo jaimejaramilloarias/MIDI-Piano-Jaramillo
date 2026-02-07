@@ -4109,9 +4109,6 @@ class ControlWindow(QWidget):
         degree_idx = degree_index_for_note_pc(note % 12, scale_pcs)
         if degree_idx is None:
             return
-        if int(degree_idx) == 0:
-            self._show_status_message("La fundamental mantiene siempre la categoría root (verde).")
-            return
         if note not in self.piano.display_scale_notes:
             return
 
@@ -4136,8 +4133,6 @@ class ControlWindow(QWidget):
         role_override = overrides.get(idx)
         if role_override not in self._role_to_scale_color:
             role_override = overrides.get(pc)
-        if role_override == "root":
-            role_override = None
         if role_override in self._role_to_scale_color:
             return str(role_override)
 
@@ -4239,12 +4234,12 @@ class ControlWindow(QWidget):
             intervals = SCALE_PATTERNS.get(scale_key or "")
             if intervals:
                 scale_pcs = build_scale_pcs(root_pc, intervals, transpose)
-                scale_colors_by_degree: Dict[int, QColor] = {}
+                scale_colors: Dict[int, QColor] = {}
                 for idx, pc in enumerate(scale_pcs):
                     role = self._category_role_for_scale_note(str(scale_key), idx, pc, scale_pcs)
                     color_key = self._role_to_scale_color.get(role, "blue")
                     color = self.display_scale_colors[color_key]
-                    scale_colors_by_degree[idx] = QColor(color)
+                    scale_notes_with_colors.append((idx, QColor(color)))
 
                 octave4_start = midi_of_C(4)
                 overlay_start = max(self.piano.start_note, octave4_start)
@@ -4256,9 +4251,7 @@ class ControlWindow(QWidget):
 
                 for idx, note in enumerate(scale_notes):
                     if self.piano.start_note <= note <= self.piano.end_note:
-                        color = scale_colors_by_degree.get(idx)
-                        if color is not None:
-                            scale_overlays[note] = QColor(color)
+                        scale_overlays[note] = QColor(scale_notes_with_colors[idx][1])
 
         self.piano.set_display_chord_notes(chord_overlays)
         self.piano.set_display_scale_notes(scale_overlays)
