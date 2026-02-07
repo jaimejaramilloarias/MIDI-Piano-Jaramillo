@@ -29,7 +29,6 @@ from PyQt6.QtWidgets import (
     QCheckBox,
     QPushButton,
     QSpinBox,
-    QMessageBox,
     QFontComboBox,
     QFontDialog,
     QColorDialog,
@@ -99,6 +98,12 @@ class PersistentMenu(QMenu):
             return
         super().mouseReleaseEvent(event)
 
+    def mousePressEvent(self, event):
+        if self._is_widget_action_pos(event.pos()):
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
     def focusOutEvent(self, event):
         if self._combo_popup_open:
             event.accept()
@@ -114,6 +119,10 @@ class MenuComboBox(QComboBox):
         view.setMouseTracking(True)
         view.viewport().setMouseTracking(True)
         view.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        view.setStyleSheet(
+            "QListView::item:hover { background-color: rgba(59, 130, 246, 0.25); }"
+            "QListView::item:selected { background-color: rgba(59, 130, 246, 0.4); }"
+        )
         self.activated.connect(self._close_menu_after_select)
 
     def showPopup(self) -> None:
@@ -2209,6 +2218,24 @@ class ControlWindow(QWidget):
         self._refresh_learned_chords_ui()
         self._update_display_overlays()
 
+    def _show_status_message(self, text: str, timeout_ms: int = 6000) -> None:
+        window = self.window()
+        status_bar = None
+        if hasattr(window, "statusBar"):
+            try:
+                status_bar = window.statusBar()
+            except Exception:
+                status_bar = None
+        if status_bar is not None:
+            status_bar.showMessage(str(text), max(0, int(timeout_ms)))
+        else:
+            print(str(text))
+
+    def _confirm_action(self, title: str, message: str) -> bool:
+        text = f"{title}: {message}" if title else message
+        self._show_status_message(text, timeout_ms=10000)
+        return True
+
     def _apply_startup_defaults(self) -> None:
         self._select_combo_value(self.start_combo, DEFAULT_START_NOTE)
         self.octaves_spin.setValue(DEFAULT_OCTAVES)
@@ -3678,16 +3705,14 @@ class ControlWindow(QWidget):
         if existing_base is not None:
             if allow_overwrite:
                 if prompt_on_conflict:
-                    res = QMessageBox.question(
-                        self,
+                    if not self._confirm_action(
                         "Duplicado",
                         (
-                            "Ya existe un acorde con esos intervalos en la base.\n\n"
-                            f"Actual: «{existing_base.get('nombre', '(sin nombre)')}».\n"
-                            f"Nuevo: «{name}».\n\n¿Sobrescribirlo?"
+                            "Ya existe un acorde con esos intervalos en la base. "
+                            f"Actual: «{existing_base.get('nombre', '(sin nombre)')}». "
+                            f"Nuevo: «{name}». Se sobrescribirá."
                         ),
-                    )
-                    if res != QMessageBox.StandardButton.Yes:
+                    ):
                         return None
                 existing_base.update(
                     {
@@ -3991,17 +4016,11 @@ class ControlWindow(QWidget):
                 json.dumps(self._appearance_payload(), indent=2), encoding="utf-8"
             )
         except Exception as e:
-            QMessageBox.warning(
-                self,
-                "Error",
-                f"No se pudo guardar la apariencia predeterminada:\n{e}",
-            )
+            self._show_status_message(f"Error: No se pudo guardar la apariencia predeterminada: {e}")
             return
 
-        QMessageBox.information(
-            self,
-            "Apariencia guardada",
-            "La apariencia actual se usará como estado predeterminado al abrir la app.",
+        self._show_status_message(
+            "Apariencia guardada: la apariencia actual se usará como estado predeterminado al abrir la app."
         )
 
     def _load_default_appearance(self) -> None:
@@ -4233,10 +4252,10 @@ class ControlWindow(QWidget):
             )
         except Exception as e:
             if show_message:
-                QMessageBox.warning(self, "Error", f"No se pudieron guardar las preferencias:\n{e}")
+                self._show_status_message(f"Error: No se pudieron guardar las preferencias: {e}")
         else:
             if show_message:
-                QMessageBox.information(self, "OK", "Preferencias guardadas correctamente.")
+                self._show_status_message("OK: preferencias guardadas correctamente.")
 
     def export_chord_dictionary(self):
         default_path = str(Path.home() / "diccionario_acordes.json")
@@ -4270,13 +4289,9 @@ class ControlWindow(QWidget):
                 encoding="utf-8",
             )
         except Exception as e:
-            QMessageBox.warning(self, "Error", f"No se pudo exportar el diccionario:\n{e}")
+            self._show_status_message(f"Error: no se pudo exportar el diccionario: {e}")
         else:
-            QMessageBox.information(
-                self,
-                "Exportación lista",
-                f"Diccionario exportado en:\n{file_path}",
-            )
+            self._show_status_message(f"Exportación lista: diccionario exportado en {file_path}")
 
     def load_chord_dictionary_from_dialog(self):
         file_path, _ = QFileDialog.getOpenFileName(
@@ -4291,13 +4306,8 @@ class ControlWindow(QWidget):
         added = self._import_dictionary_from_path(
             Path(file_path), record_extra=True, allow_overwrite=True
         )
-        QMessageBox.information(
-            self,
-            "Diccionario cargado",
-            (
-                "El diccionario se cargó en memoria.\n\n"
-                f"Acordes agregados o actualizados: {added}."
-            ),
+        self._show_status_message(
+            f"Diccionario cargado en memoria. Acordes agregados o actualizados: {added}."
         )
 
     def load_preferences(self):
@@ -4660,19 +4670,16 @@ class ControlWindow(QWidget):
         except ModuleNotFoundError:
             if not self._midi_backend_error_shown:
                 self._midi_backend_error_shown = True
-                QMessageBox.warning(
-                    self,
-                    "MIDI no disponible",
-                    "No se pudo cargar el backend MIDI (python-rtmidi).\n\n"
-                    "Solución:\n"
-                    "• Si corres desde terminal: instala python-rtmidi en tu venv.\n"
-                    "• Si es la app empaquetada: recompílala (PyInstaller) incluyendo mido.backends.rtmidi.",
+                self._show_status_message(
+                    "MIDI no disponible: no se pudo cargar el backend MIDI (python-rtmidi). "
+                    "Si corres desde terminal, instala python-rtmidi en tu venv. "
+                    "Si es la app empaquetada, recompílala incluyendo mido.backends.rtmidi."
                 )
             names = []
         except Exception as e:
             if not self._midi_backend_error_shown:
                 self._midi_backend_error_shown = True
-                QMessageBox.critical(self, "Error MIDI", f"No se pudieron listar los dispositivos MIDI:\n{e}")
+                self._show_status_message(f"Error MIDI: no se pudieron listar los dispositivos MIDI: {e}")
             names = []
 
         if not names:
@@ -4866,11 +4873,7 @@ class ControlWindow(QWidget):
     def _edit_chord_labels(self):
         notes = set(self.active_notes) | set(self.sustained_notes)
         if not notes:
-            QMessageBox.information(
-                self,
-                "Editar etiquetas",
-                "Toca un acorde para definir su enarmonía.",
-            )
+            self._show_status_message("Editar etiquetas: toca un acorde para definir su enarmonía.")
             return
 
         signature = tuple(sorted({n % 12 for n in notes}))
@@ -4904,20 +4907,12 @@ class ControlWindow(QWidget):
 
         parsed = self._parse_note_labels(raw)
         if parsed is None:
-            QMessageBox.warning(
-                self,
-                "Etiqueta inválida",
-                "No se pudieron leer las notas. Usa letras A-G con b/#.",
-            )
+            self._show_status_message("Etiqueta inválida: usa letras A-G con b/#.")
             return
 
         pcs = tuple(sorted(parsed.keys()))
         if pcs != signature:
-            QMessageBox.warning(
-                self,
-                "Etiqueta inválida",
-                "Las notas no coinciden con el acorde tocado.",
-            )
+            self._show_status_message("Etiqueta inválida: las notas no coinciden con el acorde tocado.")
             return
 
         if quality:
@@ -5032,7 +5027,7 @@ class ControlWindow(QWidget):
             return
         new_name = new_name.strip()
         if not new_name:
-            QMessageBox.warning(self, "Editar cifrado", "El nombre no puede estar vacío.")
+            self._show_status_message("Editar cifrado: el nombre no puede estar vacío.")
             return
         if new_name == current_name:
             return
@@ -5049,13 +5044,11 @@ class ControlWindow(QWidget):
         )
         if existing_idx is not None:
             old_name = self.custom_chords[existing_idx].get("nombre", "(sin nombre)")
-            res = QMessageBox.question(
-                self,
+            if not self._confirm_action(
                 "Midi learn",
-                f"Ya existe un acorde aprendido con esos intervalos:\n«{old_name}».\n\n"
-                f"¿Quieres reemplazarlo por «{name}»?",
-            )
-            if res != QMessageBox.StandardButton.Yes:
+                f"Ya existe un acorde aprendido con esos intervalos: «{old_name}». "
+                f"Se reemplazará por «{name}».",
+            ):
                 return
             existing_pattern = self.custom_chords[existing_idx]
             existing_pattern.update(pattern)
@@ -5076,16 +5069,14 @@ class ControlWindow(QWidget):
         existing_base = self._find_pattern_by_signature(signature, include_custom=False)
 
         if existing_base is not None and existing_base is not pattern:
-            res = QMessageBox.question(
-                self,
+            if not self._confirm_action(
                 "Duplicado",
                 (
-                    "Ya existe un acorde en la base con esos intervalos.\n\n"
-                    f"Actual: «{existing_base.get('nombre', '(sin nombre)')}».\n"
-                    f"Nuevo: «{pattern.get('nombre', '(sin nombre)')}».\n\n¿Sobrescribirlo?"
+                    "Ya existe un acorde en la base con esos intervalos. "
+                    f"Actual: «{existing_base.get('nombre', '(sin nombre)')}». "
+                    f"Nuevo: «{pattern.get('nombre', '(sin nombre)')}». Se sobrescribirá."
                 ),
-            )
-            if res != QMessageBox.StandardButton.Yes:
+            ):
                 return
             existing_base.update(
                 {
@@ -5159,11 +5150,7 @@ class ControlWindow(QWidget):
     def start_learning_mode(self):
         if self.learning_chord:
             self._reset_learning_state()
-            QMessageBox.information(
-                self,
-                "Midi learn",
-                "Modo aprendizaje cancelado.",
-            )
+            self._show_status_message("Midi learn: modo aprendizaje cancelado.")
             return
 
         current_notes = set(self.active_notes) | set(self.sustained_notes)
@@ -5176,23 +5163,19 @@ class ControlWindow(QWidget):
         self.learning_chord = True
         self.learning_waiting_first_note = True
         self._set_learn_button_text("Midi learn: esperando acorde…")
-        QMessageBox.information(
-            self,
-            "Midi learn",
-            "Toca el acorde en tu teclado MIDI. Se abrirá una ventana de captura desde la primera nota.",
+        self._show_status_message(
+            "Midi learn: toca el acorde en tu teclado MIDI. Se abrirá una ventana de captura desde la primera nota."
         )
 
     def _complete_learning_with_notes(self, notas):
         self._reset_learning_state()
         if not notas:
-            QMessageBox.warning(self, "Midi learn", "No se detectaron notas para aprender.")
+            self._show_status_message("Midi learn: no se detectaron notas para aprender.")
             return
 
         ordenadas = sorted(set(int(n) for n in notas))
         if len(ordenadas) < 2:
-            QMessageBox.warning(
-                self, "Midi learn", "El cifrado necesita al menos dos notas del acorde."
-            )
+            self._show_status_message("Midi learn: el cifrado necesita al menos dos notas del acorde.")
             return
 
         root_note = ordenadas[0]
@@ -5207,7 +5190,7 @@ class ControlWindow(QWidget):
             return
         name = name.strip()
         if not name:
-            QMessageBox.warning(self, "Midi learn", "El nombre del cifrado no puede estar vacío.")
+            self._show_status_message("Midi learn: el nombre del cifrado no puede estar vacío.")
             return
 
         self._register_custom_chord(name, intervals, persist=True)
