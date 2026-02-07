@@ -1068,6 +1068,11 @@ class PianoWindow(QMainWindow):
         for child in root.findChildren(QWidget):
             child.installEventFilter(self._drag_filter)
 
+    def _remove_drag_support(self, root: QWidget) -> None:
+        root.removeEventFilter(self._drag_filter)
+        for child in root.findChildren(QWidget):
+            child.removeEventFilter(self._drag_filter)
+
     def show_keyboard_only(self) -> None:
         if self._combined_container is not None:
             self._combined_container.setParent(None)
@@ -2414,6 +2419,8 @@ class ControlWindow(QWidget):
             self.piano_window.piano.set_force_full_width(False)
             self._restore_window_widget(self.staff_window, self.staff_window.widget)
             self._restore_window_widget(self.chord_window, self.chord_window.display_widget)
+            self.piano_window._remove_drag_support(self.staff_window.widget)
+            self.piano_window._remove_drag_support(self.chord_window.display_widget)
             self.display_panel_widget.setParent(None)
             self.piano_window.show_keyboard_only()
             self.staff_window.show()
