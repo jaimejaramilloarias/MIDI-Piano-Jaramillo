@@ -628,6 +628,13 @@ class PianoWidget(QWidget):
         self.display_scale_notes = dict(notes)
         self.update()
 
+    def set_base_color(self, color: QColor):
+        """Compatibilidad: permite fijar color base directamente."""
+        if not isinstance(color, QColor) or not color.isValid():
+            return
+        self.base_color = QColor(color)
+        self.update()
+
     def set_base_color_name(self, name: str):
         mapping = {
             "Cian": QColor(0, 200, 200),
@@ -1251,6 +1258,10 @@ class ChordWindow(QMainWindow):
 
     def set_chord_color(self, color: QColor):
         self.display_widget.set_chord_color(color)
+
+    def set_text_color(self, color: QColor):
+        """Alias de compatibilidad para código legado."""
+        self.set_chord_color(color)
 
     def set_background_color(self, color: QColor):
         self.display_widget.set_background_color(color)
@@ -1924,6 +1935,7 @@ class ControlWindow(QWidget):
     """
 
     CONFIG_PATH = Path.home() / ".midi_piano_prefs.json"
+    APPEARANCE_CONFIG_PATH = Path.home() / ".midi_piano_appearance_default.json"
 
     def __init__(
         self,
@@ -2169,6 +2181,7 @@ class ControlWindow(QWidget):
         self.refresh_inputs()
         self._populate_display_controls()
         self._apply_startup_defaults()
+        self.load_preferences()
         self._visual_state_tracking_enabled = True
         self.range_changed(fit_window=False)
         self._apply_chord_font()
@@ -2814,6 +2827,8 @@ class ControlWindow(QWidget):
         self.keyboard_labels_action.toggled.connect(self._toggle_keyboard_labels)
         self.single_window_bg_action = self.controls_menu.addAction("Fondo vista única…")
         self.single_window_bg_action.triggered.connect(self.choose_single_window_background)
+        save_appearance_action = self.controls_menu.addAction("Guardar apariencia actual como predeterminada")
+        save_appearance_action.triggered.connect(self.save_default_appearance)
         self.controls_menu.addSeparator()
 
         panel_action = QWidgetAction(self.controls_menu)
@@ -3878,6 +3893,153 @@ class ControlWindow(QWidget):
             self._schedule_visual_state_save()
 
     # --- preferencias persistentes ---
+
+    def _appearance_payload(self) -> Dict[str, object]:
+        return {
+            "base_color_rgba": [
+                int(self.piano.base_color.red()),
+                int(self.piano.base_color.green()),
+                int(self.piano.base_color.blue()),
+                int(self.piano.base_color.alpha()),
+            ],
+            "chord_color_rgba": [
+                int(self.chord_text_color.red()),
+                int(self.chord_text_color.green()),
+                int(self.chord_text_color.blue()),
+                int(self.chord_text_color.alpha()),
+            ],
+            "font_family": self.font_combo.currentFont().family(),
+            "font_size": int(self.font_size_spin.value()),
+            "keyboard_labels_visible": bool(self.keyboard_labels_action.isChecked()),
+            "chord_text_color": self.chord_text_color.name(),
+            "chord_background": self.chord_bg_color.name(),
+            "single_window_background": self.single_window_bg_color.name(),
+            "display_chord_enabled": bool(self.display_chord_checkbox.isChecked()),
+            "display_scale_enabled": bool(self.display_scale_checkbox.isChecked()),
+            "display_root_pc": int(self.display_root_combo.currentData() or 0),
+            "display_chord_type": str(self.display_chord_combo.currentData() or ""),
+            "display_scale_type": str(self.display_scale_combo.currentData() or ""),
+            "display_inversion": int(self.display_inversion_spin.value()),
+            "display_drop": str(self.display_drop_combo.currentData() or "none"),
+            "display_transpose": int(self.display_transpose_spin.value()),
+            "view_mode": str(self.view_mode),
+            "interval_label_settings": self._serialize_interval_settings(self.interval_label_settings),
+            "staff_settings": self._serialize_staff_settings(self.staff_settings),
+        }
+
+    def save_default_appearance(self) -> None:
+        """Guarda el estado completo actual como nuevo estado predeterminado."""
+        self._write_preferences(True)
+
+    def _load_default_appearance(self) -> None:
+        if not self.APPEARANCE_CONFIG_PATH.exists():
+            return
+        try:
+            payload = json.loads(self.APPEARANCE_CONFIG_PATH.read_text(encoding="utf-8"))
+        except Exception:
+            return
+        if not isinstance(payload, dict):
+            return
+        self._apply_appearance_payload(payload)
+
+    def _apply_appearance_payload(self, prefs: Dict[str, object]) -> None:
+        rgba = prefs.get("base_color_rgba")
+        if isinstance(rgba, list) and len(rgba) == 4 and all(isinstance(x, int) for x in rgba):
+            self.piano.base_color = QColor(*rgba)
+            self.piano.update()
+
+        chord_rgba = prefs.get("chord_color_rgba")
+        if isinstance(chord_rgba, list) and len(chord_rgba) == 4 and all(isinstance(x, int) for x in chord_rgba):
+            self.chord_text_color = QColor(*chord_rgba)
+            self.chord_window.set_chord_color(self.chord_text_color)
+
+        font_family = prefs.get("font_family")
+        if isinstance(font_family, str) and font_family:
+            self.font_combo.setCurrentFont(QFont(font_family))
+
+        font_size = prefs.get("font_size")
+        if isinstance(font_size, int):
+            self.font_size_spin.setValue(max(10, min(160, font_size)))
+
+        chord_text = prefs.get("chord_text_color")
+        if isinstance(chord_text, str):
+            text_color = QColor(chord_text)
+            if text_color.isValid():
+                self.chord_text_color = text_color
+                self.chord_window.set_chord_color(text_color)
+
+        chord_bg = prefs.get("chord_background")
+        if isinstance(chord_bg, str):
+            bg_color = QColor(chord_bg)
+            if bg_color.isValid():
+                self.chord_bg_color = bg_color
+                self.chord_window.set_background_color(bg_color)
+
+        single_bg = prefs.get("single_window_background")
+        if isinstance(single_bg, str):
+            bg_color = QColor(single_bg)
+            if bg_color.isValid():
+                self.single_window_bg_color = bg_color
+                self.piano_window.set_combined_background_color(bg_color)
+
+        display_root = prefs.get("display_root_pc")
+        if isinstance(display_root, int):
+            self._select_combo_value(self.display_root_combo, display_root % 12)
+
+        display_chord = prefs.get("display_chord_type")
+        if isinstance(display_chord, str):
+            idx = self.display_chord_combo.findData(display_chord)
+            if idx >= 0:
+                self.display_chord_combo.setCurrentIndex(idx)
+
+        display_scale = prefs.get("display_scale_type")
+        if isinstance(display_scale, str):
+            idx = self.display_scale_combo.findData(display_scale)
+            if idx >= 0:
+                self.display_scale_combo.setCurrentIndex(idx)
+
+        display_inversion = prefs.get("display_inversion")
+        if isinstance(display_inversion, int):
+            self.display_inversion_spin.setValue(max(-4, min(4, display_inversion)))
+
+        display_drop = prefs.get("display_drop")
+        if isinstance(display_drop, str):
+            idx = self.display_drop_combo.findData(display_drop)
+            if idx >= 0:
+                self.display_drop_combo.setCurrentIndex(idx)
+
+        display_transpose = prefs.get("display_transpose")
+        if isinstance(display_transpose, int):
+            self.display_transpose_spin.setValue(max(-24, min(24, display_transpose)))
+
+        display_chord_enabled = prefs.get("display_chord_enabled")
+        if isinstance(display_chord_enabled, bool):
+            self.display_chord_checkbox.setChecked(display_chord_enabled)
+
+        display_scale_enabled = prefs.get("display_scale_enabled")
+        if isinstance(display_scale_enabled, bool):
+            self.display_scale_checkbox.setChecked(display_scale_enabled)
+
+        interval_settings = prefs.get("interval_label_settings")
+        if isinstance(interval_settings, dict):
+            self._apply_interval_settings_payload(interval_settings)
+
+        staff_settings = prefs.get("staff_settings")
+        if isinstance(staff_settings, dict):
+            self.staff_settings = dict(self._default_staff_settings())
+            self.staff_settings.update({str(k): v for k, v in staff_settings.items()})
+            self._apply_staff_settings()
+
+        saved_view_mode = prefs.get("view_mode")
+        if saved_view_mode in ("single", "separate"):
+            self.set_view_mode(str(saved_view_mode), persist=False)
+
+        keyboard_labels = prefs.get("keyboard_labels_visible")
+        if isinstance(keyboard_labels, bool):
+            self.keyboard_labels_action.setChecked(keyboard_labels)
+            self.piano.set_keyboard_labels_visible(keyboard_labels)
+
+        self._update_display_overlays()
 
     def _preferences_payload(self):
         return {
