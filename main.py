@@ -4001,11 +4001,9 @@ class ControlWindow(QWidget):
         if combo is None or combo.count() <= 0:
             return False
 
-        parent = self.window() if isinstance(self.window(), QWidget) else self
-        dialog = QDialog(parent)
+        dialog = QDialog(self)
         dialog.setWindowTitle(title)
         dialog.setModal(True)
-        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
         layout = QVBoxLayout(dialog)
         list_widget = QListWidget(dialog)
@@ -4049,8 +4047,25 @@ class ControlWindow(QWidget):
 
     def _open_scale_selector_popup(self, *args, **kwargs) -> None:
         _ = (args, kwargs)
-        if self._run_selection_popup("Seleccionar escala", getattr(self, "display_scale_combo", None)):
+        combo = getattr(self, "display_scale_combo", None)
+        if self._run_selection_popup("Seleccionar escala", combo):
             return
+
+        if isinstance(combo, QComboBox) and combo.count() > 0:
+            current = max(combo.currentIndex(), 0)
+            options = [combo.itemText(i) for i in range(combo.count())]
+            selected, ok = QInputDialog.getItem(
+                self,
+                "Seleccionar escala",
+                "Escala:",
+                options,
+                current,
+                False,
+            )
+            if ok and selected in options:
+                combo.setCurrentIndex(options.index(selected))
+                return
+
         self._show_status_message("No se pudo abrir el selector de escalas.")
 
     def _toggle_scale_edit_mode(self, enabled: bool) -> None:
@@ -4234,7 +4249,7 @@ class ControlWindow(QWidget):
             intervals = SCALE_PATTERNS.get(scale_key or "")
             if intervals:
                 scale_pcs = build_scale_pcs(root_pc, intervals, transpose)
-                scale_colors: Dict[int, QColor] = {}
+                scale_notes_with_colors: List[Tuple[int, QColor]] = []
                 for idx, pc in enumerate(scale_pcs):
                     role = self._category_role_for_scale_note(str(scale_key), idx, pc, scale_pcs)
                     color_key = self._role_to_scale_color.get(role, "blue")
