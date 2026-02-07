@@ -86,5 +86,13 @@ class TestVisualStatePersistence(unittest.TestCase):
         self.assertNotIn("self.save_button", init_source)
 
 
+
+    def test_compatibility_aliases_exist_for_appearance_setters(self) -> None:
+        piano_source = self._class_method_source("PianoWidget", "set_base_color")
+        chord_window_source = self._class_method_source("ChordWindow", "set_text_color")
+
+        self.assertIn("self.base_color = QColor(color)", piano_source)
+        self.assertIn("self.set_chord_color(color)", chord_window_source)
+
 if __name__ == "__main__":
     unittest.main()

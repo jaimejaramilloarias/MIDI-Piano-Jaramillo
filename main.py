@@ -628,6 +628,13 @@ class PianoWidget(QWidget):
         self.display_scale_notes = dict(notes)
         self.update()
 
+    def set_base_color(self, color: QColor):
+        """Compatibilidad: permite fijar color base directamente."""
+        if not isinstance(color, QColor) or not color.isValid():
+            return
+        self.base_color = QColor(color)
+        self.update()
+
     def set_base_color_name(self, name: str):
         mapping = {
             "Cian": QColor(0, 200, 200),
@@ -1251,6 +1258,10 @@ class ChordWindow(QMainWindow):
 
     def set_chord_color(self, color: QColor):
         self.display_widget.set_chord_color(color)
+
+    def set_text_color(self, color: QColor):
+        """Alias de compatibilidad para código legado."""
+        self.set_chord_color(color)
 
     def set_background_color(self, color: QColor):
         self.display_widget.set_background_color(color)
