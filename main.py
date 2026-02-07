@@ -98,6 +98,12 @@ class PersistentMenu(QMenu):
             return
         super().mouseReleaseEvent(event)
 
+    def mousePressEvent(self, event):
+        if self._is_widget_action_pos(event.pos()):
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
     def focusOutEvent(self, event):
         if self._combo_popup_open:
             event.accept()
@@ -117,7 +123,6 @@ class MenuComboBox(QComboBox):
             "QListView::item:hover { background-color: rgba(59, 130, 246, 0.25); }"
             "QListView::item:selected { background-color: rgba(59, 130, 246, 0.4); }"
         )
-        view.clicked.connect(self._select_from_view_click)
         self.activated.connect(self._close_menu_after_select)
 
     def showPopup(self) -> None:
@@ -3956,13 +3961,16 @@ class ControlWindow(QWidget):
                         )
                     scale_colors[pc] = QColor(color)
 
-                octave4_start = midi_of_C(4)
-                octave4_end = octave4_start + 11
-                # Ajuste solicitado de UI: cuando se habla de "octava 4" se espera C1–B1 en esta app.
-                # Por eso mapeamos visualmente a la zona rotulada como octava 1.
-                target_start = octave4_start - 36
-                target_end = octave4_end - 36
-                for note in range(target_start, target_end + 1):
+                first_root = None
+                for note in range(self.piano.start_note, self.piano.end_note + 1):
+                    if note % 12 == root_pc:
+                        first_root = note
+                        break
+                if first_root is None:
+                    first_root = self.piano.start_note
+
+                octave_end = min(self.piano.end_note, first_root + 11)
+                for note in range(first_root, octave_end + 1):
                     pc = note % 12
                     if pc in scale_colors:
                         if self.piano.start_note <= note <= self.piano.end_note:

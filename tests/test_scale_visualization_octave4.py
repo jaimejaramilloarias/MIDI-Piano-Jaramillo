@@ -23,10 +23,9 @@ class TestScaleVisualizationOctave4(unittest.TestCase):
 
         self.assertIn("octave4_start = midi_of_C(4)", method_source)
         self.assertIn("octave4_end = octave4_start + 11", method_source)
-        self.assertIn("target_start = octave4_start - 36", method_source)
-        self.assertIn("target_end = octave4_end - 36", method_source)
-        self.assertIn("for note in range(target_start, target_end + 1):", method_source)
+        self.assertIn("for note in range(octave4_start, octave4_end + 1):", method_source)
 
 
 if __name__ == "__main__":
     unittest.main()
+
