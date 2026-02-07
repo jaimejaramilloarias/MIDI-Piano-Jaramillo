@@ -4230,12 +4230,12 @@ class ControlWindow(QWidget):
                     scale_colors[pc] = QColor(color)
 
                 octave4_start = midi_of_C(4)
-                octave4_end = octave4_start + 11
-                for note in range(octave4_start, octave4_end + 1):
+                overlay_start = max(self.piano.start_note, octave4_start)
+                overlay_end = self.piano.end_note
+                for note in range(overlay_start, overlay_end + 1):
                     pc = note % 12
                     if pc in scale_colors:
-                        if self.piano.start_note <= note <= self.piano.end_note:
-                            scale_overlays[note] = QColor(scale_colors[pc])
+                        scale_overlays[note] = QColor(scale_colors[pc])
 
         self.piano.set_display_chord_notes(chord_overlays)
         self.piano.set_display_scale_notes(scale_overlays)
