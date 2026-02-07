@@ -43,10 +43,32 @@ class TestScalePatternTranspositionBehavior(unittest.TestCase):
         method = self._class_method_source("ControlWindow", "_update_display_overlays")
         self.assertIn("scale_pcs = build_scale_pcs(root_pc, intervals, transpose)", method)
 
+    def test_scale_overrides_are_stored_by_degree_for_selected_scale(self) -> None:
+        method = self._class_method_source("ControlWindow", "_handle_scale_circle_clicked")
+        self.assertIn("role_overrides = self.scale_role_overrides.setdefault(scale_key, {})", method)
+        self.assertIn("role_overrides[int(degree_idx)] = next_role", method)
+
+    def test_scale_role_resolution_prioritizes_degree_override_without_breaking_legacy_pc(self) -> None:
+        method = self._class_method_source("ControlWindow", "_category_role_for_scale_note")
+        self.assertIn("if idx == 0:", method)
+        self.assertIn("return \"root\"", method)
+        self.assertIn("role_override = overrides.get(idx)", method)
+        self.assertIn("role_override = overrides.get(pc)", method)
+        self.assertIn("if role_override == \"root\":", method)
+
     def test_exit_edit_mode_triggers_visual_state_save(self) -> None:
         method = self._class_method_source("ControlWindow", "_toggle_scale_edit_mode")
         self.assertIn("if not self.scale_edit_mode_enabled:", method)
         self.assertIn("self._schedule_visual_state_save()", method)
+
+    def test_click_edit_keeps_root_fixed_as_green(self) -> None:
+        method = self._class_method_source("ControlWindow", "_handle_scale_circle_clicked")
+        self.assertIn("if int(degree_idx) == 0:", method)
+        self.assertIn("fundamental mantiene siempre la categoría root", method)
+
+    def test_role_cycle_excludes_root(self) -> None:
+        method = self._class_method_source("ControlWindow", "_next_scale_role")
+        self.assertIn("order = [\"stable\", \"tension\", \"critical\"]", method)
 
 
 if __name__ == "__main__":
