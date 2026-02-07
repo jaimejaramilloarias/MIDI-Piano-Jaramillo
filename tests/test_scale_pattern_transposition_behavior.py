@@ -34,34 +34,14 @@ class TestScalePatternTranspositionBehavior(unittest.TestCase):
         self.assertIn("return list(scale_pcs).index(int(note_pc) % 12)", fn)
         self.assertIn("except ValueError", fn)
 
-    def test_scale_role_resolution_helper_exists(self) -> None:
-        fn = self._function_source("resolve_scale_role")
-        self.assertIn("role_override = overrides.get(int(idx))", fn)
-        self.assertIn("if role_override in {\"root\", \"stable\", \"tension\", \"critical\"}:", fn)
-        self.assertIn("if role_override == \"root\" and int(idx) != 0:", fn)
-
-    def test_overlay_note_builder_exists_and_starts_at_c4(self) -> None:
-        fn = self._function_source("build_scale_overlay_notes")
-        self.assertIn("overlay_start = max(int(start_note), midi_of_C(4))", fn)
-        self.assertIn("target = min(int(notes_per_cycle)", fn)
-        self.assertIn("if len(picked) >= target:", fn)
-
     def test_click_edit_uses_shared_scale_pattern_helpers(self) -> None:
         method = self._class_method_source("ControlWindow", "_handle_scale_circle_clicked")
         self.assertIn("scale_pcs = build_scale_pcs(root_pc, intervals, transpose)", method)
         self.assertIn("degree_idx = degree_index_for_note_pc(note % 12, scale_pcs)", method)
-        self.assertIn("current_role = self._category_role_for_scale_note(scale_key, degree_idx, note % 12, scale_pcs)", method)
-        self.assertIn("if degree_idx == 0:", method)
-        self.assertIn("next_role = \"root\"", method)
 
     def test_overlay_generation_uses_same_scale_pattern_helper(self) -> None:
         method = self._class_method_source("ControlWindow", "_update_display_overlays")
         self.assertIn("scale_pcs = build_scale_pcs(root_pc, intervals, transpose)", method)
-        self.assertIn("overlay_notes = build_scale_overlay_notes(", method)
-
-    def test_control_window_role_method_uses_shared_resolver(self) -> None:
-        method = self._class_method_source("ControlWindow", "_category_role_for_scale_note")
-        self.assertIn("return resolve_scale_role(scale_key, idx, pc, scale_pcs, overrides)", method)
 
     def test_exit_edit_mode_triggers_visual_state_save(self) -> None:
         method = self._class_method_source("ControlWindow", "_toggle_scale_edit_mode")
