@@ -2181,7 +2181,7 @@ class ControlWindow(QWidget):
         self.refresh_inputs()
         self._populate_display_controls()
         self._apply_startup_defaults()
-        self.load_preferences()
+        self._load_default_appearance()
         self._visual_state_tracking_enabled = True
         self.range_changed(fit_window=False)
         self._apply_chord_font()
@@ -3928,8 +3928,23 @@ class ControlWindow(QWidget):
         }
 
     def save_default_appearance(self) -> None:
-        """Guarda el estado completo actual como nuevo estado predeterminado."""
-        self._write_preferences(True)
+        try:
+            self.APPEARANCE_CONFIG_PATH.write_text(
+                json.dumps(self._appearance_payload(), indent=2), encoding="utf-8"
+            )
+        except Exception as e:
+            QMessageBox.warning(
+                self,
+                "Error",
+                f"No se pudo guardar la apariencia predeterminada:\n{e}",
+            )
+            return
+
+        QMessageBox.information(
+            self,
+            "Apariencia guardada",
+            "La apariencia actual se usará como estado predeterminado al abrir la app.",
+        )
 
     def _load_default_appearance(self) -> None:
         if not self.APPEARANCE_CONFIG_PATH.exists():
@@ -3945,13 +3960,12 @@ class ControlWindow(QWidget):
     def _apply_appearance_payload(self, prefs: Dict[str, object]) -> None:
         rgba = prefs.get("base_color_rgba")
         if isinstance(rgba, list) and len(rgba) == 4 and all(isinstance(x, int) for x in rgba):
-            self.piano.base_color = QColor(*rgba)
-            self.piano.update()
+            self.piano.set_base_color(QColor(*rgba))
 
         chord_rgba = prefs.get("chord_color_rgba")
         if isinstance(chord_rgba, list) and len(chord_rgba) == 4 and all(isinstance(x, int) for x in chord_rgba):
             self.chord_text_color = QColor(*chord_rgba)
-            self.chord_window.set_chord_color(self.chord_text_color)
+            self.chord_window.set_text_color(self.chord_text_color)
 
         font_family = prefs.get("font_family")
         if isinstance(font_family, str) and font_family:
@@ -3966,7 +3980,7 @@ class ControlWindow(QWidget):
             text_color = QColor(chord_text)
             if text_color.isValid():
                 self.chord_text_color = text_color
-                self.chord_window.set_chord_color(text_color)
+                self.chord_window.set_text_color(text_color)
 
         chord_bg = prefs.get("chord_background")
         if isinstance(chord_bg, str):
