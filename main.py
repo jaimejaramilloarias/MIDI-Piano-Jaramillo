@@ -214,6 +214,56 @@ class WindowDragFilter(QObject):
 
         return False
 
+
+class PopupDragFilter(QObject):
+    """Permite arrastrar popups con click/drag desde zonas no interactivas."""
+
+    def __init__(self, target_window: QWidget):
+        super().__init__(target_window)
+        self._target_window = target_window
+        self._drag_offset: Optional[QPoint] = None
+
+    def eventFilter(self, watched: QObject, event: QEvent) -> bool:
+        if not isinstance(watched, QWidget):
+            return False
+
+        if isinstance(watched, (QPushButton, QComboBox, QSpinBox, QToolButton, QCheckBox, QFontComboBox, QListWidget)):
+            return False
+
+        if event.type() == QEvent.Type.MouseButtonPress and hasattr(event, "button"):
+            if event.button() == Qt.MouseButton.LeftButton:
+                self._drag_offset = event.globalPosition().toPoint() - self._target_window.frameGeometry().topLeft()
+        elif event.type() == QEvent.Type.MouseMove and hasattr(event, "buttons"):
+            if self._drag_offset is not None and (event.buttons() & Qt.MouseButton.LeftButton):
+                self._target_window.move(event.globalPosition().toPoint() - self._drag_offset)
+                return True
+        elif event.type() == QEvent.Type.MouseButtonRelease:
+            self._drag_offset = None
+
+        return False
+
+
+def _install_popup_drag_support(dialog: QDialog) -> None:
+    drag_filter = PopupDragFilter(dialog)
+    dialog._popup_drag_filter = drag_filter  # type: ignore[attr-defined]
+    dialog.installEventFilter(drag_filter)
+    for child in dialog.findChildren(QWidget):
+        child.installEventFilter(drag_filter)
+
+
+def _prepare_popup_dialog(dialog: QDialog) -> None:
+    dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+    dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+    _install_popup_drag_support(dialog)
+
+
+def _exec_popup_dialog(dialog: QDialog) -> int:
+    _prepare_popup_dialog(dialog)
+    dialog.show()
+    dialog.raise_()
+    dialog.activateWindow()
+    return int(dialog.exec())
+
 INTERVAL_LABELS = {
     0: "f",
     1: "9m",
@@ -4055,7 +4105,7 @@ class ControlWindow(QWidget):
         cancel_btn.clicked.connect(dialog.reject)
         list_widget.itemDoubleClicked.connect(lambda _item: dialog.accept())
 
-        if dialog.exec() != int(QDialog.DialogCode.Accepted):
+        if _exec_popup_dialog(dialog) != int(QDialog.DialogCode.Accepted):
             return False
 
         row = list_widget.currentRow()
