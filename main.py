@@ -116,25 +116,58 @@ class PersistentMenu(QMenu):
 class MenuComboBox(QComboBox):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
-        self.setMouseTracking(True)
-        view = self.view()
-        view.setMouseTracking(True)
-        view.viewport().setMouseTracking(True)
-        view.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
-        view.setStyleSheet(
-            "QListView::item:hover { background-color: rgba(59, 130, 246, 0.25); }"
-            "QListView::item:selected { background-color: rgba(59, 130, 246, 0.4); }"
-        )
         self.activated.connect(self._close_menu_after_select)
 
     def showPopup(self) -> None:
+        if self.count() <= 0:
+            return
+
         menu = self._find_menu_parent()
         if isinstance(menu, PersistentMenu):
             menu.set_combo_popup_open(True)
-        super().showPopup()
+
+        try:
+            dialog = QDialog(self)
+            dialog.setWindowTitle("Seleccionar opción")
+            dialog.setModal(True)
+
+            layout = QVBoxLayout(dialog)
+            list_widget = QListWidget(dialog)
+            for idx in range(self.count()):
+                list_widget.addItem(self.itemText(idx))
+
+            current_row = self.currentIndex()
+            if current_row < 0:
+                current_row = 0
+            if list_widget.count() > 0:
+                list_widget.setCurrentRow(current_row)
+
+            layout.addWidget(list_widget)
+
+            buttons = QHBoxLayout()
+            accept_btn = QPushButton("Aceptar", dialog)
+            cancel_btn = QPushButton("Cancelar", dialog)
+            buttons.addStretch()
+            buttons.addWidget(accept_btn)
+            buttons.addWidget(cancel_btn)
+            layout.addLayout(buttons)
+
+            accept_btn.clicked.connect(dialog.accept)
+            cancel_btn.clicked.connect(dialog.reject)
+            list_widget.itemDoubleClicked.connect(lambda _item: dialog.accept())
+
+            if dialog.exec() != int(QDialog.DialogCode.Accepted):
+                return
+
+            row = list_widget.currentRow()
+            if 0 <= row < self.count():
+                self.setCurrentIndex(row)
+                self._close_menu_after_select(row)
+        finally:
+            if isinstance(menu, PersistentMenu):
+                menu.set_combo_popup_open(False)
 
     def hidePopup(self) -> None:
-        super().hidePopup()
         menu = self._find_menu_parent()
         if isinstance(menu, PersistentMenu):
             menu.set_combo_popup_open(False)
@@ -143,14 +176,6 @@ class MenuComboBox(QComboBox):
         menu = self._find_menu_parent()
         if isinstance(menu, PersistentMenu):
             QTimer.singleShot(0, menu.close)
-
-    def _select_from_view_click(self, model_index) -> None:
-        row = int(model_index.row())
-        if row < 0:
-            return
-        self.setCurrentIndex(row)
-        self.hidePopup()
-        self._close_menu_after_select(row)
 
     def _find_menu_parent(self) -> Optional[QMenu]:
         parent = self.parentWidget()
@@ -2786,11 +2811,11 @@ class ControlWindow(QWidget):
 
         chord_row = QHBoxLayout()
         self.display_panel_chord_checkbox = QCheckBox("Mostrar acorde")
-        self.display_panel_root_combo = QComboBox()
-        self.display_panel_chord_combo = QComboBox()
+        self.display_panel_root_combo = MenuComboBox()
+        self.display_panel_chord_combo = MenuComboBox()
         self.display_panel_inversion_spin = QSpinBox()
         self.display_panel_inversion_spin.setRange(-4, 4)
-        self.display_panel_drop_combo = QComboBox()
+        self.display_panel_drop_combo = MenuComboBox()
         self.display_panel_drop_combo.addItem("No Drop", "none")
         self.display_panel_drop_combo.addItem("Drop 2", "drop2")
         self.display_panel_drop_combo.addItem("Drop 3", "drop3")
@@ -2814,7 +2839,7 @@ class ControlWindow(QWidget):
 
         scale_row = QHBoxLayout()
         self.display_panel_scale_checkbox = QCheckBox("Mostrar escala")
-        self.display_panel_scale_combo = QComboBox()
+        self.display_panel_scale_combo = MenuComboBox()
         scale_row.addWidget(self.display_panel_scale_checkbox)
         scale_row.addWidget(QLabel("Escala:"))
         scale_row.addWidget(self.display_panel_scale_combo)
@@ -4001,11 +4026,9 @@ class ControlWindow(QWidget):
         if combo is None or combo.count() <= 0:
             return False
 
-        parent = self.window() if isinstance(self.window(), QWidget) else self
-        dialog = QDialog(parent)
+        dialog = QDialog(self)
         dialog.setWindowTitle(title)
         dialog.setModal(True)
-        dialog.setWindowFlags(dialog.windowFlags() | Qt.WindowType.WindowStaysOnTopHint)
 
         layout = QVBoxLayout(dialog)
         list_widget = QListWidget(dialog)
@@ -4049,8 +4072,25 @@ class ControlWindow(QWidget):
 
     def _open_scale_selector_popup(self, *args, **kwargs) -> None:
         _ = (args, kwargs)
-        if self._run_selection_popup("Seleccionar escala", getattr(self, "display_scale_combo", None)):
+        combo = getattr(self, "display_scale_combo", None)
+        if self._run_selection_popup("Seleccionar escala", combo):
             return
+
+        if isinstance(combo, QComboBox) and combo.count() > 0:
+            current = max(combo.currentIndex(), 0)
+            options = [combo.itemText(i) for i in range(combo.count())]
+            selected, ok = QInputDialog.getItem(
+                self,
+                "Seleccionar escala",
+                "Escala:",
+                options,
+                current,
+                False,
+            )
+            if ok and selected in options:
+                combo.setCurrentIndex(options.index(selected))
+                return
+
         self._show_status_message("No se pudo abrir el selector de escalas.")
 
     def _toggle_scale_edit_mode(self, enabled: bool) -> None:
@@ -4234,7 +4274,7 @@ class ControlWindow(QWidget):
             intervals = SCALE_PATTERNS.get(scale_key or "")
             if intervals:
                 scale_pcs = build_scale_pcs(root_pc, intervals, transpose)
-                scale_colors: Dict[int, QColor] = {}
+                scale_notes_with_colors: List[Tuple[int, QColor]] = []
                 for idx, pc in enumerate(scale_pcs):
                     role = self._category_role_for_scale_note(str(scale_key), idx, pc, scale_pcs)
                     color_key = self._role_to_scale_color.get(role, "blue")
