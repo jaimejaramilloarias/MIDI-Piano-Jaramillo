@@ -156,7 +156,7 @@ class MenuComboBox(QComboBox):
             cancel_btn.clicked.connect(dialog.reject)
             list_widget.itemDoubleClicked.connect(lambda _item: dialog.accept())
 
-            if _exec_popup_dialog(dialog) != int(QDialog.DialogCode.Accepted):
+            if dialog.exec() != int(QDialog.DialogCode.Accepted):
                 return
 
             row = list_widget.currentRow()
