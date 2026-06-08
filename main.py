@@ -1,6 +1,7 @@
 
 import sys
 import json
+import time
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -16,6 +17,8 @@ from PyQt6.QtGui import (
     QFontMetricsF,
     QPainter,
     QPen,
+    QKeySequence,
+    QShortcut,
 )
 from PyQt6.QtWidgets import (
     QApplication,
@@ -39,6 +42,9 @@ from PyQt6.QtWidgets import (
     QSizePolicy,
     QListWidget,
     QDialog,
+    QTabWidget,
+    QKeySequenceEdit,
+    QStackedWidget,
 )
 import mido
 
@@ -116,6 +122,23 @@ class PersistentMenu(QMenu):
 class MenuComboBox(QComboBox):
     def __init__(self, parent: Optional[QWidget] = None):
         super().__init__(parent)
+        self.setMouseTracking(True)
+        self.setAttribute(Qt.WidgetAttribute.WA_Hover, True)
+        self.setStyleSheet(
+            "QListView::item:hover {"
+            "  background-color: #fff7ed;"
+            "  color: #1d1d1f;"
+            "}"
+            "QComboBox::drop-down {"
+            "  border: none;"
+            "  width: 0px;"
+            "}"
+            "QComboBox::down-arrow {"
+            "  image: none;"
+            "  width: 0px;"
+            "  height: 0px;"
+            "}"
+        )
         self.activated.connect(self._close_menu_after_select)
 
     def showPopup(self) -> None:
@@ -130,6 +153,7 @@ class MenuComboBox(QComboBox):
             dialog = QDialog(self)
             dialog.setWindowTitle("Seleccionar opción")
             dialog.setModal(True)
+            dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
 
             layout = QVBoxLayout(dialog)
             list_widget = QListWidget(dialog)
@@ -156,7 +180,7 @@ class MenuComboBox(QComboBox):
             cancel_btn.clicked.connect(dialog.reject)
             list_widget.itemDoubleClicked.connect(lambda _item: dialog.accept())
 
-            if dialog.exec() != int(QDialog.DialogCode.Accepted):
+            if not _dialog_accepted(_exec_popup_dialog(dialog)):
                 return
 
             row = list_widget.currentRow()
@@ -201,6 +225,14 @@ class WindowDragFilter(QObject):
 
         if isinstance(watched, (QPushButton, QComboBox, QSpinBox, QToolButton, QCheckBox, QFontComboBox)):
             return False
+
+        if event.type() == QEvent.Type.MouseButtonDblClick and hasattr(event, "button"):
+            if event.button() == Qt.MouseButton.LeftButton:
+                on_double_click = getattr(self._target_window, "on_double_click", None)
+                if callable(on_double_click):
+                    on_double_click()
+                    event.accept()
+                    return True
 
         if event.type() == QEvent.Type.MouseButtonPress and hasattr(event, "button"):
             if event.button() == Qt.MouseButton.LeftButton:
@@ -251,18 +283,164 @@ def _install_popup_drag_support(dialog: QDialog) -> None:
         child.installEventFilter(drag_filter)
 
 
-def _prepare_popup_dialog(dialog: QDialog) -> None:
+def _prepare_popup_dialog(dialog: QDialog, draggable: bool = True) -> None:
     dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
     dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
-    _install_popup_drag_support(dialog)
+    if draggable:
+        _install_popup_drag_support(dialog)
 
 
-def _exec_popup_dialog(dialog: QDialog) -> int:
-    _prepare_popup_dialog(dialog)
+def _raise_dialog_parent(parent: Optional[QWidget]) -> None:
+    if parent is None:
+        return
+    window = parent.window()
+    if window is None:
+        return
+    if window.isMinimized():
+        window.showNormal()
+    if window.isVisible():
+        window.raise_()
+        window.activateWindow()
+
+
+def _exec_popup_dialog(dialog: QDialog, draggable: bool = True) -> int:
+    _raise_dialog_parent(dialog.parentWidget())
+    _prepare_popup_dialog(dialog, draggable=draggable)
     dialog.show()
     dialog.raise_()
     dialog.activateWindow()
     return int(dialog.exec())
+
+
+def _dialog_accepted(result: int) -> bool:
+    return int(result) == int(QDialog.DialogCode.Accepted)
+
+
+def _get_popup_text(
+    parent: Optional[QWidget],
+    title: str,
+    label: str,
+    default_text: str = "",
+) -> Tuple[str, bool]:
+    dialog = QInputDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.setLabelText(label)
+    dialog.setInputMode(QInputDialog.InputMode.TextInput)
+    dialog.setTextValue(default_text)
+    if not _dialog_accepted(_exec_popup_dialog(dialog, draggable=False)):
+        return "", False
+    return str(dialog.textValue()), True
+
+
+def _get_popup_int(
+    parent: Optional[QWidget],
+    title: str,
+    label: str,
+    value: int,
+    minimum: int,
+    maximum: int,
+    step: int = 1,
+) -> Tuple[int, bool]:
+    dialog = QInputDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.setLabelText(label)
+    dialog.setInputMode(QInputDialog.InputMode.IntInput)
+    dialog.setIntRange(int(minimum), int(maximum))
+    dialog.setIntStep(int(step))
+    dialog.setIntValue(int(value))
+    if not _dialog_accepted(_exec_popup_dialog(dialog, draggable=False)):
+        return int(value), False
+    return int(dialog.intValue()), True
+
+
+def _get_popup_double(
+    parent: Optional[QWidget],
+    title: str,
+    label: str,
+    value: float,
+    minimum: float,
+    maximum: float,
+    decimals: int = 2,
+) -> Tuple[float, bool]:
+    dialog = QInputDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.setLabelText(label)
+    dialog.setInputMode(QInputDialog.InputMode.DoubleInput)
+    dialog.setDoubleRange(float(minimum), float(maximum))
+    dialog.setDoubleDecimals(int(decimals))
+    dialog.setDoubleValue(float(value))
+    if not _dialog_accepted(_exec_popup_dialog(dialog, draggable=False)):
+        return float(value), False
+    return float(dialog.doubleValue()), True
+
+
+def _get_popup_item(
+    parent: Optional[QWidget],
+    title: str,
+    label: str,
+    options: List[str],
+    current: int = 0,
+    editable: bool = False,
+) -> Tuple[str, bool]:
+    if not options:
+        return "", False
+    current = max(0, min(int(current), len(options) - 1))
+    dialog = QInputDialog(parent)
+    dialog.setWindowTitle(title)
+    dialog.setLabelText(label)
+    dialog.setComboBoxItems(options)
+    dialog.setComboBoxEditable(bool(editable))
+    dialog.setTextValue(options[current])
+    if not _dialog_accepted(_exec_popup_dialog(dialog, draggable=False)):
+        return "", False
+    return str(dialog.textValue()), True
+
+
+def _get_popup_color(parent: Optional[QWidget], initial: QColor, title: str) -> QColor:
+    dialog = QColorDialog(initial if initial.isValid() else QColor(), parent)
+    dialog.setWindowTitle(title)
+    if not _dialog_accepted(_exec_popup_dialog(dialog, draggable=False)):
+        return QColor()
+    return QColor(dialog.selectedColor())
+
+
+def _get_popup_font(parent: Optional[QWidget], initial: QFont, title: str) -> Tuple[QFont, bool]:
+    dialog = QFontDialog(initial, parent)
+    dialog.setWindowTitle(title)
+    if not _dialog_accepted(_exec_popup_dialog(dialog, draggable=False)):
+        return initial, False
+    return dialog.currentFont(), True
+
+
+def _get_popup_save_file_name(
+    parent: Optional[QWidget],
+    title: str,
+    default_path: str,
+    name_filter: str,
+) -> Tuple[str, str]:
+    dialog = QFileDialog(parent, title, default_path, name_filter)
+    dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptSave)
+    dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+    if not _dialog_accepted(_exec_popup_dialog(dialog, draggable=False)):
+        return "", ""
+    selected = dialog.selectedFiles()
+    return (selected[0] if selected else "", dialog.selectedNameFilter())
+
+
+def _get_popup_open_file_name(
+    parent: Optional[QWidget],
+    title: str,
+    default_path: str,
+    name_filter: str,
+) -> Tuple[str, str]:
+    dialog = QFileDialog(parent, title, default_path, name_filter)
+    dialog.setAcceptMode(QFileDialog.AcceptMode.AcceptOpen)
+    dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
+    dialog.setOption(QFileDialog.Option.DontUseNativeDialog, True)
+    if not _dialog_accepted(_exec_popup_dialog(dialog, draggable=False)):
+        return "", ""
+    selected = dialog.selectedFiles()
+    return (selected[0] if selected else "", dialog.selectedNameFilter())
 
 INTERVAL_LABELS = {
     0: "f",
@@ -278,6 +456,54 @@ INTERVAL_LABELS = {
     10: "7m",
     11: "7M",
 }
+
+
+def interval_label_for_context(interval: int, present_intervals: Set[int], chord_name: str = "") -> Optional[str]:
+    interval = int(interval) % 12
+    present = {int(ivl) % 12 for ivl in present_intervals}
+    name = chord_name or ""
+
+    if interval == 1:
+        return "9m"
+
+    if interval == 2:
+        if any(ivl in present for ivl in (3, 4, 5)) or any(token in name for token in ("9", "11", "13")):
+            return "9M"
+        return "sus2"
+
+    if interval == 3:
+        if "#9" in name or "♯9" in name or 4 in present:
+            return "9+"
+        return "3m"
+
+    if interval == 5:
+        if "11" in name:
+            return "11j"
+        return "4j"
+
+    if interval == 6:
+        if "b5" in name or "♭5" in name or "º" in name or "ø" in name or 3 in present:
+            return "5b"
+        if "#11" in name or "♯11" in name or 4 in present:
+            return "11+"
+        return "5b"
+
+    if interval == 8:
+        if "b13" in name or "♭13" in name or any(ivl in present for ivl in (6, 7)):
+            return "13m"
+        return "5+"
+
+    if interval == 9:
+        if "º7" in name or ("º" in name and "7" in name):
+            return "7b"
+        if "13" in name:
+            return "13"
+        if "6" in name:
+            return "6"
+        return "6"
+
+    return INTERVAL_LABELS.get(interval)
+
 
 BASE_CHORD_PATTERNS = [
     {'nombre':'', 'obligatorias':[0,4,7], 'opcionales':[]},
@@ -621,19 +847,28 @@ class PianoWidget(QWidget):
         self.end_note = MAX_NOTE
         self.pressed_notes: Set[int] = set()
         self.sustained_notes: Set[int] = set()
+        self.recent_released_notes: Dict[int, float] = {}
+        self.note_fade_duration_ms = 120
+        self._note_fade_timer = QTimer(self)
+        self._note_fade_timer.setInterval(30)
+        self._note_fade_timer.timeout.connect(self._advance_note_fades)
+        self.live_warning_notes: Set[int] = set()
+        self.live_warning_color = QColor(230, 70, 70, 180)
         self.sustain_opacity: float = 0.4  # 0.0–1.0
         self.interval_labels: Dict[int, str] = {}
         self.show_keyboard_labels = True
         self.display_chord_notes: Dict[int, QColor] = {}
         self.display_scale_notes: Dict[int, QColor] = {}
+        self.display_scale_label = ""
         self.scale_circle_size_factor: float = 1.0
         self.on_scale_circle_clicked = None
+        self.on_double_click = None
 
         # Proporción alto/ancho de una tecla blanca (alto = ancho * aspect)
         self.key_aspect_ratio = 4.5
 
         # Color base para notas presionadas
-        self.base_color = QColor("cyan")
+        self.base_color = QColor(240, 154, 0)
 
         self.setMinimumSize(300, 80)
         self.setProperty("skip_window_drag_filter", True)
@@ -699,11 +934,21 @@ class PianoWidget(QWidget):
             return
         if pressed:
             self.pressed_notes.add(note)
+            self.recent_released_notes.pop(note, None)
         else:
+            if note in self.pressed_notes:
+                self.recent_released_notes[note] = time.monotonic()
+                if not self._note_fade_timer.isActive():
+                    self._note_fade_timer.start()
             self.pressed_notes.discard(note)
         self.update()
 
     def clear_pressed(self):
+        now = time.monotonic()
+        for note in self.pressed_notes:
+            self.recent_released_notes[note] = now
+        if self.recent_released_notes and not self._note_fade_timer.isActive():
+            self._note_fade_timer.start()
         self.pressed_notes.clear()
         self.update()
 
@@ -718,6 +963,12 @@ class PianoWidget(QWidget):
 
     def clear_sustained(self):
         self.sustained_notes.clear()
+        self.update()
+
+    def set_live_warning_notes(self, notes: Set[int], color: Optional[QColor] = None):
+        self.live_warning_notes = {int(note) for note in notes if self.start_note <= int(note) <= self.end_note}
+        if color is not None and color.isValid():
+            self.live_warning_color = QColor(color)
         self.update()
 
     def set_interval_labels(self, labels: Dict[int, str]):
@@ -740,6 +991,10 @@ class PianoWidget(QWidget):
         self.display_scale_notes = dict(notes)
         self.update()
 
+    def set_display_scale_label(self, label: str):
+        self.display_scale_label = str(label or "")
+        self.update()
+
     def set_scale_circle_size_factor(self, factor: float) -> None:
         self.scale_circle_size_factor = max(0.5, min(2.0, float(factor)))
         self.update()
@@ -757,13 +1012,35 @@ class PianoWidget(QWidget):
             "Azul": QColor(80, 160, 255),
             "Verde": QColor(80, 220, 140),
             "Rojo": QColor(230, 80, 80),
-            "Naranja": QColor(240, 160, 60),
+            "Naranja": QColor(240, 154, 0),
             "Morado": QColor(180, 100, 220),
         }
         self.base_color = mapping.get(name, QColor("cyan"))
         self.update()
 
     # --- helpers internos ---
+
+    def _advance_note_fades(self):
+        now = time.monotonic()
+        duration = max(1, int(self.note_fade_duration_ms)) / 1000.0
+        expired = [note for note, started in self.recent_released_notes.items() if now - started >= duration]
+        for note in expired:
+            self.recent_released_notes.pop(note, None)
+        if not self.recent_released_notes:
+            self._note_fade_timer.stop()
+        self.update()
+
+    def _released_fade_color_for(self, note: int, is_black_key: bool) -> Optional[QColor]:
+        started = self.recent_released_notes.get(note)
+        if started is None or note in self.pressed_notes or note in self.sustained_notes:
+            return None
+        duration = max(1, int(self.note_fade_duration_ms)) / 1000.0
+        factor = 1.0 - ((time.monotonic() - started) / duration)
+        if factor <= 0:
+            return None
+        color = self._pressed_color_for(note, is_black_key)
+        color.setAlpha(max(0, min(160, int(color.alpha() * factor * 0.65))))
+        return color
 
     def _note_factor(self, note: int) -> float:
         """Devuelve un factor 0.6–1.0 según la posición relativa de la nota en el rango."""
@@ -773,13 +1050,9 @@ class PianoWidget(QWidget):
         return 0.6 + 0.4 * rel
 
     def _pressed_color_for(self, note: int, is_black_key: bool) -> QColor:
-        base = self.base_color
-        h, s, v, a = base.getHsv()
-        factor = self._note_factor(note)
-        if is_black_key:
-            factor *= 0.8
-        new_v = max(50, min(int(v * factor), 255))
-        return QColor.fromHsv(h, s, new_v, a)
+        if note in self.live_warning_notes:
+            return QColor(self.live_warning_color)
+        return QColor(self.base_color)
 
 
     def _sustain_color_for(self, note: int, is_black_key: bool) -> QColor:
@@ -917,6 +1190,13 @@ class PianoWidget(QWidget):
         self._resize_start_size = None
         super().mouseReleaseEvent(event)
 
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and callable(self.on_double_click):
+            self.on_double_click()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
     # --- dibujo ---
 
     def set_force_full_width(self, enabled: bool) -> None:
@@ -982,6 +1262,14 @@ class PianoWidget(QWidget):
                 painter.setBrush(QBrush(Qt.GlobalColor.white))
 
             painter.drawRect(key_rect)
+            fade_color = self._released_fade_color_for(n, False)
+            if fade_color is not None:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(fade_color))
+                painter.drawRect(key_rect.adjusted(1.0, 1.0, -1.0, -1.0))
+                painter.setPen(QPen(Qt.GlobalColor.black))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRect(key_rect)
 
         # Superposiciones de acordes y escalas (visualización) en teclas blancas
         if self.display_chord_notes or self.display_scale_notes:
@@ -1051,6 +1339,14 @@ class PianoWidget(QWidget):
                 painter.setBrush(QBrush(Qt.GlobalColor.black))
             painter.setPen(QPen(Qt.GlobalColor.black))
             painter.drawRect(key_rect)
+            fade_color = self._released_fade_color_for(n, True)
+            if fade_color is not None:
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QBrush(fade_color))
+                painter.drawRect(key_rect.adjusted(1.0, 1.0, -1.0, -1.0))
+                painter.setPen(QPen(Qt.GlobalColor.black))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRect(key_rect)
 
         # Superposiciones de acordes y escalas (visualización) en teclas negras
         if self.display_chord_notes or self.display_scale_notes:
@@ -1117,6 +1413,49 @@ class PianoWidget(QWidget):
                 painter.setPen(QPen(text_color))
                 painter.drawText(label_zone, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, label)
 
+        self._draw_display_scale_label(painter)
+
+    def _draw_display_scale_label(self, painter: QPainter):
+        label = self.display_scale_label.strip()
+        if not label:
+            return
+
+        painter.save()
+        font = QFont("Avenir Next")
+        font.setPointSize(max(15, min(26, int(self.height() * 0.085))))
+        font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(font)
+        metrics = painter.fontMetrics()
+
+        margin = 14.0
+        padding_x = 12.0
+        padding_y = 7.0
+        max_width = max(80.0, float(self.width()) - margin * 2)
+        text_limit = max(30, int(max_width - padding_x * 2))
+        visible_label = metrics.elidedText(
+            label,
+            Qt.TextElideMode.ElideRight,
+            text_limit,
+        )
+        text_width = metrics.horizontalAdvance(visible_label)
+        rect = QRectF(
+            margin,
+            margin,
+            min(max_width, float(text_width) + padding_x * 2),
+            float(metrics.height()) + padding_y * 2,
+        )
+
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QBrush(QColor(0, 0, 0, 190)))
+        painter.drawRoundedRect(rect, 6, 6)
+        painter.setPen(QPen(QColor(255, 255, 255)))
+        painter.drawText(
+            rect.adjusted(padding_x, 0, -padding_x, 0),
+            Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+            visible_label,
+        )
+        painter.restore()
+
     def _interval_label_zone(
         self,
         key_rect: QRectF,
@@ -1167,15 +1506,15 @@ class PianoWidget(QWidget):
         return chosen
 
     def _keyboard_label_font_size(self, key_width: float, key_height: float) -> int:
-        size = min(key_width * 0.48, key_height * 0.09)
+        size = min(key_width * 0.25, key_height * 0.048)
         return max(5, int(size))
 
     def _interval_label_font_size(self, key_width: float, key_height: float) -> int:
         settings = self.interval_label_settings or {}
-        base_size = float(settings.get("font_size", 14))
-        max_size = min(key_width * 0.8, key_height * 0.25)
+        base_size = float(settings.get("font_size", 14)) * 0.88
+        max_size = min(key_width * 0.68, key_height * 0.21)
         size = min(base_size, max_size)
-        return max(6, int(size))
+        return max(5, int(size))
 
     def _draw_interval_frame(self, painter: QPainter, rect: QRectF):
         settings = self.interval_label_settings or {}
@@ -1219,6 +1558,7 @@ class PianoWindow(QMainWindow):
 
         self._combined_container: Optional[QWidget] = None
         self._combined_background = QColor(Qt.GlobalColor.white)
+        self.on_double_click = None
         self._drag_filter = WindowDragFilter(self)
         self._install_drag_support(self.piano)
         self._apply_frameless(True)
@@ -1279,6 +1619,7 @@ class PianoWindow(QMainWindow):
         staff_widget: QWidget,
         chord_widget: QWidget,
         display_panel: Optional[QWidget],
+        keyboard_nav_panel: Optional[QWidget] = None,
     ) -> None:
         if self._combined_container is not None:
             self._combined_container.setParent(None)
@@ -1306,8 +1647,11 @@ class PianoWindow(QMainWindow):
         top_layout.addWidget(staff_widget, stretch=1)
         top_layout.addWidget(chord_widget, stretch=3)
 
-        layout.addLayout(top_layout, stretch=1)
-        layout.addWidget(self.piano, stretch=1)
+        self.piano.setMinimumHeight(300)
+        layout.addLayout(top_layout, stretch=2)
+        layout.addWidget(self.piano, stretch=3)
+        if keyboard_nav_panel is not None:
+            layout.addWidget(keyboard_nav_panel)
         container.setLayout(layout)
         self.setCentralWidget(container)
         self._combined_container = container
@@ -1315,8 +1659,15 @@ class PianoWindow(QMainWindow):
         container.setStyleSheet(f"background: {self._combined_background.name()}; border: none;")
 
         self.setWindowTitle("MIDI Piano — Vista única")
-        self._apply_frameless(True)
-        self.resize(1200, 820)
+        self._apply_frameless(False)
+        self.resize(1280, 900)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton and callable(self.on_double_click):
+            self.on_double_click()
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
 
 
 
@@ -1331,20 +1682,21 @@ class ChordDisplayWidget(QWidget):
         self.main_label = QLabel("")
         self.main_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.main_label.setStyleSheet("background: transparent;")
-        self.main_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.main_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
         self.main_label.setMinimumWidth(0)
 
         self.alt_label = QLabel("")
         self.alt_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.alt_label.setStyleSheet("color: #ffffff; background: transparent;")
-        self.alt_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        self.alt_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.alt_label.setMinimumWidth(0)
+        self.alt_label.setContentsMargins(8, 0, 0, 0)
 
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(2)
         layout.addWidget(self.main_label, stretch=0)
-        layout.addWidget(self.alt_label, stretch=0)
+        layout.addWidget(self.alt_label, stretch=1)
         self.setLayout(layout)
 
         self.set_font_from_family_size("Avenir Next", 80)
@@ -1355,11 +1707,11 @@ class ChordDisplayWidget(QWidget):
         """Actualiza la fuente del cifrado principal y alternativo."""
         size = int(size)
 
-        main_font = QFont(family, size)
+        main_font = QFont(family, max(10, int(size * 1.35)))
         main_font.setWeight(QFont.Weight.Medium)
         self.main_label.setFont(main_font)
 
-        alt_size = max(10, int(size * 0.35))
+        alt_size = max(14, int(size * 0.60))
         alt_font = QFont(family, alt_size)
         alt_font.setWeight(QFont.Weight.Normal)
         self.alt_label.setFont(alt_font)
@@ -1646,65 +1998,39 @@ class StaffWidget(QWidget):
             return offsets
 
         collision_scale = float(self.staff_settings.get("collision_x_offset_scale", 1.0))
-        dx = note_head_width * 0.6 * collision_scale
+        second_contact_dx = note_head_width * 0.42
+        dx = second_contact_dx * collision_scale
         unison_dx = note_head_width * 0.9 * collision_scale
 
-        def apply_offsets(group: List[Tuple[int, int]]):
-            group.sort(key=lambda pair: pair[1])  # grave → aguda
-            step_map: Dict[int, List[int]] = {}
-            for note, step in group:
-                step_map.setdefault(step, []).append(note)
+        step_map: Dict[int, List[int]] = {}
+        for note in notes:
+            step_map.setdefault(note_steps.get(note, 0), []).append(note)
 
-            for step, notes_in_step in step_map.items():
-                if len(notes_in_step) > 1:
-                    notes_in_step.sort()
-                    start = -unison_dx * (len(notes_in_step) - 1) / 2.0
-                    for index, note in enumerate(notes_in_step):
-                        offsets[note] = start + index * unison_dx
+        unique_steps = sorted(step_map.keys())
+        index = 0
+        while index < len(unique_steps):
+            run_steps = [unique_steps[index]]
+            while (
+                index + 1 < len(unique_steps)
+                and unique_steps[index + 1] - unique_steps[index] == 1
+            ):
+                index += 1
+                run_steps.append(unique_steps[index])
 
-            unique_steps = sorted(step_map.keys())
-            shift_steps: Set[int] = set()
-            index = 0
-            while index < len(unique_steps):
-                run_end = index
-                while (
-                    run_end + 1 < len(unique_steps)
-                    and unique_steps[run_end + 1] - unique_steps[run_end] == 1
-                ):
-                    run_end += 1
-                if run_end > index:
-                    for shift_index in range(index + 1, run_end + 1, 2):
-                        shift_steps.add(unique_steps[shift_index])
-                index = run_end + 1
+            if len(run_steps) > 1:
+                for run_index, step in enumerate(run_steps):
+                    base_offset = -dx if run_index % 2 == 0 else dx
+                    for note in step_map[step]:
+                        offsets[note] += base_offset
+            index += 1
 
-            for note, step in group:
-                if step in shift_steps:
-                    offsets[note] += dx
-
-        treble_group: List[Tuple[int, int]] = []
-        bass_group: List[Tuple[int, int]] = []
-        for n in notes:
-            step = note_steps.get(n, 0)
-            if step >= 0:
-                treble_group.append((n, step))
-            else:
-                bass_group.append((n, step))
-
-        apply_offsets(treble_group)
-        apply_offsets(bass_group)
-
-        treble_steps = {}
-        bass_steps = {}
-        for note, step in treble_group:
-            treble_steps.setdefault(step, []).append(note)
-        for note, step in bass_group:
-            bass_steps.setdefault(step, []).append(note)
-
-        for step, notes_in_step in treble_steps.items():
-            neighbor = step - 1
-            if neighbor in bass_steps:
-                for note in notes_in_step:
-                    offsets[note] += dx
+        for _step, notes_in_step in step_map.items():
+            if len(notes_in_step) <= 1:
+                continue
+            notes_in_step.sort()
+            start = -unison_dx * (len(notes_in_step) - 1) / 2.0
+            for note_index, note in enumerate(notes_in_step):
+                offsets[note] += start + note_index * unison_dx
 
         return offsets
 
@@ -2055,28 +2381,6 @@ class StaffWidget(QWidget):
                 head_width,
             )
 
-        label_texts = [note_spellings.get(note, NOTE_NAMES[note % 12]) for note in sorted(self.notes)]
-        if label_texts:
-            label_scale = max(0.6, float(self.staff_settings.get("label_font_scale", 1.0)))
-            label_font_family = str(self.staff_settings.get("label_font_family", "")).strip() or "Arial"
-            label_font = QFont(label_font_family, int(staff_spacing * 1.1 * label_scale))
-            painter.setFont(label_font)
-            label_color = self._color_from_setting("label_color", QColor(Qt.GlobalColor.black))
-            painter.setPen(QPen(label_color))
-            label_text = ", ".join(label_texts)
-            staff_bottom = bass_top + staff_spacing * 4
-            label_rect = QRectF(
-                line_start + label_x_offset + content_x_offset,
-                staff_bottom + staff_spacing * 0.9 + label_y_offset,
-                max(0.0, line_end - line_start),
-                staff_spacing * 1.6,
-            )
-            painter.drawText(
-                label_rect,
-                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
-                label_text,
-            )
-
 
 class StaffWindow(QMainWindow):
     """Ventana flotante con notación de endecagrama."""
@@ -2170,8 +2474,10 @@ class ControlWindow(QWidget):
         self.interval_label_settings = self._default_interval_label_settings()
         self.custom_chord_spellings: Dict[Tuple[int, ...], Dict[int, str]] = {}
         self.custom_chord_quality_spellings: Dict[str, Dict[int, Dict[str, object]]] = {}
-        self.display_chord_color = QColor(80, 160, 255, 140)
+        self.display_chord_color = QColor(0, 122, 255, 190)
+        self.display_chord_root_color = QColor(52, 199, 89, 190)
         self.display_chord_warning_color = QColor(230, 70, 70, 180)
+        self.display_chord_interval_labels: Dict[int, str] = {}
         self.display_scale_colors = {
             "green": QColor(60, 200, 120, 200),
             "blue": QColor(60, 120, 240, 200),
@@ -2193,6 +2499,23 @@ class ControlWindow(QWidget):
             "tension": "orange",
             "critical": "red",
         }
+        self._scale_role_labels = {
+            "root": "Fundamental",
+            "stable": "Estructural",
+            "tension": "Tensión disponible",
+            "critical": "Nota evitada",
+        }
+        self._scale_palette_buttons: List[Tuple[str, QPushButton]] = []
+        self._visual_save_state = "Guardado"
+        self._last_status_message = ""
+        self._status_message_timer = QTimer(self)
+        self._status_message_timer.setSingleShot(True)
+        self._status_message_timer.timeout.connect(self._clear_transient_status_message)
+        self._presentation_mode_enabled = False
+        self._presentation_previous_mode = DEFAULT_VIEW_MODE
+        self._presentation_previous_fullscreen = False
+        self._shortcut_objects: List[QShortcut] = []
+        self._shortcut_overrides: Dict[str, str] = {}
         self.jazzscope_chords = self._load_jazzscope_chord_library()
         self.capture_timer = QTimer()
         self.capture_timer.setSingleShot(True)
@@ -2204,6 +2527,8 @@ class ControlWindow(QWidget):
         self._visual_state_save_timer.setSingleShot(True)
         self._visual_state_save_timer.timeout.connect(self._persist_visual_state)
         self.piano.on_scale_circle_clicked = self._handle_scale_circle_clicked
+        self.piano.on_double_click = self._toggle_single_fullscreen_from_double_click
+        self.piano_window.on_double_click = self._toggle_single_fullscreen_from_double_click
 
         # Widgets
         self.input_combo = MenuComboBox()
@@ -2255,13 +2580,28 @@ class ControlWindow(QWidget):
 
         # Layout
         top_layout = QVBoxLayout()
+        self.main_status_strip = self._build_compact_status_label()
+        top_layout.addWidget(self.main_status_strip)
+        self.primary_controls_tabs = QTabWidget()
+        midi_tab = QWidget()
+        midi_layout = QVBoxLayout()
+        midi_layout.setContentsMargins(6, 6, 6, 6)
+        keyboard_tab = QWidget()
+        keyboard_layout = QVBoxLayout()
+        keyboard_layout.setContentsMargins(6, 6, 6, 6)
+        appearance_tab = QWidget()
+        appearance_layout = QVBoxLayout()
+        appearance_layout.setContentsMargins(6, 6, 6, 6)
+        learn_tab = QWidget()
+        learn_layout = QVBoxLayout()
+        learn_layout.setContentsMargins(6, 6, 6, 6)
 
         # Fila 1: MIDI
         row1 = QHBoxLayout()
         row1.addWidget(QLabel("MIDI In:"))
         row1.addWidget(self.input_combo)
         row1.addWidget(self.refresh_button)
-        top_layout.addLayout(row1)
+        midi_layout.addLayout(row1)
 
         # Fila 2: rango por octavas
         row2 = QHBoxLayout()
@@ -2269,24 +2609,24 @@ class ControlWindow(QWidget):
         row2.addWidget(self.start_combo)
         row2.addWidget(QLabel("Octavas:"))
         row2.addWidget(self.octaves_spin)
-        top_layout.addLayout(row2)
+        keyboard_layout.addLayout(row2)
 
         # Fila 3: color
         row3 = QHBoxLayout()
         row3.addWidget(QLabel("Color base notas:"))
         row3.addWidget(self.color_button)
-        top_layout.addLayout(row3)
+        appearance_layout.addLayout(row3)
 
         # Fila 4: color de cifrado
         row3b = QHBoxLayout()
         row3b.addWidget(QLabel("Color del cifrado:"))
         row3b.addWidget(self.chord_color_button)
-        top_layout.addLayout(row3b)
+        appearance_layout.addLayout(row3b)
 
         row3c = QHBoxLayout()
         row3c.addWidget(QLabel("Fondo de acordes:"))
         row3c.addWidget(self.chord_bg_button)
-        top_layout.addLayout(row3c)
+        appearance_layout.addLayout(row3c)
 
         # Fila 4: fuente acordes
         row4 = QHBoxLayout()
@@ -2294,21 +2634,20 @@ class ControlWindow(QWidget):
         row4.addWidget(self.font_combo)
         row4.addWidget(QLabel("Tamaño:"))
         row4.addWidget(self.font_size_spin)
-        top_layout.addLayout(row4)
+        appearance_layout.addLayout(row4)
 
         # Fila 5: botones de ventana
         row5 = QHBoxLayout()
-        row5.addWidget(self.always_on_top)
         row5.addWidget(self.export_button)
         row5.addStretch()
-        top_layout.addLayout(row5)
+        appearance_layout.addLayout(row5)
 
         # Fila 6: Midi learn
         self.learn_button = QPushButton("Midi learn: nuevo cifrado")
         row6 = QHBoxLayout()
         row6.addWidget(self.learn_button)
         row6.addStretch()
-        top_layout.addLayout(row6)
+        learn_layout.addLayout(row6)
 
         # Fila 7: duración ventana de captura para Midi learn
         capture_row = QHBoxLayout()
@@ -2319,17 +2658,21 @@ class ControlWindow(QWidget):
         self.capture_window_spin.setValue(self.capture_window_ms)
         capture_row.addWidget(self.capture_window_spin)
         capture_row.addStretch()
-        top_layout.addLayout(capture_row)
+        learn_layout.addLayout(capture_row)
 
         # Visualización de acordes y escalas (pregrabados) se configura en el menú superior
         self.display_chord_checkbox = QCheckBox("Mostrar acorde")
-        self.display_root_combo = MenuComboBox()
-        self.display_chord_combo = MenuComboBox()
-        self.display_chord_popup_button = QPushButton("Seleccionar acorde…")
+        self.display_root_combo = QComboBox()
+        self.display_root_combo.setFixedWidth(92)
+        self.display_chord_combo = QComboBox()
+        self.display_chord_combo.setMinimumWidth(230)
+        self.display_chord_combo.setMinimumContentsLength(18)
         self.display_inversion_spin = QSpinBox()
         self.display_inversion_spin.setRange(-4, 4)
         self.display_inversion_spin.setValue(0)
-        self.display_drop_combo = MenuComboBox()
+        self.display_inversion_spin.setFixedWidth(58)
+        self.display_drop_combo = QComboBox()
+        self.display_drop_combo.setFixedWidth(112)
         self.display_drop_combo.addItem("No Drop", "none")
         self.display_drop_combo.addItem("Drop 2", "drop2")
         self.display_drop_combo.addItem("Drop 3", "drop3")
@@ -2338,24 +2681,40 @@ class ControlWindow(QWidget):
         self.display_transpose_spin.setRange(-24, 24)
         self.display_transpose_spin.setValue(0)
         self.display_scale_checkbox = QCheckBox("Mostrar escala")
-        self.display_scale_combo = MenuComboBox()
-        self.display_scale_popup_button = QPushButton("Seleccionar escala…")
+        self.display_scale_combo = QComboBox()
+        self.display_scale_combo.setMinimumWidth(300)
+        self.display_scale_combo.setMinimumContentsLength(26)
         self.view_mode = "separate"
         self._syncing_display_panel = False
 
         self._setup_window_menu()
         self.display_panel_widget = self._build_display_panel()
+        self.keyboard_nav_panel = self._build_keyboard_navigation_panel()
 
         self._load_external_chord_dictionary()
 
         # Lista de acordes aprendidos
-        top_layout.addWidget(QLabel("Acordes aprendidos:"))
+        learn_layout.addWidget(QLabel("Acordes aprendidos:"))
         self.learned_chords_container = QWidget()
         self.learned_chords_layout = QVBoxLayout()
         self.learned_chords_layout.setContentsMargins(0, 0, 0, 0)
         self.learned_chords_layout.setSpacing(6)
         self.learned_chords_container.setLayout(self.learned_chords_layout)
-        top_layout.addWidget(self.learned_chords_container)
+        learn_layout.addWidget(self.learned_chords_container)
+
+        midi_layout.addStretch()
+        keyboard_layout.addStretch()
+        appearance_layout.addStretch()
+        learn_layout.addStretch()
+        midi_tab.setLayout(midi_layout)
+        keyboard_tab.setLayout(keyboard_layout)
+        appearance_tab.setLayout(appearance_layout)
+        learn_tab.setLayout(learn_layout)
+        self.primary_controls_tabs.addTab(midi_tab, "MIDI")
+        self.primary_controls_tabs.addTab(keyboard_tab, "Teclado")
+        self.primary_controls_tabs.addTab(appearance_tab, "Apariencia")
+        self.primary_controls_tabs.addTab(learn_tab, "Aprender")
+        top_layout.addWidget(self.primary_controls_tabs)
 
         self.setLayout(top_layout)
 
@@ -2374,7 +2733,6 @@ class ControlWindow(QWidget):
         self._connect_signal_handler(self.chord_bg_button.clicked, "choose_chord_background", self.chord_bg_button, "Fondo de acordes")
         self._connect_signal_handler(self.font_combo.currentFontChanged, "font_changed", self.font_combo, "Fuente")
         self._connect_signal_handler(self.font_size_spin.valueChanged, "font_size_changed", self.font_size_spin, "Tamaño de fuente")
-        self._connect_signal_handler(self.always_on_top.toggled, "toggle_on_top", self.always_on_top, "Siempre al frente")
         self._connect_signal_handler(self.export_button.clicked, "export_chord_dictionary", self.export_button, "Exportar diccionario")
         self._connect_signal_handler(self.learn_button.clicked, "start_learning_mode", self.learn_button, "Midi learn")
         self._connect_signal_handler(self.display_chord_checkbox.toggled, "_update_display_overlays", self.display_chord_checkbox, "Mostrar acorde")
@@ -2384,12 +2742,13 @@ class ControlWindow(QWidget):
         self._connect_signal_handler(self.display_scale_combo.currentIndexChanged, "_update_display_overlays", self.display_scale_combo, "Escala")
         self._connect_signal_handler(self.display_chord_combo.currentIndexChanged, "_sync_selector_button_labels", self.display_chord_combo, "Sincronizar selector de acordes")
         self._connect_signal_handler(self.display_scale_combo.currentIndexChanged, "_sync_selector_button_labels", self.display_scale_combo, "Sincronizar selector de escalas")
-        self._connect_signal_handler(self.display_chord_popup_button.clicked, "_open_chord_selector_popup", self.display_chord_popup_button, "Seleccionar acorde")
-        self._connect_signal_handler(self.display_scale_popup_button.clicked, "_open_scale_selector_popup", self.display_scale_popup_button, "Seleccionar escala")
+        self.display_chord_combo.currentIndexChanged.connect(lambda _idx: self._set_display_enabled_from_selection("chord"))
+        self.display_scale_combo.currentIndexChanged.connect(lambda _idx: self._set_display_enabled_from_selection("scale"))
         self._connect_signal_handler(self.display_inversion_spin.valueChanged, "_update_display_overlays", self.display_inversion_spin, "Inversión")
         self._connect_signal_handler(self.display_drop_combo.currentIndexChanged, "_update_display_overlays", self.display_drop_combo, "Drop")
         self._connect_signal_handler(self.display_transpose_spin.valueChanged, "_update_display_overlays", self.display_transpose_spin, "Transposición")
         self._connect_display_panel_signals()
+        self._connect_keyboard_navigation_signals()
 
         # Timer para leer MIDI
 
@@ -2406,6 +2765,7 @@ class ControlWindow(QWidget):
         self._populate_display_controls()
         self._apply_startup_defaults()
         self._load_default_appearance()
+        self._install_shortcuts()
         self._visual_state_tracking_enabled = True
         self.range_changed(fit_window=False)
         self._apply_chord_font()
@@ -2425,7 +2785,63 @@ class ControlWindow(QWidget):
             widget.setEnabled(False)
             widget.setToolTip(f"Deshabilitado: falta handler '{handler_name}'.")
 
+    def _build_compact_status_label(self) -> QLabel:
+        label = QLabel()
+        label.setWordWrap(False)
+        label.setMinimumHeight(26)
+        label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        label.setStyleSheet(
+            "QLabel {"
+            "  font-family: 'Avenir Next', 'Helvetica Neue', Arial, sans-serif;"
+            "  font-size: 13px;"
+            "  color: #1d1d1f;"
+            "  background-color: rgba(248, 250, 252, 232);"
+            "  border: 1px solid #cbd5e1;"
+            "  border-radius: 5px;"
+            "  padding: 4px 10px;"
+            "}"
+        )
+        return label
+
+    def _current_keyboard_range_text(self) -> str:
+        return f"{midi_to_name(self.piano.start_note)}-{midi_to_name(self.piano.end_note)}"
+
+    def _current_display_status_text(self) -> str:
+        root = str(self.display_root_combo.currentText() or "-").strip() or "-"
+        chord = str(self.display_chord_combo.currentText() or "-").strip() or "-"
+        scale = str(self.display_scale_combo.currentText() or "-").strip() or "-"
+        mode_parts = []
+        if self.display_chord_checkbox.isChecked() and chord != "-":
+            mode_parts.append(f"Acorde {root} {chord}")
+        if self.display_scale_checkbox.isChecked() and scale != "-":
+            mode_parts.append(f"Escala {root} {scale}")
+        mode = " + ".join(mode_parts) if mode_parts else "MIDI en vivo"
+        return (
+            f"Midi Piano Jaramillo   |   {mode}   |   "
+            f"Inv {int(self.display_inversion_spin.value())}   |   "
+            f"{self.display_drop_combo.currentText()}   |   "
+            f"{int(self.octaves_spin.value())} oct. {self._current_keyboard_range_text()}   |   "
+            f"{self._visual_save_state}"
+        )
+
+    def _update_status_strip(self) -> None:
+        text = self._current_display_status_text()
+        if self._last_status_message:
+            text = f"{text}   |   {self._last_status_message}"
+        for attr in ("main_status_strip", "display_panel_status_strip"):
+            label = getattr(self, attr, None)
+            if isinstance(label, QLabel):
+                label.setText(text)
+                label.setToolTip(text)
+
+    def _clear_transient_status_message(self) -> None:
+        self._last_status_message = ""
+        self._update_status_strip()
+
     def _show_status_message(self, text: str, timeout_ms: int = 6000) -> None:
+        self._last_status_message = str(text)
+        self._status_message_timer.start(max(250, int(timeout_ms)))
+        self._update_status_strip()
         window = self.window()
         status_bar = None
         if hasattr(window, "statusBar"):
@@ -2446,11 +2862,131 @@ class ControlWindow(QWidget):
     def _prompt_text_foreground(self, title: str, label: str, default_text: str = "") -> Tuple[str, bool]:
         parent = self.window() if isinstance(self.window(), QWidget) else self
         try:
-            text, ok = QInputDialog.getText(parent, title, label, text=default_text)
+            text, ok = _get_popup_text(parent, title, label, default_text)
         except Exception as exc:
             self._show_status_message(f"Midi learn: no se pudo abrir el diálogo ({exc}).")
             return "", False
         return str(text), bool(ok)
+
+    def _shortcut_definitions(self) -> Dict[str, Tuple[str, str, object]]:
+        return {
+            "presentation": ("Modo presentación", "Ctrl+Shift+P", self._toggle_presentation_shortcut),
+            "rearrange": ("Reacomodar ventanas", "Ctrl+0", self.rearrange_windows),
+            "fullscreen": ("Pantalla completa vista única", "F11", self._toggle_single_fullscreen_shortcut),
+            "octave_down": ("Teclado una octava abajo", "Ctrl+Left", lambda: self._shift_visible_keyboard_octave(-1)),
+            "octave_up": ("Teclado una octava arriba", "Ctrl+Right", lambda: self._shift_visible_keyboard_octave(1)),
+            "add_octave": ("Agregar octava visible", "Ctrl+Up", lambda: self._change_visible_octaves(1)),
+            "remove_octave": ("Quitar octava visible", "Ctrl+Down", lambda: self._change_visible_octaves(-1)),
+            "toggle_scale": ("Mostrar/ocultar escala", "Ctrl+Shift+S", self._toggle_scale_display_shortcut),
+            "toggle_chord": ("Mostrar/ocultar acorde", "Ctrl+Shift+C", self._toggle_chord_display_shortcut),
+            "keyboard_labels": ("Etiquetas del teclado", "Ctrl+L", self._toggle_keyboard_labels_shortcut),
+        }
+
+    def _shortcut_sequence_for(self, key: str) -> str:
+        definitions = self._shortcut_definitions()
+        default = definitions.get(key, ("", "", None))[1]
+        value = str(self._shortcut_overrides.get(key) or default).strip()
+        return value
+
+    def _install_shortcuts(self) -> None:
+        for shortcut in self._shortcut_objects:
+            shortcut.setParent(None)
+        self._shortcut_objects = []
+        for key, (_label, _default, callback) in self._shortcut_definitions().items():
+            sequence = self._shortcut_sequence_for(key)
+            if not sequence:
+                continue
+            try:
+                shortcut = QShortcut(QKeySequence(sequence), self.piano_window)
+            except Exception:
+                continue
+            shortcut.setContext(Qt.ShortcutContext.ApplicationShortcut)
+            shortcut.activated.connect(callback)
+            self._shortcut_objects.append(shortcut)
+        self._sync_shortcut_action_labels()
+
+    def _shortcut_hint(self, key: str) -> str:
+        sequence = self._shortcut_sequence_for(key)
+        return f" ({sequence})" if sequence else ""
+
+    def _sync_shortcut_action_labels(self) -> None:
+        if hasattr(self, "rearrange_action"):
+            self.rearrange_action.setText(f"Reacomodar ventanas{self._shortcut_hint('rearrange')}")
+        if hasattr(self, "single_fullscreen_action"):
+            self.single_fullscreen_action.setText(
+                f"Pantalla completa (vista única){self._shortcut_hint('fullscreen')}"
+            )
+        if hasattr(self, "presentation_action"):
+            self.presentation_action.setText(f"Modo presentación{self._shortcut_hint('presentation')}")
+        if hasattr(self, "keyboard_labels_action"):
+            self.keyboard_labels_action.setText(f"Etiquetas del teclado{self._shortcut_hint('keyboard_labels')}")
+        if hasattr(self, "display_scale_checkbox"):
+            self.display_scale_checkbox.setToolTip(f"Atajo: {self._shortcut_sequence_for('toggle_scale')}")
+        if hasattr(self, "display_chord_checkbox"):
+            self.display_chord_checkbox.setToolTip(f"Atajo: {self._shortcut_sequence_for('toggle_chord')}")
+
+    def _toggle_presentation_shortcut(self) -> None:
+        self.presentation_action.setChecked(not self.presentation_action.isChecked())
+
+    def _toggle_single_fullscreen_shortcut(self) -> None:
+        if self.view_mode != "single":
+            self.set_view_mode("single")
+        self.single_fullscreen_action.setChecked(not self.piano_window.isFullScreen())
+
+    def _toggle_scale_display_shortcut(self) -> None:
+        self.display_scale_checkbox.setChecked(not self.display_scale_checkbox.isChecked())
+
+    def _toggle_chord_display_shortcut(self) -> None:
+        self.display_chord_checkbox.setChecked(not self.display_chord_checkbox.isChecked())
+
+    def _toggle_keyboard_labels_shortcut(self) -> None:
+        self.keyboard_labels_action.setChecked(not self.keyboard_labels_action.isChecked())
+
+    def _open_shortcuts_dialog(self) -> None:
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Atajos de teclado")
+        layout = QVBoxLayout(dialog)
+        editors: Dict[str, QKeySequenceEdit] = {}
+
+        for key, (label_text, _default, _callback) in self._shortcut_definitions().items():
+            row = QHBoxLayout()
+            row.addWidget(QLabel(label_text))
+            editor = QKeySequenceEdit(QKeySequence(self._shortcut_sequence_for(key)), dialog)
+            editors[key] = editor
+            row.addWidget(editor)
+            layout.addLayout(row)
+
+        button_row = QHBoxLayout()
+        reset_button = QPushButton("Restaurar")
+        save_button = QPushButton("Guardar")
+        cancel_button = QPushButton("Cancelar")
+        button_row.addStretch()
+        button_row.addWidget(reset_button)
+        button_row.addWidget(save_button)
+        button_row.addWidget(cancel_button)
+        layout.addLayout(button_row)
+
+        reset_button.clicked.connect(lambda: self._reset_shortcut_editors(editors))
+        save_button.clicked.connect(dialog.accept)
+        cancel_button.clicked.connect(dialog.reject)
+
+        if not _dialog_accepted(_exec_popup_dialog(dialog)):
+            return
+
+        self._shortcut_overrides = {
+            key: editor.keySequence().toString(QKeySequence.SequenceFormat.PortableText)
+            for key, editor in editors.items()
+            if editor.keySequence().toString(QKeySequence.SequenceFormat.PortableText)
+        }
+        self._install_shortcuts()
+        self._schedule_visual_state_save()
+        self._show_status_message("Atajos de teclado actualizados.")
+
+    def _reset_shortcut_editors(self, editors: Dict[str, QKeySequenceEdit]) -> None:
+        for key, (_label, default, _callback) in self._shortcut_definitions().items():
+            editor = editors.get(key)
+            if editor is not None:
+                editor.setKeySequence(QKeySequence(default))
 
     def _apply_startup_defaults(self) -> None:
         self._select_combo_value(self.start_combo, DEFAULT_START_NOTE)
@@ -2471,6 +3007,8 @@ class ControlWindow(QWidget):
     def _schedule_visual_state_save(self) -> None:
         if not self._visual_state_tracking_enabled or self._is_closing:
             return
+        self._visual_save_state = "Guardando..."
+        self._update_status_strip()
         if self._visual_state_save_timer.isActive():
             self._visual_state_save_timer.stop()
         self._visual_state_save_timer.start(200)
@@ -2485,6 +3023,8 @@ class ControlWindow(QWidget):
         if self._visual_state_save_timer.isActive():
             self._visual_state_save_timer.stop()
         self._write_preferences(False)
+        self._visual_save_state = "Guardado"
+        self._update_status_strip()
 
     # --- menú de ventanas ---
 
@@ -2515,6 +3055,8 @@ class ControlWindow(QWidget):
         self.window_menu.addSeparator()
         show_all = self.window_menu.addAction("Mostrar todas")
         show_all.triggered.connect(self.show_all_windows)
+        self.rearrange_action = self.window_menu.addAction("Reacomodar ventanas")
+        self.rearrange_action.triggered.connect(self.rearrange_windows)
 
         self.dictionary_menu = self.menu_bar.addMenu("Diccionario")
         load_dict = self.dictionary_menu.addAction("Cargar diccionario…")
@@ -2549,6 +3091,10 @@ class ControlWindow(QWidget):
         self.single_fullscreen_action.setCheckable(True)
         self.single_fullscreen_action.toggled.connect(self._toggle_single_fullscreen)
 
+        self.presentation_action = self.visualization_menu.addAction("Modo presentación")
+        self.presentation_action.setCheckable(True)
+        self.presentation_action.toggled.connect(self._toggle_presentation_mode)
+
         self.view_mode_group.triggered.connect(
             lambda action: self.set_view_mode(str(action.data()))
         )
@@ -2564,7 +3110,33 @@ class ControlWindow(QWidget):
             self.piano_window.showFullScreen()
         else:
             self.piano_window.showNormal()
-            self._fit_keyboard_window_to_available_width()
+
+    def _toggle_single_fullscreen_from_double_click(self) -> None:
+        if self.view_mode != "single":
+            return
+        self.single_fullscreen_action.setChecked(not self.piano_window.isFullScreen())
+
+    def _toggle_presentation_mode(self, enabled: bool) -> None:
+        self._presentation_mode_enabled = bool(enabled)
+        if enabled:
+            self._presentation_previous_mode = self.view_mode
+            self._presentation_previous_fullscreen = self.piano_window.isFullScreen()
+            self.set_view_mode("single", persist=False)
+            self.display_panel_widget.hide()
+            self.keyboard_nav_panel.hide()
+            self.menu_bar.hide()
+            self.piano_window.showFullScreen()
+            self._show_status_message("Modo presentación activado.")
+            return
+
+        self.menu_bar.show()
+        self.display_panel_widget.show()
+        self.keyboard_nav_panel.show()
+        if self._presentation_previous_mode == "separate":
+            self.set_view_mode("separate", persist=False)
+        elif not self._presentation_previous_fullscreen:
+            self.piano_window.showNormal()
+        self._show_status_message("Modo presentación desactivado.")
 
     def _window_is_visible(self, window: QMainWindow) -> bool:
         if not window.isVisible():
@@ -2588,6 +3160,34 @@ class ControlWindow(QWidget):
         for win in (self.piano_window, self.chord_window, self.staff_window):
             self._bring_to_front(win)
         self._update_window_actions()
+
+    def rearrange_windows(self):
+        screen = QApplication.primaryScreen()
+        if screen is None:
+            self.show_all_windows()
+            return
+        area = screen.availableGeometry()
+        margin = 24
+        if self.view_mode == "single":
+            width = max(900, area.width() - margin * 2)
+            height = max(640, area.height() - margin * 2)
+            self.piano_window.setGeometry(area.x() + margin, area.y() + margin, width, height)
+            self._bring_to_front(self.piano_window)
+        else:
+            top_height = max(260, int(area.height() * 0.42))
+            bottom_height = max(180, int(area.height() * 0.24))
+            half_width = max(420, int((area.width() - margin * 3) / 2))
+            self.staff_window.setGeometry(area.x() + margin, area.y() + margin, half_width, top_height)
+            self.chord_window.setGeometry(area.x() + margin * 2 + half_width, area.y() + margin, half_width, top_height)
+            self.piano_window.setGeometry(
+                area.x() + margin,
+                area.y() + margin * 2 + top_height,
+                max(900, area.width() - margin * 2),
+                bottom_height,
+            )
+            self.show_all_windows()
+        self._schedule_visual_state_save()
+        self._show_status_message("Ventanas reacomodadas.")
 
     def _update_window_actions(self):
         keyboard_visible = self._window_is_visible(self.piano_window)
@@ -2652,9 +3252,11 @@ class ControlWindow(QWidget):
             self.piano_window.show_combined_view(
                 staff_widget,
                 chord_widget,
-                None,
+                self.display_panel_widget,
+                self.keyboard_nav_panel,
             )
             self.piano_window.set_combined_background_color(self.single_window_bg_color)
+            self._sync_single_window_keyboard_controls()
             self.staff_window.hide()
             self.chord_window.hide()
             self._bring_to_front(self.piano_window)
@@ -2665,6 +3267,7 @@ class ControlWindow(QWidget):
             self.piano_window._remove_drag_support(self.staff_window.widget)
             self.piano_window._remove_drag_support(self.chord_window.display_widget)
             self.display_panel_widget.setParent(None)
+            self.keyboard_nav_panel.setParent(None)
             self.piano_window.show_keyboard_only()
             self.staff_window.show()
             self.chord_window.show()
@@ -2681,7 +3284,8 @@ class ControlWindow(QWidget):
                 self.single_fullscreen_action.blockSignals(False)
                 self.piano_window.showNormal()
         self._apply_single_view_styles(mode == "single")
-        self._fit_keyboard_window_to_available_width()
+        if mode != "single":
+            self._fit_keyboard_window_to_available_width()
         self._update_window_actions()
         if persist:
             self._write_preferences(False)
@@ -2690,59 +3294,213 @@ class ControlWindow(QWidget):
         if enabled:
             menu_style = (
                 "QMenuBar {"
-                "  background: qlineargradient(x1:0, y1:0, x2:0, y2:1, stop:0 #f4f6f9, stop:1 #e6ebf2);"
-                "  color: #1f2937;"
-                "  border: 1px solid #c7d0dd;"
+                "  font-family: 'Avenir Next', 'Helvetica Neue', Arial, sans-serif;"
+                "  font-size: 13px;"
+                "  background: #f6f6f7;"
+                "  color: #1d1d1f;"
+                "  border: 1px solid #d8d8dc;"
                 "  border-left: none;"
                 "  border-right: none;"
                 "}"
                 "QMenuBar::item {"
                 "  background: transparent;"
-                "  color: #1f2937;"
-                "  padding: 6px 12px;"
-                "  border-radius: 6px;"
-                "  margin: 2px 3px;"
+                "  color: #1d1d1f;"
+                "  padding: 5px 11px;"
+                "  border-radius: 5px;"
+                "  margin: 2px 2px;"
                 "}"
-                "QMenuBar::item:selected { background: #dbe7f7; }"
-                "QMenuBar::item:pressed { background: #cdddf3; }"
+                "QMenuBar::item:selected { background: rgba(240, 154, 0, 48); }"
+                "QMenuBar::item:pressed { background: #f09a00; color: #1d1d1f; }"
                 "QMenu {"
-                "  background-color: #f8fbff;"
-                "  color: #1f2937;"
-                "  border: 1px solid #c7d0dd;"
+                "  font-family: 'Avenir Next', 'Helvetica Neue', Arial, sans-serif;"
+                "  font-size: 13px;"
+                "  background-color: #15110d;"
+                "  color: #f7f3ed;"
+                "  border: 1px solid rgba(255, 255, 255, 70);"
+                "  padding: 6px;"
                 "}"
-                "QMenu::item { padding: 6px 18px; }"
-                "QMenu::item:selected { background-color: #dbe7f7; color: #0f172a; }"
+                "QMenu::item { padding: 7px 18px; border-radius: 5px; }"
+                "QMenu::item:selected { background-color: #f09a00; color: #1d1d1f; }"
             )
             control_style = (
-                "QWidget { color: #111827; background-color: transparent; }"
-                "QLabel, QCheckBox { color: #111827; }"
+                "QWidget {"
+                "  font-family: 'Avenir Next', 'Helvetica Neue', Arial, sans-serif;"
+                "  font-size: 13px;"
+                "  color: #f5f5f7;"
+                "  background-color: transparent;"
+                "}"
+                "QLabel, QCheckBox { color: #f5f5f7; background-color: transparent; }"
+                "QCheckBox { spacing: 7px; }"
+                "QCheckBox::indicator {"
+                "  width: 16px;"
+                "  height: 16px;"
+                "  border-radius: 4px;"
+                "  border: 1px solid #d0d0d4;"
+                "  background-color: #ffffff;"
+                "}"
+                "QCheckBox::indicator:hover { border-color: #f09a00; }"
+                "QCheckBox::indicator:checked {"
+                "  background-color: #f09a00;"
+                "  border-color: #f09a00;"
+                "}"
                 "QPushButton, QToolButton, QComboBox, QSpinBox {"
-                "  color: #111827;"
-                "  background-color: #f7f9fc;"
-                "  border: 1px solid #b8c4d6;"
+                "  color: #f7f3ed;"
+                "  background-color: rgba(255, 255, 255, 34);"
+                "  border: 1px solid rgba(255, 255, 255, 70);"
                 "  border-radius: 6px;"
-                "  padding: 3px 8px;"
+                "  padding: 5px 10px;"
+                "  min-height: 20px;"
                 "}"
                 "QPushButton:hover, QToolButton:hover, QComboBox:hover, QSpinBox:hover {"
-                "  background-color: #ecf3ff;"
+                "  background-color: rgba(255, 255, 255, 58);"
+                "  border-color: #f09a00;"
                 "}"
-                "QPushButton:disabled, QComboBox:disabled, QSpinBox:disabled { color: #6b7280; }"
+                "QPushButton:pressed, QToolButton:pressed { background-color: rgba(240, 154, 0, 130); }"
+                "QPushButton:disabled, QComboBox:disabled, QSpinBox:disabled {"
+                "  color: #8a8780;"
+                "  background-color: rgba(255, 255, 255, 24);"
+                "  border-color: rgba(255, 255, 255, 42);"
+                "}"
+                "QWidget#DisplayPanel {"
+                "  background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #201a14, stop:0.55 #12100d, stop:1 #050505);"
+                "  border-bottom: 1px solid rgba(255, 255, 255, 40);"
+                "}"
+                "QStackedWidget#DisplayPanelStack {"
+                "  background-color: transparent;"
+                "  border: none;"
+                "}"
+                "QWidget#PanelPage {"
+                "  background-color: rgba(255, 255, 255, 18);"
+                "  border: 1px solid rgba(255, 255, 255, 42);"
+                "  border-radius: 7px;"
+                "}"
+                "QLabel#PanelTitle {"
+                "  color: #ffffff;"
+                "  font-size: 16px;"
+                "  font-weight: 700;"
+                "  letter-spacing: 0;"
+                "}"
+                "QLabel#PanelCaption {"
+                "  color: #c7c7cc;"
+                "  font-size: 12px;"
+                "}"
+                "QLabel#PanelSectionTitle {"
+                "  color: #f09a00;"
+                "  font-weight: 700;"
+                "  padding-right: 4px;"
+                "}"
+                "QLabel#ScaleRoleText {"
+                "  color: #f5f5f7;"
+                "  font-size: 12px;"
+                "}"
+                "QPushButton#GlassSegmentButton {"
+                "  color: #fff7ed;"
+                "  background-color: rgba(240, 154, 0, 70);"
+                "  border: 1px solid rgba(240, 154, 0, 155);"
+                "  border-radius: 5px;"
+                "  padding: 7px 18px;"
+                "  font-size: 11px;"
+                "  font-weight: 700;"
+                "}"
+                "QPushButton#GlassSegmentButton:hover {"
+                "  background-color: rgba(240, 154, 0, 120);"
+                "  border-color: #f09a00;"
+                "}"
+                "QPushButton#GlassSegmentButton:checked {"
+                "  color: #1d1d1f;"
+                "  background-color: rgba(240, 154, 0, 232);"
+                "  border-color: #f09a00;"
+                "}"
+                "QToolButton#MenuButton {"
+                "  color: #1d1d1f;"
+                "  background-color: #fbfbfc;"
+                "  border: 1px solid #d0d0d4;"
+                "  border-radius: 6px;"
+                "  padding: 5px 10px;"
+                "}"
+                "QToolButton::menu-indicator { image: none; width: 0px; }"
+                "QToolButton#MenuButton:hover {"
+                "  background-color: #fff7ed;"
+                "  border-color: #f09a00;"
+                "}"
+                "QTabWidget::pane {"
+                "  border: 1px solid #d0d0d4;"
+                "  border-radius: 7px;"
+                "  top: -1px;"
+                "}"
+                "QTabBar::tab {"
+                "  color: #3a3a3c;"
+                "  background-color: #eeeeef;"
+                "  border: 1px solid #d0d0d4;"
+                "  border-bottom: none;"
+                "  border-top-left-radius: 7px;"
+                "  border-top-right-radius: 7px;"
+                "  padding: 7px 20px;"
+                "  margin-right: 2px;"
+                "}"
+                "QTabBar::tab:selected {"
+                "  color: #1d1d1f;"
+                "  background-color: #f09a00;"
+                "  border-color: #f09a00;"
+                "}"
+                "QTabBar::tab:hover:!selected { background-color: #fff7ed; color: #1d1d1f; }"
+                "QComboBox QAbstractItemView {"
+                "  background-color: #17130f;"
+                "  color: #f7f3ed;"
+                "  selection-background-color: #f09a00;"
+                "  selection-color: #1d1d1f;"
+                "  border: 1px solid rgba(255, 255, 255, 64);"
+                "}"
+            )
+            menu_panel_style = (
+                "QWidget {"
+                "  font-family: 'Avenir Next', 'Helvetica Neue', Arial, sans-serif;"
+                "  font-size: 13px;"
+                "  color: #1d1d1f;"
+                "  background-color: #fbfbfc;"
+                "}"
+                "QLabel, QCheckBox { color: #1d1d1f; background-color: transparent; }"
+                "QCheckBox::indicator {"
+                "  width: 16px;"
+                "  height: 16px;"
+                "  border-radius: 4px;"
+                "  border: 1px solid #8e8e93;"
+                "  background-color: #ffffff;"
+                "}"
+                "QCheckBox::indicator:checked {"
+                "  background-color: #f09a00;"
+                "  border-color: #b87300;"
+                "}"
+                "QPushButton, QComboBox, QSpinBox {"
+                "  color: #1d1d1f;"
+                "  background-color: #ffffff;"
+                "  border: 1px solid #c7c7cc;"
+                "  border-radius: 6px;"
+                "  padding: 5px 10px;"
+                "  min-height: 20px;"
+                "}"
+                "QPushButton:hover, QComboBox:hover, QSpinBox:hover {"
+                "  background-color: #fff7cc;"
+                "  border-color: #f09a00;"
+                "}"
                 "QComboBox QAbstractItemView {"
                 "  background-color: #ffffff;"
-                "  color: #111827;"
-                "  selection-background-color: #dbe7f7;"
-                "  selection-color: #0f172a;"
+                "  color: #1d1d1f;"
+                "  selection-background-color: #f09a00;"
+                "  selection-color: #1d1d1f;"
                 "}"
             )
             self.menu_bar.setStyleSheet(menu_style)
             self.setStyleSheet(control_style)
             self.display_panel_widget.setStyleSheet(control_style)
+            self.keyboard_nav_panel.setStyleSheet(control_style)
             for widget in self._menu_panel_widgets:
-                widget.setStyleSheet(control_style)
+                widget.setStyleSheet(menu_panel_style)
         else:
             self.menu_bar.setStyleSheet("")
             self.setStyleSheet("")
             self.display_panel_widget.setStyleSheet("")
+            self.keyboard_nav_panel.setStyleSheet("")
             for widget in self._menu_panel_widgets:
                 widget.setStyleSheet("")
 
@@ -2826,6 +3584,7 @@ class ControlWindow(QWidget):
 
     def _build_single_window_menu_strip(self) -> QWidget:
         container = QWidget()
+        container.setObjectName("MenuStrip")
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
@@ -2841,6 +3600,7 @@ class ControlWindow(QWidget):
             ("Partitura", self.staff_menu),
         ):
             button = QToolButton()
+            button.setObjectName("MenuButton")
             button.setText(label)
             button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
             button.setToolButtonStyle(Qt.ToolButtonStyle.ToolButtonTextOnly)
@@ -2851,110 +3611,357 @@ class ControlWindow(QWidget):
         container.setLayout(layout)
         return container
 
+    def _color_to_stylesheet(self, color: QColor) -> str:
+        return f"rgba({color.red()}, {color.green()}, {color.blue()}, {color.alpha()})"
+
+    def _build_scale_role_palette(self) -> QWidget:
+        panel = QWidget()
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        for role in ("root", "stable", "tension", "critical"):
+            item = QWidget()
+            item_layout = QHBoxLayout()
+            item_layout.setContentsMargins(0, 0, 0, 0)
+            item_layout.setSpacing(5)
+
+            label_text = self._scale_role_labels.get(role, role)
+            button = QPushButton("")
+            button.setObjectName("ScaleRoleCircle")
+            button.setFixedSize(24, 24)
+            button.setToolTip(f"{label_text}: cambiar color")
+            button.clicked.connect(lambda _checked=False, selected_role=role: self._choose_scale_role_color(selected_role))
+            text_label = QLabel(label_text)
+            text_label.setObjectName("ScaleRoleText")
+            text_label.setToolTip(label_text)
+            self._scale_palette_buttons.append((role, button))
+            item_layout.addWidget(button)
+            item_layout.addWidget(text_label)
+            item.setLayout(item_layout)
+            layout.addWidget(item)
+        layout.addStretch()
+        panel.setLayout(layout)
+        self._sync_scale_palette_buttons()
+        return panel
+
+    def _sync_scale_palette_buttons(self) -> None:
+        for role, button in self._scale_palette_buttons:
+            color_key = self._role_to_scale_color.get(role, "blue")
+            color = QColor(self.display_scale_colors.get(color_key, QColor(60, 120, 240, 200)))
+            text_color = "#111827" if color.lightness() > 145 else "#ffffff"
+            button.setStyleSheet(
+                "QPushButton {"
+                f"  background-color: {self._color_to_stylesheet(color)};"
+                f"  color: {text_color};"
+                "  border: 1px solid rgba(255, 255, 255, 160);"
+                "  border-radius: 12px;"
+                "  min-width: 24px;"
+                "  max-width: 24px;"
+                "  min-height: 24px;"
+                "  max-height: 24px;"
+                "  padding: 0;"
+                "}"
+                "QPushButton:hover {"
+                "  border: 2px solid #f09a00;"
+                "}"
+            )
+
+    def _choose_scale_role_color(self, role: str) -> None:
+        color_key = self._role_to_scale_color.get(role)
+        if color_key is None:
+            return
+        current = QColor(self.display_scale_colors.get(color_key, QColor(60, 120, 240, 200)))
+        color = _get_popup_color(self, current, f"Color categoría {self._scale_role_labels.get(role, role)}")
+        if not color.isValid():
+            return
+        color.setAlpha(max(120, color.alpha()))
+        self.display_scale_colors[color_key] = QColor(color)
+        self._sync_scale_palette_buttons()
+        self._update_display_overlays()
+        self._schedule_visual_state_save()
+        self._show_status_message(f"Color de escala actualizado: {self._scale_role_labels.get(role, role)}.")
+
+    def _build_panel_section_button(self, text: str, index: int) -> QPushButton:
+        button = QPushButton(text)
+        button.setObjectName("GlassSegmentButton")
+        button.setCheckable(True)
+        button.setMinimumWidth(126)
+        button.clicked.connect(lambda _checked=False, selected_index=index: self._set_display_panel_section(selected_index))
+        return button
+
+    def _set_display_panel_section(self, index: int) -> None:
+        stack = getattr(self, "display_panel_section_stack", None)
+        buttons = getattr(self, "display_panel_section_buttons", [])
+        if not isinstance(stack, QStackedWidget):
+            return
+        index = max(0, min(int(index), stack.count() - 1))
+        stack.setCurrentIndex(index)
+        for button_index, button in enumerate(buttons):
+            if isinstance(button, QPushButton):
+                button.blockSignals(True)
+                button.setChecked(button_index == index)
+                button.blockSignals(False)
+
     def _build_display_panel(self) -> QWidget:
         panel = QWidget()
+        panel.setObjectName("DisplayPanel")
         layout = QVBoxLayout()
-        layout.setContentsMargins(8, 6, 8, 6)
-        layout.setSpacing(6)
+        layout.setContentsMargins(10, 8, 10, 10)
+        layout.setSpacing(8)
 
-        layout.addWidget(self._build_single_window_menu_strip())
+        header_row = QHBoxLayout()
+        title = QLabel("Midi Piano Jaramillo")
+        title.setObjectName("PanelTitle")
+        subtitle = QLabel("consola de visualización")
+        subtitle.setObjectName("PanelCaption")
+        header_row.addWidget(title)
+        header_row.addWidget(subtitle)
+        header_row.addStretch()
+        layout.addLayout(header_row)
 
-        chord_row = QHBoxLayout()
+        self.display_panel_status_strip = self._build_compact_status_label()
+        self.display_panel_status_strip.hide()
+
+        section_row = QHBoxLayout()
+        section_row.setContentsMargins(0, 2, 0, 2)
+        section_row.setSpacing(8)
+        section_row.addStretch()
+        self.display_panel_section_buttons = [
+            self._build_panel_section_button("ACORDES", 0),
+            self._build_panel_section_button("ESCALAS", 1),
+        ]
+        for button in self.display_panel_section_buttons:
+            section_row.addWidget(button)
+        section_row.addStretch()
+        layout.addLayout(section_row)
+
+        self.display_panel_section_stack = QStackedWidget(panel)
+        self.display_panel_section_stack.setObjectName("DisplayPanelStack")
+
+        chord_page = QWidget(panel)
+        chord_page.setObjectName("PanelPage")
+        chord_page_layout = QHBoxLayout()
+        chord_page_layout.setContentsMargins(14, 10, 14, 10)
+        chord_page_layout.setSpacing(9)
         self.display_panel_chord_checkbox = QCheckBox("Mostrar acorde")
-        self.display_panel_root_combo = MenuComboBox()
-        self.display_panel_chord_combo = MenuComboBox()
+        self.display_panel_root_combo = QComboBox()
+        self.display_panel_root_combo.setFixedWidth(86)
+        self.display_panel_chord_combo = QComboBox(panel)
+        self.display_panel_chord_combo.setMinimumWidth(230)
+        self.display_panel_chord_combo.setMinimumContentsLength(18)
+        self.display_panel_chord_combo.setMaxVisibleItems(18)
+        self.display_panel_chord_combo.setToolTip("Seleccionar y activar un acorde pregrabado")
         self.display_panel_inversion_spin = QSpinBox()
         self.display_panel_inversion_spin.setRange(-4, 4)
-        self.display_panel_drop_combo = MenuComboBox()
+        self.display_panel_inversion_spin.setFixedWidth(58)
+        self.display_panel_drop_combo = QComboBox()
+        self.display_panel_drop_combo.setFixedWidth(112)
         self.display_panel_drop_combo.addItem("No Drop", "none")
         self.display_panel_drop_combo.addItem("Drop 2", "drop2")
         self.display_panel_drop_combo.addItem("Drop 3", "drop3")
         self.display_panel_drop_combo.addItem("Drop 2-4", "drop2-4")
-        self.display_panel_transpose_spin = QSpinBox()
-        self.display_panel_transpose_spin.setRange(-24, 24)
+        chord_page_layout.addWidget(self.display_panel_chord_checkbox)
+        chord_page_layout.addWidget(QLabel("Fundamental"))
+        chord_page_layout.addWidget(self.display_panel_root_combo)
+        chord_page_layout.addWidget(QLabel("Acorde"))
+        chord_page_layout.addWidget(self.display_panel_chord_combo)
+        chord_page_layout.addWidget(QLabel("Inversión"))
+        chord_page_layout.addWidget(self.display_panel_inversion_spin)
+        chord_page_layout.addWidget(QLabel("Drop"))
+        chord_page_layout.addWidget(self.display_panel_drop_combo)
+        chord_page_layout.addStretch()
+        chord_page.setLayout(chord_page_layout)
 
-        chord_row.addWidget(self.display_panel_chord_checkbox)
-        chord_row.addWidget(QLabel("Fundamental:"))
-        chord_row.addWidget(self.display_panel_root_combo)
-        chord_row.addWidget(QLabel("Acorde:"))
-        chord_row.addWidget(self.display_panel_chord_combo)
-        chord_row.addWidget(QLabel("Inversión:"))
-        chord_row.addWidget(self.display_panel_inversion_spin)
-        chord_row.addWidget(QLabel("Drops:"))
-        chord_row.addWidget(self.display_panel_drop_combo)
-        chord_row.addWidget(QLabel("Transposición (st):"))
-        chord_row.addWidget(self.display_panel_transpose_spin)
-        chord_row.addStretch()
-        layout.addLayout(chord_row)
-
-        scale_row = QHBoxLayout()
+        scale_page = QWidget(panel)
+        scale_page.setObjectName("PanelPage")
+        scale_page_layout = QHBoxLayout()
+        scale_page_layout.setContentsMargins(14, 10, 14, 10)
+        scale_page_layout.setSpacing(9)
         self.display_panel_scale_checkbox = QCheckBox("Mostrar escala")
-        self.display_panel_scale_combo = MenuComboBox()
-        scale_row.addWidget(self.display_panel_scale_checkbox)
-        scale_row.addWidget(QLabel("Escala:"))
-        scale_row.addWidget(self.display_panel_scale_combo)
-        scale_row.addStretch()
-        layout.addLayout(scale_row)
+        self.display_panel_scale_root_combo = QComboBox()
+        self.display_panel_scale_root_combo.setFixedWidth(86)
+        self.display_panel_scale_combo = QComboBox(panel)
+        self.display_panel_scale_combo.setMinimumWidth(300)
+        self.display_panel_scale_combo.setMinimumContentsLength(26)
+        self.display_panel_scale_combo.setMaxVisibleItems(18)
+        self.display_panel_scale_combo.setToolTip("Seleccionar y activar una escala pregrabada")
+        scale_page_layout.addWidget(self.display_panel_scale_checkbox)
+        scale_page_layout.addWidget(QLabel("Fundamental"))
+        scale_page_layout.addWidget(self.display_panel_scale_root_combo)
+        scale_page_layout.addWidget(QLabel("Escala"))
+        scale_page_layout.addWidget(self.display_panel_scale_combo)
+        scale_page_layout.addSpacing(12)
+        scale_page_layout.addWidget(self._build_scale_role_palette())
+        scale_page_layout.addStretch()
+        scale_page.setLayout(scale_page_layout)
 
-        control_row1 = QHBoxLayout()
-        self.display_panel_keyboard_labels = QCheckBox("Etiquetas del teclado")
-        self.display_panel_on_top = QCheckBox("Teclado siempre al frente")
-        self.display_panel_edit_chords = QPushButton("Editar etiquetas de acordes…")
-        control_row1.addWidget(self.display_panel_keyboard_labels)
-        control_row1.addWidget(self.display_panel_on_top)
-        control_row1.addWidget(self.display_panel_edit_chords)
-        control_row1.addStretch()
-        layout.addLayout(control_row1)
-
-        control_row2 = QHBoxLayout()
-        self.display_panel_midi_learn = QPushButton("Midi learn: nuevo cifrado")
-        self.display_panel_capture_spin = QSpinBox()
-        self.display_panel_capture_spin.setRange(100, 5000)
-        self.display_panel_capture_spin.setSingleStep(50)
-        self.display_panel_capture_spin.setValue(self.capture_window_ms)
-        control_row2.addWidget(self.display_panel_midi_learn)
-        control_row2.addWidget(QLabel("Ventana captura (ms):"))
-        control_row2.addWidget(self.display_panel_capture_spin)
-        control_row2.addStretch()
-        layout.addLayout(control_row2)
-
-        control_row3 = QHBoxLayout()
-        self.display_panel_single_bg_button = QPushButton("Fondo vista única…")
-        control_row3.addWidget(self.display_panel_single_bg_button)
-        control_row3.addStretch()
-        layout.addLayout(control_row3)
+        self.display_panel_section_stack.addWidget(chord_page)
+        self.display_panel_section_stack.addWidget(scale_page)
+        layout.addWidget(self.display_panel_section_stack)
+        self._set_display_panel_section(0)
 
         panel.setLayout(layout)
+        self._update_status_strip()
         return panel
+
+    def _build_keyboard_navigation_panel(self) -> QWidget:
+        panel = QWidget()
+        layout = QHBoxLayout()
+        layout.setContentsMargins(8, 4, 8, 8)
+        layout.setSpacing(8)
+
+        self.single_octave_down_button = QPushButton("←")
+        self.single_octave_down_button.setFixedWidth(54)
+        self.single_octave_down_button.setToolTip("Desplazar teclado una octava hacia abajo")
+
+        self.single_octaves_minus_button = QPushButton("-")
+        self.single_octaves_minus_button.setFixedWidth(42)
+        self.single_octaves_minus_button.setToolTip("Quitar una octava visible")
+
+        self.single_octaves_button = QPushButton("")
+        self.single_octaves_button.setMinimumWidth(120)
+        self.single_octaves_button.setEnabled(False)
+        self.single_octaves_button.setToolTip("Cantidad de octavas visibles")
+
+        self.single_octaves_plus_button = QPushButton("+")
+        self.single_octaves_plus_button.setFixedWidth(42)
+        self.single_octaves_plus_button.setToolTip("Agregar una octava visible")
+
+        self.single_octave_up_button = QPushButton("→")
+        self.single_octave_up_button.setFixedWidth(54)
+        self.single_octave_up_button.setToolTip("Desplazar teclado una octava hacia arriba")
+
+        layout.addWidget(self.single_octave_down_button)
+        layout.addStretch()
+        layout.addWidget(self.single_octaves_minus_button)
+        layout.addWidget(self.single_octaves_button)
+        layout.addWidget(self.single_octaves_plus_button)
+        layout.addStretch()
+        layout.addWidget(self.single_octave_up_button)
+
+        panel.setLayout(layout)
+        self._sync_single_window_keyboard_controls()
+        return panel
+
+    def _connect_keyboard_navigation_signals(self) -> None:
+        self.single_octave_down_button.clicked.connect(lambda: self._shift_visible_keyboard_octave(-1))
+        self.single_octave_up_button.clicked.connect(lambda: self._shift_visible_keyboard_octave(1))
+        self.single_octaves_minus_button.clicked.connect(lambda: self._change_visible_octaves(-1))
+        self.single_octaves_plus_button.clicked.connect(lambda: self._change_visible_octaves(1))
+
+    def _start_note_fits_octaves(self, start_note: int, octaves: int) -> bool:
+        target_octave = note_octave(start_note) + int(octaves)
+        if NOTE_NAMES[start_note % 12] != "C":
+            target_octave += 1
+        return midi_of_C(target_octave) <= MAX_NOTE
+
+    def _single_window_start_notes(self, octaves: Optional[int] = None) -> List[int]:
+        starts = [MIN_NOTE] + [midi_of_C(octave) for octave in range(2, 8)]
+        if octaves is None:
+            return starts
+        valid = [note for note in starts if self._start_note_fits_octaves(note, int(octaves))]
+        return valid or [MIN_NOTE]
+
+    def _coerce_start_for_visible_octaves(self, octaves: int) -> None:
+        starts = self._single_window_start_notes(octaves)
+        current = int(self.start_combo.currentData() or DEFAULT_START_NOTE)
+        if current in starts:
+            return
+        lower = [note for note in starts if note <= current]
+        next_start = lower[-1] if lower else starts[0]
+        self._select_combo_value(self.start_combo, next_start)
+
+    def _shift_visible_keyboard_octave(self, direction: int) -> None:
+        starts = self._single_window_start_notes(int(self.octaves_spin.value()))
+        current = int(self.start_combo.currentData() or DEFAULT_START_NOTE)
+        if current in starts:
+            idx = starts.index(current)
+            next_idx = idx + (1 if direction > 0 else -1)
+        elif direction > 0:
+            higher = [idx for idx, note in enumerate(starts) if note > current]
+            next_idx = higher[0] if higher else len(starts) - 1
+        else:
+            lower = [idx for idx, note in enumerate(starts) if note < current]
+            next_idx = lower[-1] if lower else 0
+
+        next_idx = max(0, min(len(starts) - 1, next_idx))
+        next_start = starts[next_idx]
+        if next_start == current:
+            self._sync_single_window_keyboard_controls()
+            return
+
+        self._select_combo_value(self.start_combo, next_start)
+        self.range_changed()
+        self._sync_single_window_keyboard_controls()
+        self._schedule_visual_state_save()
+
+    def _change_visible_octaves(self, delta: int) -> None:
+        current = int(self.octaves_spin.value())
+        next_value = max(1, min(7, current + int(delta)))
+        if next_value == current:
+            self._sync_single_window_keyboard_controls()
+            return
+        self.octaves_spin.blockSignals(True)
+        self.octaves_spin.setValue(next_value)
+        self.octaves_spin.blockSignals(False)
+        self._coerce_start_for_visible_octaves(next_value)
+        self.range_changed()
+        self._sync_single_window_keyboard_controls()
+        self._schedule_visual_state_save()
+
+    def _cycle_visible_octaves(self) -> None:
+        self._change_visible_octaves(1)
+
+    def _sync_single_window_keyboard_controls(self) -> None:
+        if not hasattr(self, "single_octaves_button"):
+            return
+        octave_count = int(self.octaves_spin.value())
+        starts = self._single_window_start_notes(octave_count)
+        current = int(self.start_combo.currentData() or DEFAULT_START_NOTE)
+        suffix = "octava" if octave_count == 1 else "octavas"
+        self.single_octaves_button.setText(f"{octave_count} {suffix}")
+        self.single_octaves_minus_button.setEnabled(octave_count > 1)
+        self.single_octaves_plus_button.setEnabled(octave_count < 7)
+        self.single_octave_down_button.setEnabled(any(note < current for note in starts))
+        self.single_octave_up_button.setEnabled(any(note > current for note in starts))
 
     def _connect_display_panel_signals(self) -> None:
         self.display_panel_chord_checkbox.toggled.connect(self._mirror_panel_to_primary)
-        self.display_panel_root_combo.currentIndexChanged.connect(self._mirror_panel_to_primary)
-        self.display_panel_chord_combo.currentIndexChanged.connect(self._mirror_panel_to_primary)
+        self.display_panel_root_combo.currentIndexChanged.connect(self._handle_panel_root_selection_changed)
+        self.display_panel_chord_combo.currentIndexChanged.connect(self._handle_panel_chord_selection_changed)
         self.display_panel_inversion_spin.valueChanged.connect(self._mirror_panel_to_primary)
         self.display_panel_drop_combo.currentIndexChanged.connect(self._mirror_panel_to_primary)
-        self.display_panel_transpose_spin.valueChanged.connect(self._mirror_panel_to_primary)
         self.display_panel_scale_checkbox.toggled.connect(self._mirror_panel_to_primary)
-        self.display_panel_scale_combo.currentIndexChanged.connect(self._mirror_panel_to_primary)
-        self.display_panel_keyboard_labels.toggled.connect(self._mirror_panel_to_primary)
-        self.display_panel_on_top.toggled.connect(self._mirror_panel_to_primary)
-        self.display_panel_capture_spin.valueChanged.connect(self._mirror_panel_to_primary)
-        self.display_panel_edit_chords.clicked.connect(self._edit_chord_labels)
-        self.display_panel_midi_learn.clicked.connect(self.start_learning_mode)
-        self.display_panel_single_bg_button.clicked.connect(self.choose_single_window_background)
+        self.display_panel_scale_root_combo.currentIndexChanged.connect(self._handle_panel_scale_root_selection_changed)
+        self.display_panel_scale_combo.currentIndexChanged.connect(self._handle_panel_scale_selection_changed)
 
-    def _mirror_panel_to_primary(self, *_args) -> None:
+    def _handle_panel_root_selection_changed(self, *_args) -> None:
+        self._mirror_panel_to_primary(root_combo=self.display_panel_root_combo)
+
+    def _handle_panel_scale_root_selection_changed(self, *_args) -> None:
+        self._mirror_panel_to_primary(root_combo=self.display_panel_scale_root_combo)
+
+    def _handle_panel_chord_selection_changed(self, *_args) -> None:
+        self._mirror_panel_to_primary()
+        self._set_display_enabled_from_selection("chord")
+
+    def _handle_panel_scale_selection_changed(self, *_args) -> None:
+        self._mirror_panel_to_primary()
+        self._set_display_enabled_from_selection("scale")
+
+    def _mirror_panel_to_primary(self, *_args, root_combo: Optional[QComboBox] = None) -> None:
         if self._syncing_display_panel:
             return
         self._syncing_display_panel = True
         try:
+            selected_root_combo = root_combo or self.display_panel_root_combo
             self.display_chord_checkbox.blockSignals(True)
             self.display_chord_checkbox.setChecked(self.display_panel_chord_checkbox.isChecked())
             self.display_chord_checkbox.blockSignals(False)
 
             self._select_combo_value(
                 self.display_root_combo,
-                int(self.display_panel_root_combo.currentData() or 0),
+                int(selected_root_combo.currentData() or 0),
             )
             self._select_combo_value(
                 self.display_chord_combo,
@@ -2969,10 +3976,6 @@ class ControlWindow(QWidget):
             self.display_drop_combo.setCurrentIndex(self.display_panel_drop_combo.currentIndex())
             self.display_drop_combo.blockSignals(False)
 
-            self.display_transpose_spin.blockSignals(True)
-            self.display_transpose_spin.setValue(int(self.display_panel_transpose_spin.value()))
-            self.display_transpose_spin.blockSignals(False)
-
             self.display_scale_checkbox.blockSignals(True)
             self.display_scale_checkbox.setChecked(self.display_panel_scale_checkbox.isChecked())
             self.display_scale_checkbox.blockSignals(False)
@@ -2981,22 +3984,8 @@ class ControlWindow(QWidget):
             self.display_scale_combo.setCurrentIndex(self.display_panel_scale_combo.currentIndex())
             self.display_scale_combo.blockSignals(False)
 
-            self.keyboard_labels_action.blockSignals(True)
-            self.keyboard_labels_action.setChecked(self.display_panel_keyboard_labels.isChecked())
-            self.keyboard_labels_action.blockSignals(False)
-
-            self.always_on_top.blockSignals(True)
-            self.always_on_top.setChecked(self.display_panel_on_top.isChecked())
-            self.always_on_top.blockSignals(False)
-
-            self.capture_window_spin.blockSignals(True)
-            self.capture_window_spin.setValue(int(self.display_panel_capture_spin.value()))
-            self.capture_window_spin.blockSignals(False)
         finally:
             self._syncing_display_panel = False
-
-        self._toggle_keyboard_labels(self.keyboard_labels_action.isChecked())
-        self.toggle_on_top(self.always_on_top.isChecked())
 
         self._update_display_overlays()
 
@@ -3013,6 +4002,10 @@ class ControlWindow(QWidget):
             self.display_panel_root_combo.setCurrentIndex(self.display_root_combo.currentIndex())
             self.display_panel_root_combo.blockSignals(False)
 
+            self.display_panel_scale_root_combo.blockSignals(True)
+            self.display_panel_scale_root_combo.setCurrentIndex(self.display_root_combo.currentIndex())
+            self.display_panel_scale_root_combo.blockSignals(False)
+
             self.display_panel_chord_combo.blockSignals(True)
             self.display_panel_chord_combo.setCurrentIndex(self.display_chord_combo.currentIndex())
             self.display_panel_chord_combo.blockSignals(False)
@@ -3025,10 +4018,6 @@ class ControlWindow(QWidget):
             self.display_panel_drop_combo.setCurrentIndex(self.display_drop_combo.currentIndex())
             self.display_panel_drop_combo.blockSignals(False)
 
-            self.display_panel_transpose_spin.blockSignals(True)
-            self.display_panel_transpose_spin.setValue(int(self.display_transpose_spin.value()))
-            self.display_panel_transpose_spin.blockSignals(False)
-
             self.display_panel_scale_checkbox.blockSignals(True)
             self.display_panel_scale_checkbox.setChecked(self.display_scale_checkbox.isChecked())
             self.display_panel_scale_checkbox.blockSignals(False)
@@ -3037,19 +4026,7 @@ class ControlWindow(QWidget):
             self.display_panel_scale_combo.setCurrentIndex(self.display_scale_combo.currentIndex())
             self.display_panel_scale_combo.blockSignals(False)
 
-            self.display_panel_keyboard_labels.blockSignals(True)
-            self.display_panel_keyboard_labels.setChecked(self.keyboard_labels_action.isChecked())
-            self.display_panel_keyboard_labels.blockSignals(False)
-
-            self.display_panel_on_top.blockSignals(True)
-            self.display_panel_on_top.setChecked(self.always_on_top.isChecked())
-            self.display_panel_on_top.blockSignals(False)
-
-            self.display_panel_capture_spin.blockSignals(True)
-            self.display_panel_capture_spin.setValue(int(self.capture_window_spin.value()))
-            self.display_panel_capture_spin.blockSignals(False)
-
-            self.display_panel_midi_learn.setText(self.learn_button.text())
+            self._sync_selector_button_labels()
         finally:
             self._syncing_display_panel = False
 
@@ -3065,7 +4042,8 @@ class ControlWindow(QWidget):
         chord_row1.addWidget(self.display_chord_checkbox)
         chord_row1.addWidget(QLabel("Fundamental:"))
         chord_row1.addWidget(self.display_root_combo)
-        chord_row1.addWidget(self.display_chord_popup_button)
+        chord_row1.addWidget(QLabel("Acorde:"))
+        chord_row1.addWidget(self.display_chord_combo)
         chord_row1.addStretch()
         chord_layout.addLayout(chord_row1)
 
@@ -3074,8 +4052,6 @@ class ControlWindow(QWidget):
         chord_row2.addWidget(self.display_inversion_spin)
         chord_row2.addWidget(QLabel("Drops:"))
         chord_row2.addWidget(self.display_drop_combo)
-        chord_row2.addWidget(QLabel("Transposición (st):"))
-        chord_row2.addWidget(self.display_transpose_spin)
         chord_row2.addStretch()
         chord_layout.addLayout(chord_row2)
 
@@ -3094,7 +4070,8 @@ class ControlWindow(QWidget):
 
         scale_row = QHBoxLayout()
         scale_row.addWidget(self.display_scale_checkbox)
-        scale_row.addWidget(self.display_scale_popup_button)
+        scale_row.addWidget(QLabel("Escala:"))
+        scale_row.addWidget(self.display_scale_combo)
         self.scale_edit_mode_button = QPushButton("Modo edición de categorías: OFF")
         self.scale_edit_mode_button.setCheckable(True)
         self.scale_edit_mode_button.setChecked(False)
@@ -3102,6 +4079,7 @@ class ControlWindow(QWidget):
         scale_row.addWidget(self.scale_edit_mode_button)
         scale_row.addStretch()
         scale_layout.addLayout(scale_row)
+        scale_layout.addWidget(self._build_scale_role_palette())
 
         scale_widget.setLayout(scale_layout)
         scale_action = QWidgetAction(self.scale_menu)
@@ -3121,13 +4099,10 @@ class ControlWindow(QWidget):
         self.single_window_bg_action.triggered.connect(self.choose_single_window_background)
         scale_circle_size_action = self.controls_menu.addAction("Tamaño fijo de círculos de escala…")
         scale_circle_size_action.triggered.connect(self._choose_scale_circle_size)
+        shortcuts_action = self.controls_menu.addAction("Atajos de teclado…")
+        shortcuts_action.triggered.connect(self._open_shortcuts_dialog)
         save_appearance_action = self.controls_menu.addAction("Guardar apariencia actual como predeterminada")
         save_appearance_action.triggered.connect(self.save_default_appearance)
-        self.controls_menu.addSeparator()
-
-        panel_action = QWidgetAction(self.controls_menu)
-        panel_action.setDefaultWidget(self)
-        self.controls_menu.addAction(panel_action)
 
     def _setup_staff_menu(self):
         self.staff_menu = self.menu_bar.addMenu("Partitura")
@@ -3605,7 +4580,7 @@ class ControlWindow(QWidget):
         max_value: float,
     ):
         current = float(self.staff_settings.get(key, 0.0))
-        value, ok = QInputDialog.getDouble(
+        value, ok = _get_popup_double(
             self,
             title,
             label,
@@ -3626,7 +4601,7 @@ class ControlWindow(QWidget):
             current_color = current_value
         else:
             current_color = QColor(str(current_value))
-        color = QColorDialog.getColor(current_color, self, title)
+        color = _get_popup_color(self, current_color, title)
         if not color.isValid():
             return
         self.staff_settings[key] = color.name(QColor.NameFormat.HexArgb)
@@ -3636,7 +4611,7 @@ class ControlWindow(QWidget):
     def _choose_staff_label_font(self):
         current_family = str(self.staff_settings.get("label_font_family", "")).strip() or "Arial"
         current_font = QFont(current_family)
-        font, ok = QFontDialog.getFont(current_font, self, "Fuente etiquetas")
+        font, ok = _get_popup_font(self, current_font, "Fuente etiquetas")
         if not ok:
             return
         self.staff_settings["label_font_family"] = font.family()
@@ -3725,7 +4700,7 @@ class ControlWindow(QWidget):
     def _choose_interval_font(self):
         current_family = self.interval_label_settings.get("font_family", "")
         current_font = QFont(current_family) if current_family else QFont()
-        font, ok = QFontDialog.getFont(current_font, self, "Fuente para intervalos")
+        font, ok = _get_popup_font(self, current_font, "Fuente para intervalos")
         if not ok:
             self._sync_interval_position_actions()
             return
@@ -3735,7 +4710,7 @@ class ControlWindow(QWidget):
 
     def _choose_interval_size(self):
         current_size = int(self.interval_label_settings.get("font_size", 14))
-        size, ok = QInputDialog.getInt(
+        size, ok = _get_popup_int(
             self,
             "Tamaño de intervalos",
             "Tamaño en puntos:",
@@ -3758,7 +4733,7 @@ class ControlWindow(QWidget):
         )
         if isinstance(current_color, str):
             current_color = QColor(current_color)
-        color = QColorDialog.getColor(current_color, self, title)
+        color = _get_popup_color(self, current_color, title)
         if not color.isValid():
             self._sync_interval_position_actions()
             return
@@ -3770,7 +4745,7 @@ class ControlWindow(QWidget):
         current_fill = self.interval_label_settings.get("frame_fill_color", QColor(255, 255, 255))
         if isinstance(current_fill, str):
             current_fill = QColor(current_fill)
-        color = QColorDialog.getColor(current_fill, self, "Color de relleno de etiqueta")
+        color = _get_popup_color(self, current_fill, "Color de relleno de etiqueta")
         if not color.isValid():
             self._sync_interval_position_actions()
             return
@@ -3780,7 +4755,7 @@ class ControlWindow(QWidget):
 
     def _choose_interval_frame_opacity(self):
         current_opacity = float(self.interval_label_settings.get("frame_fill_opacity", 0.6))
-        opacity, ok = QInputDialog.getDouble(
+        opacity, ok = _get_popup_double(
             self,
             "Opacidad de relleno",
             "Valor entre 0 (transparente) y 1 (opaco):",
@@ -3800,7 +4775,7 @@ class ControlWindow(QWidget):
         current_color = self.interval_label_settings.get("frame_border_color", QColor(0, 0, 0, 180))
         if isinstance(current_color, str):
             current_color = QColor(current_color)
-        color = QColorDialog.getColor(current_color, self, "Color del borde de etiqueta")
+        color = _get_popup_color(self, current_color, "Color del borde de etiqueta")
         if not color.isValid():
             self._sync_interval_position_actions()
             return
@@ -3810,7 +4785,7 @@ class ControlWindow(QWidget):
 
     def _choose_interval_frame_border_width(self):
         current_width = float(self.interval_label_settings.get("frame_border_width", 1.0))
-        width, ok = QInputDialog.getDouble(
+        width, ok = _get_popup_double(
             self,
             "Grosor del borde",
             "Espesor en píxeles:",
@@ -3832,7 +4807,7 @@ class ControlWindow(QWidget):
         percent_key = "y_percent_black" if is_black else "y_percent_white"
         if mode == "custom":
             current_percent = int(self.interval_label_settings.get(percent_key, 87.5))
-            percent, ok = QInputDialog.getInt(
+            percent, ok = _get_popup_int(
                 self,
                 "Posición personalizada",
                 "Porcentaje vertical (0=arriba, 100=abajo):",
@@ -4043,6 +5018,7 @@ class ControlWindow(QWidget):
                     combo.addItem(name, idx)
 
         def fill_chords(combo: QComboBox) -> None:
+            combo.setMaxVisibleItems(18)
             if combo.count() == 0:
                 combo.addItem("-", "")
                 for name in sorted(self.jazzscope_chords.keys()):
@@ -4050,6 +5026,7 @@ class ControlWindow(QWidget):
                     combo.addItem(label, name)
 
         def fill_scales(combo: QComboBox) -> None:
+            combo.setMaxVisibleItems(18)
             if combo.count() == 0:
                 combo.addItem("-", "")
                 for label, key in SCALE_OPTIONS:
@@ -4060,6 +5037,7 @@ class ControlWindow(QWidget):
         fill_scales(self.display_scale_combo)
 
         fill_root(self.display_panel_root_combo)
+        fill_root(self.display_panel_scale_root_combo)
         fill_chords(self.display_panel_chord_combo)
         fill_scales(self.display_panel_scale_combo)
 
@@ -4069,79 +5047,32 @@ class ControlWindow(QWidget):
     def _sync_selector_button_labels(self, *_args) -> None:
         chord_label = str(self.display_chord_combo.currentText() or "-")
         scale_label = str(self.display_scale_combo.currentText() or "-")
-        self.display_chord_popup_button.setText(f"Seleccionar acorde… ({chord_label})")
-        self.display_scale_popup_button.setText(f"Seleccionar escala… ({scale_label})")
+        chord_tip = "Sin acorde seleccionado" if chord_label == "-" else f"Acorde seleccionado: {chord_label}"
+        scale_tip = "Sin escala seleccionada" if scale_label == "-" else f"Escala seleccionada: {scale_label}"
+        self.display_chord_combo.setToolTip(chord_tip)
+        self.display_scale_combo.setToolTip(scale_tip)
+        if isinstance(getattr(self, "display_panel_chord_combo", None), QComboBox):
+            self.display_panel_chord_combo.setToolTip(chord_tip)
+        if isinstance(getattr(self, "display_panel_scale_combo", None), QComboBox):
+            self.display_panel_scale_combo.setToolTip(scale_tip)
 
-    def _run_selection_popup(self, title: str, combo: Optional[QComboBox]) -> bool:
-        if combo is None or combo.count() <= 0:
-            return False
-
-        dialog = QDialog(self)
-        dialog.setWindowTitle(title)
-        dialog.setModal(True)
-
-        layout = QVBoxLayout(dialog)
-        list_widget = QListWidget(dialog)
-        for idx in range(combo.count()):
-            list_widget.addItem(combo.itemText(idx))
-
-        current_row = combo.currentIndex()
-        if current_row < 0:
-            current_row = 0
-        if list_widget.count() > 0:
-            list_widget.setCurrentRow(current_row)
-
-        layout.addWidget(list_widget)
-
-        buttons = QHBoxLayout()
-        accept_btn = QPushButton("Aceptar", dialog)
-        cancel_btn = QPushButton("Cancelar", dialog)
-        buttons.addStretch()
-        buttons.addWidget(accept_btn)
-        buttons.addWidget(cancel_btn)
-        layout.addLayout(buttons)
-
-        accept_btn.clicked.connect(dialog.accept)
-        cancel_btn.clicked.connect(dialog.reject)
-        list_widget.itemDoubleClicked.connect(lambda _item: dialog.accept())
-
-        if _exec_popup_dialog(dialog) != int(QDialog.DialogCode.Accepted):
-            return False
-
-        row = list_widget.currentRow()
-        if 0 <= row < combo.count():
-            combo.setCurrentIndex(row)
-            return True
-        return False
-
-    def _open_chord_selector_popup(self, *args, **kwargs) -> None:
-        _ = (args, kwargs)
-        if self._run_selection_popup("Seleccionar acorde", getattr(self, "display_chord_combo", None)):
+    def _set_display_enabled_from_selection(self, kind: str) -> None:
+        if self._syncing_display_panel:
             return
-        self._show_status_message("No se pudo abrir el selector de acordes.")
-
-    def _open_scale_selector_popup(self, *args, **kwargs) -> None:
-        _ = (args, kwargs)
-        combo = getattr(self, "display_scale_combo", None)
-        if self._run_selection_popup("Seleccionar escala", combo):
+        if kind == "chord":
+            enabled = bool(self.display_chord_combo.currentData())
+            self.display_chord_checkbox.setChecked(enabled)
+            self._sync_panel_from_primary()
+            if enabled:
+                self._show_status_message(f"Acorde activado: {self.display_chord_combo.currentText()}.")
             return
-
-        if isinstance(combo, QComboBox) and combo.count() > 0:
-            current = max(combo.currentIndex(), 0)
-            options = [combo.itemText(i) for i in range(combo.count())]
-            selected, ok = QInputDialog.getItem(
-                self,
-                "Seleccionar escala",
-                "Escala:",
-                options,
-                current,
-                False,
-            )
-            if ok and selected in options:
-                combo.setCurrentIndex(options.index(selected))
-                return
-
-        self._show_status_message("No se pudo abrir el selector de escalas.")
+        if kind == "scale":
+            enabled = bool(self.display_scale_combo.currentData())
+            self.display_scale_checkbox.setChecked(enabled)
+            self._sync_panel_from_primary()
+            if enabled:
+                root = str(self.display_root_combo.currentText() or "").strip()
+                self._show_status_message(f"Escala activada: {root} {self.display_scale_combo.currentText()}.")
 
     def _toggle_scale_edit_mode(self, enabled: bool) -> None:
         self.scale_edit_mode_enabled = bool(enabled)
@@ -4154,7 +5085,7 @@ class ControlWindow(QWidget):
             self._schedule_visual_state_save()
 
     def _choose_scale_circle_size(self) -> None:
-        value, ok = QInputDialog.getInt(
+        value, ok = _get_popup_int(
             self,
             "Tamaño de círculos de escala",
             "Tamaño fijo (%):",
@@ -4198,6 +5129,9 @@ class ControlWindow(QWidget):
         scale_pcs = build_scale_pcs(root_pc, intervals, transpose)
         degree_idx = degree_index_for_note_pc(note % 12, scale_pcs)
         if degree_idx is None:
+            return
+        if int(degree_idx) == 0:
+            self._show_status_message("La fundamental mantiene siempre su categoría.")
             return
         if note not in self.piano.display_scale_notes:
             return
@@ -4267,34 +5201,55 @@ class ControlWindow(QWidget):
             result[-4] -= 12
         return sorted(result)
 
-    def _find_minor_ninth_warnings(self, notes: List[int]) -> Set[int]:
+    def _find_minor_ninth_warnings(self, notes: List[int], chord_info: Optional[Dict] = None) -> Set[int]:
+        principal_match = chord_info.get("principal_match") if chord_info else None
+        if isinstance(principal_match, dict):
+            root_pc = principal_match.get("root")
+            if root_pc is not None:
+                intervals = {((int(note) % 12) - int(root_pc)) % 12 for note in notes}
+                if 4 in intervals and 10 in intervals:
+                    return set()
+
         warnings: Set[int] = set()
         for i in range(len(notes)):
             for j in range(i + 1, len(notes)):
-                if abs(notes[i] - notes[j]) == 13:
+                distance = abs(notes[i] - notes[j])
+                if distance >= 13 and distance % 12 == 1:
                     warnings.add(notes[i])
                     warnings.add(notes[j])
         return warnings
 
-    def _update_display_overlays(self):
+    def _update_live_minor_ninth_warnings(self, notes: Set[int], chord_info: Optional[Dict] = None) -> None:
+        warnings = self._find_minor_ninth_warnings(sorted(int(note) for note in notes), chord_info)
+        self.piano.set_live_warning_notes(warnings, self.display_chord_warning_color)
+
+    def _update_display_overlays(self, *_args, show_status: bool = True):
         chord_overlays: Dict[int, QColor] = {}
+        chord_interval_labels: Dict[int, str] = {}
         scale_overlays: Dict[int, QColor] = {}
+        display_label_parts: List[str] = []
         should_persist = self._visual_state_tracking_enabled and not self._syncing_display_panel
 
         root_pc = self.display_root_combo.currentData()
         if root_pc is None:
             self.piano.set_display_chord_notes({})
             self.piano.set_display_scale_notes({})
+            self.piano.set_display_scale_label("")
             self._sync_panel_from_primary()
+            self._update_status_strip()
             return
 
         root_pc = int(root_pc)
         transpose = int(self.display_transpose_spin.value())
+        root_label = str(self.display_root_combo.currentText() or "").strip()
 
         if self.display_chord_checkbox.isChecked():
             chord_key = self.display_chord_combo.currentData()
             intervals = self.jazzscope_chords.get(chord_key, [])
             if intervals:
+                chord_name = str(self.display_chord_combo.currentText() or "").strip()
+                if chord_name and chord_name != "-":
+                    display_label_parts.append(f"{root_label} {chord_name}".strip())
                 start_oct = note_octave(self.piano.start_note)
                 end_oct = note_octave(self.piano.end_note)
                 base_oct = (start_oct + end_oct) // 2
@@ -4312,17 +5267,32 @@ class ControlWindow(QWidget):
                 if bass_note not in notes:
                     notes.append(bass_note)
                 warnings = self._find_minor_ninth_warnings(notes)
+                root_candidates = sorted(note for note in notes if note % 12 == root_pc)
+                root_note_for_labels = root_candidates[0] if root_candidates else base_midi
+                present_intervals = {(note - root_note_for_labels) % 12 for note in notes}
                 for note in notes:
                     if self.piano.start_note <= note <= self.piano.end_note:
                         if note in warnings:
                             chord_overlays[note] = QColor(self.display_chord_warning_color)
+                        elif note % 12 == root_pc:
+                            chord_overlays[note] = QColor(self.display_chord_root_color)
                         else:
                             chord_overlays[note] = QColor(self.display_chord_color)
+                        label = interval_label_for_context(
+                            (note - root_note_for_labels) % 12,
+                            present_intervals,
+                            str(chord_key or ""),
+                        )
+                        if label:
+                            chord_interval_labels[note] = label
 
         if self.display_scale_checkbox.isChecked():
             scale_key = self.display_scale_combo.currentData()
             intervals = SCALE_PATTERNS.get(scale_key or "")
             if intervals:
+                scale_name = str(self.display_scale_combo.currentText() or "").strip()
+                if scale_name and scale_name != "-":
+                    display_label_parts.append(f"{root_label} {scale_name}".strip())
                 scale_pcs = build_scale_pcs(root_pc, intervals, transpose)
                 scale_notes_with_colors: List[Tuple[int, QColor]] = []
                 for idx, pc in enumerate(scale_pcs):
@@ -4345,8 +5315,27 @@ class ControlWindow(QWidget):
 
         self.piano.set_display_chord_notes(chord_overlays)
         self.piano.set_display_scale_notes(scale_overlays)
+        self.display_chord_interval_labels = chord_interval_labels
+        if not self.active_notes and not self.sustained_notes:
+            self.piano.set_interval_labels(dict(self.display_chord_interval_labels))
+        self.piano.set_display_scale_label("  ·  ".join(display_label_parts))
         self._sync_panel_from_primary()
+        self._update_status_strip()
         if should_persist:
+            if show_status:
+                self._show_status_message("Visualización actualizada.", timeout_ms=2500)
+            self._schedule_visual_state_save()
+
+    def _announce_keyboard_range(self) -> None:
+        self._show_status_message(
+            f"Teclado: {self._current_keyboard_range_text()} ({int(self.octaves_spin.value())} octavas).",
+            timeout_ms=3000,
+        )
+
+    def _update_display_overlays_with_keyboard_status(self) -> None:
+        self._update_display_overlays(show_status=False)
+        if self._visual_state_tracking_enabled:
+            self._announce_keyboard_range()
             self._schedule_visual_state_save()
 
     # --- preferencias persistentes ---
@@ -4377,6 +5366,10 @@ class ControlWindow(QWidget):
             "display_chord_type": str(self.display_chord_combo.currentData() or ""),
             "display_scale_type": str(self.display_scale_combo.currentData() or ""),
             "display_scale_circle_size_percent": int(self.display_scale_circle_size_percent),
+            "display_scale_colors": {
+                str(key): QColor(color).name(QColor.NameFormat.HexArgb)
+                for key, color in self.display_scale_colors.items()
+            },
             "scale_edit_mode_enabled": bool(self.scale_edit_mode_enabled),
             "scale_role_overrides": {
                 str(scale): {str(pc): str(role) for pc, role in overrides.items()}
@@ -4384,12 +5377,13 @@ class ControlWindow(QWidget):
             },
             "display_inversion": int(self.display_inversion_spin.value()),
             "display_drop": str(self.display_drop_combo.currentData() or "none"),
-            "display_transpose": int(self.display_transpose_spin.value()),
+            "display_transpose": 0,
             "view_mode": str(self.view_mode),
             "start_note": int(self.start_combo.currentData() or DEFAULT_START_NOTE),
             "octaves": int(self.octaves_spin.value()),
             "interval_label_settings": self._serialize_interval_settings(self.interval_label_settings),
             "staff_settings": self._serialize_staff_settings(self.staff_settings),
+            "shortcut_overrides": dict(self._shortcut_overrides),
         }
 
     def save_default_appearance(self) -> None:
@@ -4417,9 +5411,7 @@ class ControlWindow(QWidget):
         self._apply_appearance_payload(payload)
 
     def _apply_appearance_payload(self, prefs: Dict[str, object]) -> None:
-        rgba = prefs.get("base_color_rgba")
-        if isinstance(rgba, list) and len(rgba) == 4 and all(isinstance(x, int) for x in rgba):
-            self.piano.set_base_color(QColor(*rgba))
+        self.piano.set_base_color(QColor(240, 154, 0))
 
         chord_rgba = prefs.get("chord_color_rgba")
         if isinstance(chord_rgba, list) and len(chord_rgba) == 4 and all(isinstance(x, int) for x in chord_rgba):
@@ -4484,6 +5476,16 @@ class ControlWindow(QWidget):
             self.display_scale_circle_size_percent = max(50, min(200, size_percent))
             self.piano.set_scale_circle_size_factor(self.display_scale_circle_size_percent / 100.0)
 
+        scale_colors = prefs.get("display_scale_colors")
+        if isinstance(scale_colors, dict):
+            for color_key, value in scale_colors.items():
+                if str(color_key) not in self.display_scale_colors or not isinstance(value, str):
+                    continue
+                color = QColor(value)
+                if color.isValid():
+                    self.display_scale_colors[str(color_key)] = color
+            self._sync_scale_palette_buttons()
+
         role_overrides = prefs.get("scale_role_overrides")
         if isinstance(role_overrides, dict):
             cleaned_overrides: Dict[str, Dict[int, str]] = {}
@@ -4522,9 +5524,7 @@ class ControlWindow(QWidget):
             if idx >= 0:
                 self.display_drop_combo.setCurrentIndex(idx)
 
-        display_transpose = prefs.get("display_transpose")
-        if isinstance(display_transpose, int):
-            self.display_transpose_spin.setValue(max(-24, min(24, display_transpose)))
+        self.display_transpose_spin.setValue(0)
 
         display_chord_enabled = prefs.get("display_chord_enabled")
         if isinstance(display_chord_enabled, bool):
@@ -4533,6 +5533,14 @@ class ControlWindow(QWidget):
         display_scale_enabled = prefs.get("display_scale_enabled")
         if isinstance(display_scale_enabled, bool):
             self.display_scale_checkbox.setChecked(display_scale_enabled)
+
+        shortcuts = prefs.get("shortcut_overrides")
+        if isinstance(shortcuts, dict):
+            self._shortcut_overrides = {
+                str(key): str(value)
+                for key, value in shortcuts.items()
+                if isinstance(key, str) and isinstance(value, str)
+            }
 
         interval_settings = prefs.get("interval_label_settings")
         if isinstance(interval_settings, dict):
@@ -4544,9 +5552,7 @@ class ControlWindow(QWidget):
             self.staff_settings.update({str(k): v for k, v in staff_settings.items()})
             self._apply_staff_settings()
 
-        saved_view_mode = prefs.get("view_mode")
-        if saved_view_mode in ("single", "separate"):
-            self.set_view_mode(str(saved_view_mode), persist=False)
+        self.set_view_mode(DEFAULT_VIEW_MODE, persist=False)
 
         keyboard_labels = prefs.get("keyboard_labels_visible")
         if isinstance(keyboard_labels, bool):
@@ -4575,7 +5581,7 @@ class ControlWindow(QWidget):
             "capture_window_ms": int(self.capture_window_spin.value()),
             "font_family": self.font_combo.currentFont().family(),
             "font_size": int(self.font_size_spin.value()),
-            "always_on_top": bool(self.always_on_top.isChecked()),
+            "always_on_top": False,
             "keyboard_labels_visible": bool(self.keyboard_labels_action.isChecked()),
             "chord_text_color": self.chord_text_color.name(),
             "chord_background": self.chord_bg_color.name(),
@@ -4622,6 +5628,10 @@ class ControlWindow(QWidget):
             "display_chord_type": str(self.display_chord_combo.currentData() or ""),
             "display_scale_type": str(self.display_scale_combo.currentData() or ""),
             "display_scale_circle_size_percent": int(self.display_scale_circle_size_percent),
+            "display_scale_colors": {
+                str(key): QColor(color).name(QColor.NameFormat.HexArgb)
+                for key, color in self.display_scale_colors.items()
+            },
             "scale_edit_mode_enabled": bool(self.scale_edit_mode_enabled),
             "scale_role_overrides": {
                 str(scale): {str(pc): str(role) for pc, role in overrides.items()}
@@ -4629,7 +5639,7 @@ class ControlWindow(QWidget):
             },
             "display_inversion": int(self.display_inversion_spin.value()),
             "display_drop": str(self.display_drop_combo.currentData() or "none"),
-            "display_transpose": int(self.display_transpose_spin.value()),
+            "display_transpose": 0,
             "view_mode": str(self.view_mode),
             "window_visibility": {
                 "keyboard": bool(self.piano_window.isVisible()),
@@ -4643,6 +5653,7 @@ class ControlWindow(QWidget):
                 "chords": self._geometry_payload_for(self.chord_window),
                 "staff": self._geometry_payload_for(self.staff_window),
             },
+            "shortcut_overrides": dict(self._shortcut_overrides),
         }
 
     def _serialize_interval_settings(self, settings: Dict) -> Dict:
@@ -4680,7 +5691,7 @@ class ControlWindow(QWidget):
 
     def export_chord_dictionary(self):
         default_path = str(Path.home() / "diccionario_acordes.json")
-        file_path, _ = QFileDialog.getSaveFileName(
+        file_path, _ = _get_popup_save_file_name(
             self,
             "Exportar diccionario de acordes",
             default_path,
@@ -4715,7 +5726,7 @@ class ControlWindow(QWidget):
             self._show_status_message(f"Exportación lista: diccionario exportado en {file_path}")
 
     def load_chord_dictionary_from_dialog(self):
-        file_path, _ = QFileDialog.getOpenFileName(
+        file_path, _ = _get_popup_open_file_name(
             self,
             "Cargar diccionario de acordes",
             str(Path.home()),
@@ -4754,17 +5765,7 @@ class ControlWindow(QWidget):
         if isinstance(octaves, int):
             self.octaves_spin.setValue(max(1, min(7, octaves)))
 
-        rgba = prefs.get("base_color_rgba")
-        if (
-            isinstance(rgba, list)
-            and len(rgba) == 4
-            and all(isinstance(x, int) for x in rgba)
-        ):
-            try:
-                self.piano.base_color = QColor(rgba[0], rgba[1], rgba[2], rgba[3])
-                self.piano.update()
-            except Exception:
-                pass
+        self.piano.set_base_color(QColor(240, 154, 0))
 
         chord_rgba = prefs.get("chord_color_rgba")
         if (
@@ -4874,9 +5875,7 @@ class ControlWindow(QWidget):
             if idx >= 0:
                 self.display_drop_combo.setCurrentIndex(idx)
 
-        display_transpose = prefs.get("display_transpose")
-        if isinstance(display_transpose, int):
-            self.display_transpose_spin.setValue(max(-24, min(24, display_transpose)))
+        self.display_transpose_spin.setValue(0)
 
         display_chord_enabled = prefs.get("display_chord_enabled")
         if isinstance(display_chord_enabled, bool):
@@ -4898,11 +5897,7 @@ class ControlWindow(QWidget):
             self.staff_settings.update({str(k): v for k, v in staff_settings.items()})
             self._apply_staff_settings()
 
-        saved_view_mode = prefs.get("view_mode")
-        if saved_view_mode in ("single", "separate"):
-            self.set_view_mode(str(saved_view_mode), persist=False)
-        else:
-            self.set_view_mode(DEFAULT_VIEW_MODE, persist=False)
+        self.set_view_mode(DEFAULT_VIEW_MODE, persist=False)
 
         self._restore_window_geometries(prefs)
 
@@ -4922,8 +5917,7 @@ class ControlWindow(QWidget):
             self.capture_window_ms = capture_window_ms
             self.capture_window_spin.setValue(capture_window_ms)
 
-        on_top = bool(prefs.get("always_on_top", False))
-        self.always_on_top.setChecked(on_top)
+        self.always_on_top.setChecked(False)
 
         keyboard_labels = prefs.get("keyboard_labels_visible", True)
         self.keyboard_labels_action.setChecked(bool(keyboard_labels))
@@ -5047,6 +6041,7 @@ class ControlWindow(QWidget):
 
     def _toggle_keyboard_labels(self, checked: bool):
         self.piano.set_keyboard_labels_visible(checked)
+        self._update_status_strip()
         self._write_preferences(False)
 
     def _restore_window_geometries(self, prefs: Dict):
@@ -5196,15 +6191,16 @@ class ControlWindow(QWidget):
             self.midi_in = None
             self.midi_inputs = []
 
-    def range_changed(self, *_args, fit_window: bool = True):
+    def range_changed(self, *_args, fit_window: bool = False):
         start = self.start_combo.currentData()
         octaves = self.octaves_spin.value()
         if start is None:
             return
         self.piano.set_range_from_start_and_octaves(int(start), int(octaves))
+        self._sync_single_window_keyboard_controls()
         if fit_window:
             self._fit_keyboard_window_to_available_width()
-        self._update_display_overlays()
+        self._update_display_overlays_with_keyboard_status()
 
     def _fit_keyboard_window_to_available_width(self):
         screen = self.piano_window.screen() or QApplication.primaryScreen()
@@ -5242,14 +6238,14 @@ class ControlWindow(QWidget):
         self.piano_window.resize(target_width, target_height)
 
     def choose_color(self):
-        color = QColorDialog.getColor(self.piano.base_color, self, "Seleccionar color de notas")
+        color = _get_popup_color(self, self.piano.base_color, "Seleccionar color de notas")
         if color.isValid():
             self.piano.base_color = color
             self.piano.update()
             self._write_preferences(False)
 
     def choose_chord_color(self):
-        color = QColorDialog.getColor(self.chord_text_color, self, "Seleccionar color del cifrado")
+        color = _get_popup_color(self, self.chord_text_color, "Seleccionar color del cifrado")
         if color.isValid():
             self.chord_text_color = color
             self.chord_window.set_chord_color(color)
@@ -5340,11 +6336,11 @@ class ControlWindow(QWidget):
         else:
             default_text = " ".join(NOTE_NAMES[pc] for pc in signature)
 
-        text, ok = QInputDialog.getText(
+        text, ok = _get_popup_text(
             self,
             "Editar etiquetas",
             "Escribe la enarmonía deseada (ej: E Bb D F# A):",
-            text=default_text,
+            default_text,
         )
         if not ok:
             return
@@ -5396,6 +6392,7 @@ class ControlWindow(QWidget):
         chord_info = self.chord_window.update_chord(notes)
         if chord_info is not None:
             chord_info["custom_spelling_map"] = self._custom_spelling_for_notes(notes, chord_info)
+        self._update_live_minor_ninth_warnings(notes, chord_info)
         self.staff_window.set_notes(notes, chord_info)
         self._update_interval_labels(notes, chord_info)
 
@@ -5471,11 +6468,11 @@ class ControlWindow(QWidget):
             return
         pattern = self.custom_chords[index]
         current_name = pattern.get("nombre", "")
-        new_name, ok = QInputDialog.getText(
+        new_name, ok = _get_popup_text(
             self,
             "Editar cifrado",
             "Nuevo nombre para el acorde:",
-            text=current_name,
+            current_name,
         )
         if not ok:
             return
@@ -5573,7 +6570,7 @@ class ControlWindow(QWidget):
 
     def _update_interval_labels(self, notas: Set[int], chord_info: Optional[Dict]):
         if not notas:
-            self.piano.set_interval_labels({})
+            self.piano.set_interval_labels(dict(self.display_chord_interval_labels))
             return
 
         principal_match = chord_info.get("principal_match") if chord_info else None
@@ -5592,10 +6589,12 @@ class ControlWindow(QWidget):
             return
 
         root_note = root_candidates[0]
+        chord_name = str(principal_match.get("nombre") or "")
+        present_intervals = {(int(note) - root_note) % 12 for note in notas}
         labels: Dict[int, str] = {}
         for note in notas:
             interval = (note - root_note) % 12
-            label = INTERVAL_LABELS.get(interval)
+            label = interval_label_for_context(interval, present_intervals, chord_name)
             if label:
                 labels[note] = label
 
@@ -5749,6 +6748,7 @@ class ControlWindow(QWidget):
                         notas_para_acorde,
                         chord_info,
                     )
+                self._update_live_minor_ninth_warnings(notas_para_acorde, chord_info)
                 self.staff_window.set_notes(notas_para_acorde, chord_info)
                 self._update_interval_labels(notas_para_acorde, chord_info)
                 if self.learning_chord:

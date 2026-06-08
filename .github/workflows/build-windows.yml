@@ -1,0 +1,51 @@
+name: Build Windows EXE
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      - name: Build executable
+        shell: cmd
+        run: |
+          pyinstaller ^
+            --clean ^
+            --noconfirm ^
+            --name "MIDI Piano Jaramillo" ^
+            --windowed ^
+            --icon "G7alt.ico" ^
+            --add-data "assets;assets" ^
+            --add-data "diccionario_acordes.json;." ^
+            main.py
+
+      - name: Package ZIP
+        shell: pwsh
+        run: |
+          $stage = "MIDI-Piano-Jaramillo-Windows"
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item -Recurse "dist\MIDI Piano Jaramillo" "$stage\MIDI Piano Jaramillo"
+          Copy-Item "release_docs\README_windows.txt" "$stage\README_windows.txt"
+          Compress-Archive -Path "$stage\*" -DestinationPath "MIDI-Piano-Jaramillo-Windows.zip" -Force
+
+      - name: Upload ZIP artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: MIDI-Piano-Jaramillo-Windows
+          path: MIDI-Piano-Jaramillo-Windows.zip

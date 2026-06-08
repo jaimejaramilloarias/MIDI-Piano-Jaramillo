@@ -18,16 +18,31 @@ class TestSelectionPopups(unittest.TestCase):
                         return ast.get_source_segment(self.source, item) or ""
         return ""
 
-    def test_display_menus_use_popup_buttons_for_selection(self) -> None:
+    def test_display_menus_use_inline_comboboxes_for_selection(self) -> None:
         setup_source = self._class_method_source("ControlWindow", "_setup_display_menus")
-        self.assertIn("display_chord_popup_button", setup_source)
-        self.assertIn("display_scale_popup_button", setup_source)
+        self.assertIn("chord_row1.addWidget(self.display_chord_combo)", setup_source)
+        self.assertIn("scale_row.addWidget(self.display_scale_combo)", setup_source)
+        self.assertNotIn("display_chord_popup_button", setup_source)
+        self.assertNotIn("display_scale_popup_button", setup_source)
 
-    def test_popup_helpers_exist(self) -> None:
-        run_popup_source = self._class_method_source("ControlWindow", "_run_selection_popup")
-        self.assertIn("QDialog", run_popup_source)
-        self.assertIn("QListWidget", run_popup_source)
-        self.assertIn("WindowStaysOnTopHint", run_popup_source)
+    def test_panel_selection_changes_activate_display_modes(self) -> None:
+        connect_source = self._class_method_source("ControlWindow", "_connect_display_panel_signals")
+        chord_handler = self._class_method_source("ControlWindow", "_handle_panel_chord_selection_changed")
+        scale_handler = self._class_method_source("ControlWindow", "_handle_panel_scale_selection_changed")
+
+        self.assertIn("_handle_panel_chord_selection_changed", connect_source)
+        self.assertIn("_handle_panel_scale_selection_changed", connect_source)
+        self.assertIn("_set_display_enabled_from_selection(\"chord\")", chord_handler)
+        self.assertIn("_set_display_enabled_from_selection(\"scale\")", scale_handler)
+
+    def test_visualization_panel_is_not_in_inline_console(self) -> None:
+        panel_source = self._class_method_source("ControlWindow", "_build_display_panel")
+
+        self.assertNotIn("display_panel_keyboard_labels", panel_source)
+        self.assertNotIn("display_panel_capture_spin", panel_source)
+        self.assertNotIn("display_panel_edit_chords", panel_source)
+        self.assertNotIn("display_panel_midi_learn", panel_source)
+        self.assertNotIn("display_panel_single_bg_button", panel_source)
 
     def test_midi_learn_input_uses_foreground_prompt(self) -> None:
         method_source = self._class_method_source("ControlWindow", "_complete_learning_with_notes")
@@ -36,4 +51,3 @@ class TestSelectionPopups(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

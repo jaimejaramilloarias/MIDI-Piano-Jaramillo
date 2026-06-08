@@ -5,7 +5,7 @@ a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[],
+    datas=[('assets', 'assets'), ('diccionario_acordes.json', '.')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
