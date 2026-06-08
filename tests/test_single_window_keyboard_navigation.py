@@ -53,7 +53,7 @@ class TestSingleWindowKeyboardNavigation(unittest.TestCase):
         self.assertIn("layout.addWidget(keyboard_nav_panel)", piano_window_source)
         self.assertIn("self.piano.setMinimumHeight(300)", piano_window_source)
         self.assertIn("self._apply_frameless(False)", piano_window_source)
-        self.assertIn("self.resize(1280, 900)", piano_window_source)
+        self.assertNotIn("self.resize(1280, 900)", piano_window_source)
 
     def test_startup_ignores_saved_separate_view_mode(self) -> None:
         appearance_source = self._class_method_source("ControlWindow", "_apply_appearance_payload")
@@ -79,6 +79,24 @@ class TestSingleWindowKeyboardNavigation(unittest.TestCase):
         self.assertIn("_change_visible_octaves(1)", connect_source)
         self.assertIn("_single_window_start_notes(int(self.octaves_spin.value()))", shift_source)
         self.assertIn("fit_window: bool = False", range_source)
+        self.assertIn("self.range_changed()", shift_source)
+        self.assertIn("self.range_changed()", change_source)
+        self.assertNotIn("fit_window=True", shift_source)
+        self.assertNotIn("fit_window=True", change_source)
+
+    def test_single_window_resizes_only_from_manual_paths(self) -> None:
+        piano_source = self._class_method_source("PianoWidget", "mouseMoveEvent")
+        combined_source = self._class_method_source("PianoWindow", "show_combined_view")
+        fit_source = self._class_method_source("ControlWindow", "_fit_keyboard_window_to_available_width")
+        rearrange_source = self._class_method_source("ControlWindow", "rearrange_windows")
+
+        self.assertIn("if self._resizing", piano_source)
+        self.assertIn("self.window().resize(new_width, new_height)", piano_source)
+        self.assertNotIn("resize(1280, 900)", combined_source)
+        self.assertIn('if self.view_mode == "single":', fit_source)
+        self.assertIn('if self.view_mode == "single":\n            return', fit_source)
+        single_branch = rearrange_source.split('if self.view_mode == "single":', 1)[1].split("else:", 1)[0]
+        self.assertNotIn("setGeometry", single_branch)
 
 
 if __name__ == "__main__":

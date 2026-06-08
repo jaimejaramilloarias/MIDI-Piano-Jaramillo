@@ -143,6 +143,18 @@
       "obligatorias": [
         0,
         4,
+        10
+      ],
+      "opcionales": [],
+      "fuente": "base"
+    },
+    {
+      "nombre": "7",
+      "root_pc": 0,
+      "root_name": "C",
+      "obligatorias": [
+        0,
+        4,
         7,
         10
       ],

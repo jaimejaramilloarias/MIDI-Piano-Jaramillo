@@ -286,6 +286,42 @@ def _install_popup_drag_support(dialog: QDialog) -> None:
 def _prepare_popup_dialog(dialog: QDialog, draggable: bool = True) -> None:
     dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
     dialog.setWindowModality(Qt.WindowModality.ApplicationModal)
+    dialog.setStyleSheet(
+        "QDialog, QInputDialog {"
+        "  background-color: #f7f7f8;"
+        "  color: #1d1d1f;"
+        "  font-family: 'Avenir Next', 'Helvetica Neue', Arial, sans-serif;"
+        "  font-size: 13px;"
+        "}"
+        "QLabel {"
+        "  color: #1d1d1f;"
+        "  background-color: transparent;"
+        "}"
+        "QLineEdit, QSpinBox, QDoubleSpinBox, QTextEdit, QListWidget {"
+        "  color: #1d1d1f;"
+        "  background-color: #ffffff;"
+        "  border: 1px solid #b8b8bd;"
+        "  border-radius: 4px;"
+        "  padding: 4px 6px;"
+        "  selection-background-color: #f09a00;"
+        "  selection-color: #1d1d1f;"
+        "}"
+        "QPushButton {"
+        "  color: #1d1d1f;"
+        "  background-color: #ffffff;"
+        "  border: 1px solid #b8b8bd;"
+        "  border-radius: 6px;"
+        "  padding: 6px 14px;"
+        "  min-width: 72px;"
+        "}"
+        "QPushButton:hover {"
+        "  background-color: #fff3df;"
+        "  border-color: #f09a00;"
+        "}"
+        "QPushButton:pressed {"
+        "  background-color: #f09a00;"
+        "}"
+    )
     if draggable:
         _install_popup_drag_support(dialog)
 
@@ -458,6 +494,41 @@ INTERVAL_LABELS = {
 }
 
 
+SIMPLE_INTERVAL_LABELS = {
+    0: "8j",
+    1: "2m",
+    2: "2M",
+    3: "3m",
+    4: "3M",
+    5: "4j",
+    6: "4+",
+    7: "5j",
+    8: "6m",
+    9: "6M",
+    10: "7m",
+    11: "7M",
+}
+
+
+def live_note_or_interval_label(notas) -> str:
+    ordered = sorted(set(int(n) for n in notas))
+    if len(ordered) == 1:
+        return midi_to_name(ordered[0])
+    if len(ordered) == 2:
+        interval = abs(ordered[1] - ordered[0]) % 12
+        if interval == 0:
+            return "8j"
+        return SIMPLE_INTERVAL_LABELS.get(interval, "")
+    return ""
+
+
+def simple_interval_name(interval: int) -> str:
+    interval = int(interval) % 12
+    if interval == 0:
+        return "8j"
+    return SIMPLE_INTERVAL_LABELS.get(interval, "")
+
+
 def interval_label_for_context(interval: int, present_intervals: Set[int], chord_name: str = "") -> Optional[str]:
     interval = int(interval) % 12
     present = {int(ivl) % 12 for ivl in present_intervals}
@@ -517,6 +588,7 @@ BASE_CHORD_PATTERNS = [
     {'nombre':'m(add2)', 'obligatorias':[0,2,3,7], 'opcionales':[]},
     {'nombre':'m(add4)', 'obligatorias':[0,3,5,7], 'opcionales':[]},
     {'nombre':'6', 'obligatorias':[0,4,7,9], 'opcionales':[]},
+    {'nombre':'7', 'obligatorias':[0,4,10], 'opcionales':[]},
     {'nombre':'7', 'obligatorias':[0,4,7,10], 'opcionales':[]},
     {'nombre':'∆', 'obligatorias':[0,4,7,11], 'opcionales':[]},
     {'nombre':'m6', 'obligatorias':[0,3,7,9], 'opcionales':[]},
@@ -1660,7 +1732,6 @@ class PianoWindow(QMainWindow):
 
         self.setWindowTitle("MIDI Piano — Vista única")
         self._apply_frameless(False)
-        self.resize(1280, 900)
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and callable(self.on_double_click):
@@ -1691,6 +1762,8 @@ class ChordDisplayWidget(QWidget):
         self.alt_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.alt_label.setMinimumWidth(0)
         self.alt_label.setContentsMargins(8, 0, 0, 0)
+        self.alt_label.setWordWrap(True)
+        self.alt_label.setTextFormat(Qt.TextFormat.PlainText)
 
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1715,6 +1788,8 @@ class ChordDisplayWidget(QWidget):
         alt_font = QFont(family, alt_size)
         alt_font.setWeight(QFont.Weight.Normal)
         self.alt_label.setFont(alt_font)
+        metrics = QFontMetrics(alt_font)
+        self.alt_label.setMaximumHeight(max(34, metrics.lineSpacing() * 2 + 4))
 
     def set_chord_color(self, color: QColor):
         if not color.isValid():
@@ -1735,19 +1810,26 @@ class ChordDisplayWidget(QWidget):
         alternativos = info.get("alternativos") or []
 
         if not principal:
-            self.main_label.setText("")
+            self.main_label.setText(live_note_or_interval_label(notas))
             self.alt_label.setText("")
             return info
 
         self.main_label.setText(principal)
 
-        # Alternativos a la derecha, pegados al principal
         if alternativos:
-            self.alt_label.setText(" ".join(alternativos))
+            self.alt_label.setText(self._format_alternative_chords(alternativos))
         else:
             self.alt_label.setText("")
 
         return info
+
+    def _format_alternative_chords(self, alternatives: List[str]) -> str:
+        cleaned = [str(item).strip() for item in alternatives if str(item).strip()]
+        if len(cleaned) <= 2:
+            return " ".join(cleaned)
+
+        midpoint = (len(cleaned) + 1) // 2
+        return " ".join(cleaned[:midpoint]) + "\n" + " ".join(cleaned[midpoint:])
 
 
 class ChordWindow(QMainWindow):
@@ -2466,6 +2548,7 @@ class ControlWindow(QWidget):
         self.learning_chord: bool = False
         self.learning_waiting_first_note: bool = False
         self.learning_capture_notes: Set[int] = set()
+        self.midi_learn_help_dialog: Optional[QDialog] = None
         self.capture_window_ms: int = 500
         self._learn_button_default_text = "Midi learn: nuevo cifrado"
         self.chord_text_color = QColor(Qt.GlobalColor.white)
@@ -2771,6 +2854,7 @@ class ControlWindow(QWidget):
         self._apply_chord_font()
         self._refresh_learned_chords_ui()
         self._update_display_overlays()
+        QTimer.singleShot(0, self._ensure_startup_window_visible)
 
     def _connect_signal_handler(self, signal, handler_name: str, widget: Optional[QWidget] = None, control_label: str = "control") -> None:
         handler = getattr(self, handler_name, None)
@@ -2853,6 +2937,24 @@ class ControlWindow(QWidget):
             status_bar.showMessage(str(text), max(0, int(timeout_ms)))
         else:
             print(str(text))
+
+    def _ensure_startup_window_visible(self) -> None:
+        if self.view_mode != "single":
+            self.show_all_windows()
+            return
+
+        screen = self.piano_window.screen() or QApplication.primaryScreen()
+        if screen is not None:
+            area = screen.availableGeometry()
+            geometry = self.piano_window.frameGeometry()
+            if not geometry.isValid() or not area.intersects(geometry):
+                width = min(max(900, int(area.width() * 0.86)), area.width())
+                height = min(max(640, int(area.height() * 0.86)), area.height())
+                x = area.x() + max(0, int((area.width() - width) / 2))
+                y = area.y() + max(0, int((area.height() - height) / 2))
+                self.piano_window.setGeometry(x, y, width, height)
+
+        self._bring_to_front(self.piano_window)
 
     def _confirm_action(self, title: str, message: str) -> bool:
         text = f"{title}: {message}" if title else message
@@ -3059,8 +3161,15 @@ class ControlWindow(QWidget):
         self.rearrange_action.triggered.connect(self.rearrange_windows)
 
         self.dictionary_menu = self.menu_bar.addMenu("Diccionario")
+        learn_chord = self.dictionary_menu.addAction("Aprender nuevo cifrado…")
+        learn_chord.triggered.connect(self.start_learning_mode)
+        show_learn_panel = self.dictionary_menu.addAction("Ver cifrados aprendidos…")
+        show_learn_panel.triggered.connect(lambda: self._show_controls_tab("Aprender"))
+        self.dictionary_menu.addSeparator()
         load_dict = self.dictionary_menu.addAction("Cargar diccionario…")
         load_dict.triggered.connect(self.load_chord_dictionary_from_dialog)
+        export_dict = self.dictionary_menu.addAction("Exportar diccionario…")
+        export_dict.triggered.connect(self.export_chord_dictionary)
 
         self._setup_view_menu()
         self._setup_display_menus()
@@ -3169,9 +3278,6 @@ class ControlWindow(QWidget):
         area = screen.availableGeometry()
         margin = 24
         if self.view_mode == "single":
-            width = max(900, area.width() - margin * 2)
-            height = max(640, area.height() - margin * 2)
-            self.piano_window.setGeometry(area.x() + margin, area.y() + margin, width, height)
             self._bring_to_front(self.piano_window)
         else:
             top_height = max(260, int(area.height() * 0.42))
@@ -4089,8 +4195,19 @@ class ControlWindow(QWidget):
 
     def _setup_controls_menu(self):
         self.controls_menu = self.menu_bar.addMenu("Controles")
+        midi_tab_link = self.controls_menu.addAction("Panel MIDI…")
+        midi_tab_link.triggered.connect(lambda: self._show_controls_tab("MIDI"))
+        keyboard_tab_link = self.controls_menu.addAction("Panel Teclado…")
+        keyboard_tab_link.triggered.connect(lambda: self._show_controls_tab("Teclado"))
+        appearance_tab_link = self.controls_menu.addAction("Panel Apariencia…")
+        appearance_tab_link.triggered.connect(lambda: self._show_controls_tab("Apariencia"))
+        learn_tab_link = self.controls_menu.addAction("Panel Aprender…")
+        learn_tab_link.triggered.connect(lambda: self._show_controls_tab("Aprender"))
+        self.controls_menu.addSeparator()
         edit_chords_action = self.controls_menu.addAction("Editar etiquetas de acordes…")
         edit_chords_action.triggered.connect(self._edit_chord_labels)
+        learn_chord_action = self.controls_menu.addAction("Midi learn: nuevo cifrado…")
+        learn_chord_action.triggered.connect(self.start_learning_mode)
         self.keyboard_labels_action = self.controls_menu.addAction("Etiquetas del teclado")
         self.keyboard_labels_action.setCheckable(True)
         self.keyboard_labels_action.setChecked(True)
@@ -4103,6 +4220,17 @@ class ControlWindow(QWidget):
         shortcuts_action.triggered.connect(self._open_shortcuts_dialog)
         save_appearance_action = self.controls_menu.addAction("Guardar apariencia actual como predeterminada")
         save_appearance_action.triggered.connect(self.save_default_appearance)
+
+    def _show_controls_tab(self, tab_name: str) -> None:
+        tabs = getattr(self, "primary_controls_tabs", None)
+        if isinstance(tabs, QTabWidget):
+            for index in range(tabs.count()):
+                if tabs.tabText(index) == tab_name:
+                    tabs.setCurrentIndex(index)
+                    break
+        self.show()
+        self.raise_()
+        self.activateWindow()
 
     def _setup_staff_menu(self):
         self.staff_menu = self.menu_bar.addMenu("Partitura")
@@ -6203,6 +6331,9 @@ class ControlWindow(QWidget):
         self._update_display_overlays_with_keyboard_status()
 
     def _fit_keyboard_window_to_available_width(self):
+        if self.view_mode == "single":
+            return
+
         screen = self.piano_window.screen() or QApplication.primaryScreen()
         if screen is None:
             return
@@ -6616,9 +6747,86 @@ class ControlWindow(QWidget):
         self.learning_chord = True
         self.learning_waiting_first_note = True
         self._set_learn_button_text("Midi learn: esperando acorde…")
+        self._show_midi_learn_start_dialog()
         self._show_status_message(
-            "Midi learn: toca el acorde en tu teclado MIDI. Se abrirá una ventana de captura desde la primera nota."
+            "Midi learn: toca y sostén el acorde en tu teclado MIDI. Al capturarlo, escribe el cifrado en la ventana."
         )
+
+    def _show_midi_learn_start_dialog(self) -> None:
+        existing = getattr(self, "midi_learn_help_dialog", None)
+        if isinstance(existing, QDialog) and existing.isVisible():
+            existing.raise_()
+            existing.activateWindow()
+            return
+
+        parent = self.window() if isinstance(self.window(), QWidget) else self
+        dialog = QDialog(parent)
+        dialog.setWindowTitle("Midi learn: esperando acorde")
+        dialog.setWindowFlag(Qt.WindowType.WindowStaysOnTopHint, True)
+        dialog.setWindowModality(Qt.WindowModality.NonModal)
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, False)
+        dialog.setStyleSheet(
+            "QDialog {"
+            "  background-color: #f7f7f8;"
+            "  color: #1d1d1f;"
+            "  font-family: 'Avenir Next', 'Helvetica Neue', Arial, sans-serif;"
+            "  font-size: 13px;"
+            "}"
+            "QLabel { color: #1d1d1f; background-color: transparent; }"
+            "QPushButton {"
+            "  color: #1d1d1f;"
+            "  background-color: #ffffff;"
+            "  border: 1px solid #b8b8bd;"
+            "  border-radius: 6px;"
+            "  padding: 6px 14px;"
+            "  min-width: 72px;"
+            "}"
+            "QPushButton:hover { background-color: #fff3df; border-color: #f09a00; }"
+            "QPushButton:pressed { background-color: #f09a00; }"
+        )
+
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(12)
+
+        title = QLabel("Midi learn está activo", dialog)
+        title_font = QFont("Avenir Next", 16)
+        title_font.setWeight(QFont.Weight.DemiBold)
+        title.setFont(title_font)
+        layout.addWidget(title)
+
+        instructions = QLabel(
+            "1. Toca y sostén el acorde que quieres aprender.\n"
+            "2. La app capturará las notas desde el primer NOTE ON.\n"
+            "3. Luego se abrirá otra ventana para escribir el cifrado.\n\n"
+            "Si ya estabas tocando un acorde antes de activar Midi learn, vuelve a presionar el botón para capturarlo directamente.",
+            dialog,
+        )
+        instructions.setWordWrap(True)
+        layout.addWidget(instructions)
+
+        button_row = QHBoxLayout()
+        close_button = QPushButton("Entendido", dialog)
+        cancel_button = QPushButton("Cancelar aprendizaje", dialog)
+        close_button.clicked.connect(dialog.close)
+        cancel_button.clicked.connect(lambda: (self._reset_learning_state(), dialog.close()))
+        button_row.addStretch()
+        button_row.addWidget(cancel_button)
+        button_row.addWidget(close_button)
+        layout.addLayout(button_row)
+
+        dialog.resize(460, dialog.sizeHint().height())
+        self.midi_learn_help_dialog = dialog
+        _raise_dialog_parent(parent)
+        dialog.show()
+        dialog.raise_()
+        dialog.activateWindow()
+
+    def _close_midi_learn_start_dialog(self) -> None:
+        dialog = getattr(self, "midi_learn_help_dialog", None)
+        if isinstance(dialog, QDialog):
+            dialog.close()
+        self.midi_learn_help_dialog = None
 
     def _complete_learning_with_notes(self, notas):
         self._reset_learning_state()
@@ -6633,10 +6841,23 @@ class ControlWindow(QWidget):
 
         root_note = ordenadas[0]
         intervals = [(n - root_note) % 12 for n in ordenadas]
+        note_names = ", ".join(midi_to_name(note) for note in ordenadas)
+        interval_names = ", ".join(
+            "fundamental" if interval == 0 else simple_interval_name(interval)
+            for interval in intervals
+        )
+        prompt = (
+            "MIDI learn capturó este acorde.\n\n"
+            f"Notas capturadas: {note_names}\n"
+            f"Fundamental asumida: {midi_to_name(root_note)}\n"
+            f"Intervalos que se guardarán: {interval_names}\n\n"
+            "Escribe abajo el cifrado que quieres guardar para este grupo de notas.\n"
+            "Ejemplos: 7, m7(b5), 13(b9), add2."
+        )
 
         name, ok = self._prompt_text_foreground(
             "Midi learn: nuevo cifrado",
-            "Escribe el nombre/cifrado del acorde:",
+            prompt,
         )
         if not ok:
             return
@@ -6648,6 +6869,7 @@ class ControlWindow(QWidget):
         self._register_custom_chord(name, intervals, persist=True)
 
     def _reset_learning_state(self):
+        self._close_midi_learn_start_dialog()
         self.learning_chord = False
         self.learning_waiting_first_note = False
         self.learning_capture_notes.clear()
@@ -6765,15 +6987,20 @@ class ControlWindow(QWidget):
 
 def main():
     app = QApplication(sys.argv)
+    app.setQuitOnLastWindowClosed(False)
 
     piano_window = PianoWindow()
     chord_window = ChordWindow()
     staff_window = StaffWindow()
+    app.piano_window = piano_window
+    app.chord_window = chord_window
+    app.staff_window = staff_window
     piano_window.show()
     chord_window.show()
     staff_window.show()
 
     control_window = ControlWindow(piano_window, chord_window, staff_window)
+    app.control_window = control_window  # mantiene vivos los controles y atajos durante toda la sesión
 
     sys.exit(app.exec())
 
