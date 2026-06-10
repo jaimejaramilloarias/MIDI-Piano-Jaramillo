@@ -72,7 +72,7 @@ class TestInterfaceImprovements(unittest.TestCase):
     def test_single_window_styles_have_modern_font_and_contrast(self) -> None:
         style_source = self._class_method_source("ControlWindow", "_apply_single_view_styles")
 
-        self.assertIn("'Avenir Next'", style_source)
+        self.assertIn("UI_FONT_STACK", style_source)
         self.assertIn("QTabBar::tab", style_source)
         self.assertIn("QCheckBox::indicator", style_source)
         self.assertIn("background: #f6f6f7", style_source)
@@ -86,6 +86,41 @@ class TestInterfaceImprovements(unittest.TestCase):
         self.assertIn("QLabel, QCheckBox { color: #1d1d1f", style_source)
         self.assertIn("widget.setStyleSheet(menu_panel_style)", style_source)
         self.assertIn("QToolButton::menu-indicator { image: none", style_source)
+
+    def test_windows_visual_parity_uses_platform_fonts_and_scaling(self) -> None:
+        main_source = self.source
+        piano_source = self._class_source("PianoWidget")
+        staff_source = self._class_source("StaffWidget")
+        chord_source = self._class_source("ChordDisplayWidget")
+        ensure_source = self._class_method_source("ControlWindow", "_ensure_startup_window_visible")
+        main_fn_source = ""
+        for node in self.tree.body:
+            if isinstance(node, ast.FunctionDef) and node.name == "main":
+                main_fn_source = ast.get_source_segment(self.source, node) or ""
+                break
+
+        self.assertIn("UI_FONT_FAMILY = \"Segoe UI\" if IS_WINDOWS else \"Avenir Next\"", main_source)
+        self.assertIn("app.setFont(ui_font(10 if IS_WINDOWS else 13))", main_fn_source)
+        self.assertIn("WINDOWS_SCALE_CIRCLE_SCALE", piano_source)
+        self.assertIn("\"color_black\": QColor(Qt.GlobalColor.black)", piano_source)
+        self.assertIn("WINDOWS_STAFF_GLYPH_SCALE", staff_source)
+        self.assertIn("chord_scale = 0.72 if IS_WINDOWS else 1.0", chord_source)
+        self.assertIn("def resizeEvent(self, event):", chord_source)
+        self.assertIn("_apply_responsive_fonts", chord_source)
+        self.assertIn("_fit_font_size", chord_source)
+        self.assertIn("WINDOWS_DEFAULT_WIDTH", ensure_source)
+        self.assertIn("too_large", ensure_source)
+
+    def test_black_key_interval_labels_have_independent_smaller_scale(self) -> None:
+        piano_source = self._class_source("PianoWidget")
+        paint_source = self._class_method_source("PianoWidget", "paintEvent")
+        size_source = self._class_method_source("PianoWidget", "_interval_label_font_size")
+
+        self.assertIn("_interval_label_font_size(key_width, key_height, False)", paint_source)
+        self.assertIn("_interval_label_font_size(black_width, black_height, True)", paint_source)
+        self.assertIn("black_key_scale = 0.78 if is_black_key else 1.0", size_source)
+        self.assertIn("0.60 if is_black_key else 0.68", size_source)
+        self.assertIn("0.18 if is_black_key else 0.21", size_source)
 
     def test_controls_menu_does_not_embed_full_control_window(self) -> None:
         controls_source = self._class_method_source("ControlWindow", "_setup_controls_menu")

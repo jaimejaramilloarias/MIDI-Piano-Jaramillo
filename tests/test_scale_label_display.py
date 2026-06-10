@@ -32,8 +32,9 @@ class TestScaleLabelDisplay(unittest.TestCase):
         self.assertIn("self.display_scale_label = \"\"", piano_source)
         self.assertIn("set_display_scale_label", piano_source)
         self.assertIn("_draw_display_scale_label(painter)", paint_source)
-        self.assertIn("QFont(\"Avenir Next\")", draw_source)
+        self.assertIn("QFont(UI_FONT_FAMILY)", draw_source)
         self.assertIn("max(15, min(26", draw_source)
+        self.assertIn("WINDOWS_FONT_SCALE", draw_source)
         self.assertIn("drawRoundedRect", draw_source)
         self.assertIn("elidedText", draw_source)
 

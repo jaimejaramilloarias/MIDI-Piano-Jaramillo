@@ -76,6 +76,27 @@ MAX_NOTE = 108  # C8
 DEFAULT_START_NOTE = 36  # C2
 DEFAULT_OCTAVES = 5      # C2–C7
 DEFAULT_VIEW_MODE = "single"
+IS_WINDOWS = sys.platform.startswith("win")
+UI_FONT_FAMILY = "Segoe UI" if IS_WINDOWS else "Avenir Next"
+UI_FONT_STACK = (
+    "'Segoe UI', 'Avenir Next', 'Helvetica Neue', Arial, sans-serif"
+    if IS_WINDOWS
+    else "'Avenir Next', 'Helvetica Neue', Arial, sans-serif"
+)
+WINDOWS_FONT_SCALE = 0.82 if IS_WINDOWS else 1.0
+WINDOWS_STAFF_GLYPH_SCALE = 0.82 if IS_WINDOWS else 1.0
+WINDOWS_SCALE_CIRCLE_SCALE = 0.86 if IS_WINDOWS else 1.0
+WINDOWS_DEFAULT_WIDTH = 1280
+WINDOWS_DEFAULT_HEIGHT = 760
+
+
+def ui_font(point_size: Optional[int] = None, weight: Optional[QFont.Weight] = None) -> QFont:
+    font = QFont(UI_FONT_FAMILY)
+    if point_size is not None:
+        font.setPointSize(max(1, int(round(point_size * WINDOWS_FONT_SCALE))))
+    if weight is not None:
+        font.setWeight(weight)
+    return font
 
 
 class PersistentMenu(QMenu):
@@ -290,7 +311,7 @@ def _prepare_popup_dialog(dialog: QDialog, draggable: bool = True) -> None:
         "QDialog, QInputDialog {"
         "  background-color: #f7f7f8;"
         "  color: #1d1d1f;"
-        "  font-family: 'Avenir Next', 'Helvetica Neue', Arial, sans-serif;"
+        f"  font-family: {UI_FONT_STACK};"
         "  font-size: 13px;"
         "}"
         "QLabel {"
@@ -958,10 +979,10 @@ class PianoWidget(QWidget):
         self.force_full_width = False
 
         self.interval_label_settings = {
-            "font_family": "",
+            "font_family": UI_FONT_FAMILY,
             "font_size": 14,
             "color_white": QColor(Qt.GlobalColor.black),
-            "color_black": QColor(Qt.GlobalColor.white),
+            "color_black": QColor(Qt.GlobalColor.black),
             "y_anchor_mode_white": "bottom25",
             "y_percent_white": 87.5,
             "y_anchor_mode_black": "center",
@@ -1171,7 +1192,7 @@ class PianoWidget(QWidget):
             else:
                 note_to_white_index[n] = max(0, white_index - 1)
 
-        white_base_radius = max(4.0, min(key_width, key_height) * 0.18)
+        white_base_radius = max(3.0, min(key_width, key_height) * 0.18 * WINDOWS_SCALE_CIRCLE_SCALE)
         white_radius = white_base_radius * self.scale_circle_size_factor
         for n in white_notes:
             if n not in self.display_scale_notes:
@@ -1184,7 +1205,7 @@ class PianoWidget(QWidget):
 
         black_height = key_height * 0.6
         black_width = key_width * 0.6
-        black_base_radius = max(3.0, min(black_width, black_height) * 0.2)
+        black_base_radius = max(2.5, min(black_width, black_height) * 0.2 * WINDOWS_SCALE_CIRCLE_SCALE)
         black_radius = black_base_radius * self.scale_circle_size_factor
         for n in range(self.start_note, self.end_note + 1):
             if is_white(n) or n not in self.display_scale_notes:
@@ -1357,7 +1378,10 @@ class PianoWidget(QWidget):
                     painter.drawRect(key_rect)
                 if n in scale_notes:
                     color = scale_notes[n]
-                    radius = max(4.0, min(key_width, key_height) * 0.18) * self.scale_circle_size_factor
+                    radius = (
+                        max(3.0, min(key_width, key_height) * 0.18 * WINDOWS_SCALE_CIRCLE_SCALE)
+                        * self.scale_circle_size_factor
+                    )
                     center = QPointF(key_rect.center().x(), key_rect.bottom() - radius * 1.8)
                     painter.setBrush(QBrush(color))
                     painter.setPen(Qt.PenStyle.NoPen)
@@ -1368,7 +1392,7 @@ class PianoWidget(QWidget):
             label_color = QColor(Qt.GlobalColor.black)
             label_color.setAlphaF(0.65)
             painter.setPen(QPen(label_color))
-            font = QFont()
+            font = QFont(UI_FONT_FAMILY)
             font.setPointSize(self._keyboard_label_font_size(key_width, key_height))
             painter.setFont(font)
             metrics = painter.fontMetrics()
@@ -1437,7 +1461,10 @@ class PianoWidget(QWidget):
                     painter.drawRect(key_rect)
                 if n in scale_notes:
                     color = scale_notes[n]
-                    radius = max(3.0, min(black_width, black_height) * 0.2) * self.scale_circle_size_factor
+                    radius = (
+                        max(2.5, min(black_width, black_height) * 0.2 * WINDOWS_SCALE_CIRCLE_SCALE)
+                        * self.scale_circle_size_factor
+                    )
                     center = QPointF(key_rect.center().x(), key_rect.bottom() - radius * 1.6)
                     painter.setBrush(QBrush(color))
                     painter.setPen(Qt.PenStyle.NoPen)
@@ -1446,8 +1473,8 @@ class PianoWidget(QWidget):
         # Etiquetas de intervalos para notas activas
         if self.show_keyboard_labels and self.interval_labels:
             settings = self.interval_label_settings or {}
-            label_font = QFont(settings.get("font_family") or "")
-            label_font.setPointSize(self._interval_label_font_size(key_width, key_height))
+            label_font = QFont(settings.get("font_family") or UI_FONT_FAMILY)
+            label_font.setPointSize(self._interval_label_font_size(key_width, key_height, False))
             painter.setFont(label_font)
             metrics = painter.fontMetrics()
 
@@ -1468,6 +1495,9 @@ class PianoWidget(QWidget):
                 painter.drawText(label_zone, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, label)
 
             # Teclas negras
+            label_font.setPointSize(self._interval_label_font_size(black_width, black_height, True))
+            painter.setFont(label_font)
+            metrics = painter.fontMetrics()
             for n in range(self.start_note, self.end_note + 1):
                 if is_white(n):
                     continue
@@ -1493,8 +1523,8 @@ class PianoWidget(QWidget):
             return
 
         painter.save()
-        font = QFont("Avenir Next")
-        font.setPointSize(max(15, min(26, int(self.height() * 0.085))))
+        font = QFont(UI_FONT_FAMILY)
+        font.setPointSize(max(14, int(max(15, min(26, int(self.height() * 0.085))) * WINDOWS_FONT_SCALE)))
         font.setWeight(QFont.Weight.DemiBold)
         painter.setFont(font)
         metrics = painter.fontMetrics()
@@ -1570,21 +1600,24 @@ class PianoWidget(QWidget):
         key = "color_black" if is_black_key else "color_white"
         chosen = self.interval_label_settings.get(key)
         if chosen is None:
-            chosen = QColor(Qt.GlobalColor.black if not is_black_key else Qt.GlobalColor.white)
+            chosen = QColor(Qt.GlobalColor.black)
         if isinstance(chosen, str):
             chosen = QColor(chosen)
         if not isinstance(chosen, QColor) or not chosen.isValid():
-            chosen = QColor(Qt.GlobalColor.black if not is_black_key else Qt.GlobalColor.white)
+            chosen = QColor(Qt.GlobalColor.black)
         return chosen
 
     def _keyboard_label_font_size(self, key_width: float, key_height: float) -> int:
-        size = min(key_width * 0.25, key_height * 0.048)
+        size = min(key_width * 0.22, key_height * 0.042)
+        size *= WINDOWS_FONT_SCALE
         return max(5, int(size))
 
-    def _interval_label_font_size(self, key_width: float, key_height: float) -> int:
+    def _interval_label_font_size(self, key_width: float, key_height: float, is_black_key: bool = False) -> int:
         settings = self.interval_label_settings or {}
-        base_size = float(settings.get("font_size", 14)) * 0.88
-        max_size = min(key_width * 0.68, key_height * 0.21)
+        base_size = float(settings.get("font_size", 14)) * 0.88 * WINDOWS_FONT_SCALE
+        black_key_scale = 0.78 if is_black_key else 1.0
+        base_size *= black_key_scale
+        max_size = min(key_width * (0.60 if is_black_key else 0.68), key_height * (0.18 if is_black_key else 0.21))
         size = min(base_size, max_size)
         return max(5, int(size))
 
@@ -1716,7 +1749,7 @@ class PianoWindow(QMainWindow):
         staff_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         chord_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        top_layout.addWidget(staff_widget, stretch=1)
+        top_layout.addWidget(staff_widget, stretch=2 if IS_WINDOWS else 1)
         top_layout.addWidget(chord_widget, stretch=3)
 
         self.piano.setMinimumHeight(300)
@@ -1749,12 +1782,16 @@ class ChordDisplayWidget(QWidget):
     def __init__(self):
         super().__init__()
         self.background_color = QColor(0, 0, 0)
+        self._font_family = UI_FONT_FAMILY
+        self._requested_font_size = 80
 
         self.main_label = QLabel("")
         self.main_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         self.main_label.setStyleSheet("background: transparent;")
-        self.main_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Preferred)
+        self.main_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
         self.main_label.setMinimumWidth(0)
+        self.main_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.main_label.setWordWrap(False)
 
         self.alt_label = QLabel("")
         self.alt_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
@@ -1768,28 +1805,85 @@ class ChordDisplayWidget(QWidget):
         layout = QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(2)
-        layout.addWidget(self.main_label, stretch=0)
+        layout.addWidget(self.main_label, stretch=2)
         layout.addWidget(self.alt_label, stretch=1)
         self.setLayout(layout)
 
-        self.set_font_from_family_size("Avenir Next", 80)
+        self.set_font_from_family_size(UI_FONT_FAMILY, 80)
         self.set_chord_color(QColor(Qt.GlobalColor.white))
         self.set_background_color(self.background_color)
 
     def set_font_from_family_size(self, family: str, size: int):
         """Actualiza la fuente del cifrado principal y alternativo."""
-        size = int(size)
+        self._font_family = family or UI_FONT_FAMILY
+        self._requested_font_size = int(size)
+        self._apply_responsive_fonts()
 
-        main_font = QFont(family, max(10, int(size * 1.35)))
+    def _fit_font_size(
+        self,
+        text: str,
+        desired_size: int,
+        min_size: int,
+        max_width: int,
+        max_height: int,
+        weight: QFont.Weight,
+    ) -> int:
+        size = max(min_size, int(desired_size))
+        probe_text = text or "G13sus4"
+        while size > min_size:
+            font = QFont(self._font_family, size)
+            font.setWeight(weight)
+            metrics = QFontMetrics(font)
+            if metrics.horizontalAdvance(probe_text) <= max_width and metrics.height() <= max_height:
+                return size
+            size -= 1
+        return size
+
+    def _apply_responsive_fonts(self):
+        size = int(self._requested_font_size)
+        family = self._font_family or UI_FONT_FAMILY
+        chord_scale = 0.72 if IS_WINDOWS else 1.0
+        available_width = max(160, self.width() - 20)
+        available_height = max(70, self.height() - 20)
+        has_alternatives = bool(self.alt_label.text().strip())
+        main_width_limit = int(available_width * (0.58 if has_alternatives else 0.94))
+        alt_width_limit = max(80, available_width - main_width_limit - 12)
+        main_height_limit = int(available_height * 0.76)
+        alt_height_limit = int(available_height * 0.62)
+
+        self.main_label.setMaximumWidth(main_width_limit)
+
+        main_desired = min(int(size * 1.35 * chord_scale), int(available_height * 0.58))
+        main_size = self._fit_font_size(
+            self.main_label.text(),
+            main_desired,
+            10,
+            main_width_limit,
+            main_height_limit,
+            QFont.Weight.Medium,
+        )
+        main_font = QFont(family, main_size)
         main_font.setWeight(QFont.Weight.Medium)
         self.main_label.setFont(main_font)
 
-        alt_size = max(14, int(size * 0.60))
+        alt_desired = min(int(size * 0.60 * chord_scale), int(available_height * 0.28))
+        alt_size = self._fit_font_size(
+            self.alt_label.text().replace("\n", " "),
+            alt_desired,
+            12,
+            alt_width_limit,
+            alt_height_limit,
+            QFont.Weight.Normal,
+        )
         alt_font = QFont(family, alt_size)
         alt_font.setWeight(QFont.Weight.Normal)
         self.alt_label.setFont(alt_font)
         metrics = QFontMetrics(alt_font)
         self.alt_label.setMaximumHeight(max(34, metrics.lineSpacing() * 2 + 4))
+
+    def resizeEvent(self, event):
+        self._apply_responsive_fonts()
+        super().resizeEvent(event)
 
     def set_chord_color(self, color: QColor):
         if not color.isValid():
@@ -1812,6 +1906,7 @@ class ChordDisplayWidget(QWidget):
         if not principal:
             self.main_label.setText(live_note_or_interval_label(notas))
             self.alt_label.setText("")
+            self._apply_responsive_fonts()
             return info
 
         self.main_label.setText(principal)
@@ -1820,6 +1915,7 @@ class ChordDisplayWidget(QWidget):
             self.alt_label.setText(self._format_alternative_chords(alternativos))
         else:
             self.alt_label.setText("")
+        self._apply_responsive_fonts()
 
         return info
 
@@ -1963,6 +2059,23 @@ class StaffWidget(QWidget):
         self.staff_settings.update(settings)
         self.update()
 
+    def _staff_float(
+        self,
+        key: str,
+        default: float,
+        *,
+        min_value: Optional[float] = None,
+        platform_scale: float = 1.0,
+    ) -> float:
+        try:
+            value = float(self.staff_settings.get(key, default))
+        except Exception:
+            value = default
+        value *= platform_scale
+        if min_value is not None:
+            value = max(min_value, value)
+        return value
+
     def set_notes(self, notes: Set[int], chord_info: Optional[Dict[str, object]] = None):
         self.notes = {n for n in notes if MIN_NOTE <= n <= MAX_NOTE}
         if chord_info is not None:
@@ -1979,11 +2092,21 @@ class StaffWidget(QWidget):
         return step - reference
 
     def _clef_rect(self, clef_type: str, staff_top_y: float, staff_spacing: float, x: float) -> QRectF:
-        base_scale = max(0.4, float(self.staff_settings.get("clef_scale", 1.0)))
+        base_scale = self._staff_float("clef_scale", 1.0, min_value=0.4, platform_scale=WINDOWS_STAFF_GLYPH_SCALE)
         if clef_type == "treble":
-            clef_scale = max(0.4, float(self.staff_settings.get("treble_clef_scale", base_scale)))
+            clef_scale = self._staff_float(
+                "treble_clef_scale",
+                base_scale,
+                min_value=0.4,
+                platform_scale=WINDOWS_STAFF_GLYPH_SCALE,
+            )
         else:
-            clef_scale = max(0.4, float(self.staff_settings.get("bass_clef_scale", base_scale)))
+            clef_scale = self._staff_float(
+                "bass_clef_scale",
+                base_scale,
+                min_value=0.4,
+                platform_scale=WINDOWS_STAFF_GLYPH_SCALE,
+            )
 
         if clef_type == "treble":
             line_index = 3  # Segunda línea desde abajo (G4)
@@ -2044,12 +2167,18 @@ class StaffWidget(QWidget):
     def computeLayout(self, rect: QRect) -> Dict[str, float]:
         """Calcula márgenes, anchos y posiciones básicas a partir del rectángulo."""
 
-        staff_spacing = max(8.0, min(18.0, rect.height() / 18.0))
+        staff_spacing = max(7.0, min(16.0 if IS_WINDOWS else 18.0, rect.height() / 18.0))
         margin = staff_spacing * 1.2
         label_width = 0.0
-        base_clef_scale = max(0.4, float(self.staff_settings.get("clef_scale", 1.0)))
-        treble_scale = max(0.4, float(self.staff_settings.get("treble_clef_scale", base_clef_scale)))
-        bass_scale = max(0.4, float(self.staff_settings.get("bass_clef_scale", base_clef_scale)))
+        base_clef_scale = self._staff_float(
+            "clef_scale", 1.0, min_value=0.4, platform_scale=WINDOWS_STAFF_GLYPH_SCALE
+        )
+        treble_scale = self._staff_float(
+            "treble_clef_scale", base_clef_scale, min_value=0.4, platform_scale=WINDOWS_STAFF_GLYPH_SCALE
+        )
+        bass_scale = self._staff_float(
+            "bass_clef_scale", base_clef_scale, min_value=0.4, platform_scale=WINDOWS_STAFF_GLYPH_SCALE
+        )
         clef_scale = max(treble_scale, bass_scale)
         clef_width = staff_spacing * 3.0 * clef_scale
 
@@ -2127,11 +2256,21 @@ class StaffWidget(QWidget):
     def drawClef(self, painter: QPainter, clef_type: str, staff_top_y: float, staff_spacing: float, x: float):
         """Dibuja la clave indicada, escalada al espaciado del pentagrama."""
 
-        base_scale = max(0.4, float(self.staff_settings.get("clef_scale", 1.0)))
+        base_scale = self._staff_float("clef_scale", 1.0, min_value=0.4, platform_scale=WINDOWS_STAFF_GLYPH_SCALE)
         if clef_type == "treble":
-            clef_scale = max(0.4, float(self.staff_settings.get("treble_clef_scale", base_scale)))
+            clef_scale = self._staff_float(
+                "treble_clef_scale",
+                base_scale,
+                min_value=0.4,
+                platform_scale=WINDOWS_STAFF_GLYPH_SCALE,
+            )
         else:
-            clef_scale = max(0.4, float(self.staff_settings.get("bass_clef_scale", base_scale)))
+            clef_scale = self._staff_float(
+                "bass_clef_scale",
+                base_scale,
+                min_value=0.4,
+                platform_scale=WINDOWS_STAFF_GLYPH_SCALE,
+            )
         font_size = staff_spacing * 3.2 * clef_scale
         clef_font = QFont(self.staff_font_family, int(font_size))
         painter.setFont(clef_font)
@@ -2159,15 +2298,18 @@ class StaffWidget(QWidget):
     def drawNoteHead(self, painter: QPainter, center_x: float, center_y: float, staff_spacing: float):
         """Dibuja una cabeza de nota ovalada inclinada hacia la izquierda."""
 
-        note_scale = max(0.5, float(self.staff_settings.get("note_head_scale", 1.0)))
+        note_scale = self._staff_float(
+            "note_head_scale", 1.0, min_value=0.5, platform_scale=WINDOWS_STAFF_GLYPH_SCALE
+        )
         font_size = staff_spacing * 2.4 * note_scale
         font = QFont(self.staff_font_family, int(font_size))
         painter.setFont(font)
+        rect_factor = 2.8 if IS_WINDOWS else 2.2
         rect = QRectF(
-            center_x - staff_spacing * 1.1 * note_scale,
-            center_y - staff_spacing * 1.1 * note_scale,
-            staff_spacing * 2.2 * note_scale,
-            staff_spacing * 2.2 * note_scale,
+            center_x - staff_spacing * rect_factor * note_scale / 2.0,
+            center_y - staff_spacing * rect_factor * note_scale / 2.0,
+            staff_spacing * rect_factor * note_scale,
+            staff_spacing * rect_factor * note_scale,
         )
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "𝅝")
 
@@ -2217,7 +2359,9 @@ class StaffWidget(QWidget):
     ):
         """Dibuja una alteración a la izquierda de la cabeza de nota."""
 
-        accidental_scale = max(0.4, float(self.staff_settings.get("accidental_scale", 1.0)))
+        accidental_scale = self._staff_float(
+            "accidental_scale", 1.0, min_value=0.4, platform_scale=WINDOWS_STAFF_GLYPH_SCALE
+        )
         font = QFont(self.staff_font_family, int(staff_spacing * 1.4 * accidental_scale))
         painter.setFont(font)
         metrics = QFontMetricsF(font)
@@ -2258,7 +2402,9 @@ class StaffWidget(QWidget):
         note_x_offset = float(self.staff_settings.get("note_x_offset", 0.0)) * staff_spacing
         note_y_offset = float(self.staff_settings.get("note_y_offset", 0.0)) * staff_spacing
         note_x_base = line_start + staff_spacing * 1.2 + note_x_offset + content_x_offset
-        note_head_scale = max(0.5, float(self.staff_settings.get("note_head_scale", 1.0)))
+        note_head_scale = self._staff_float(
+            "note_head_scale", 1.0, min_value=0.5, platform_scale=WINDOWS_STAFF_GLYPH_SCALE
+        )
         note_head_width = staff_spacing * 1.2 * note_head_scale
         note_head_size = staff_spacing * 2.2 * note_head_scale
         ledger_length = note_head_width * 1.4
@@ -2336,7 +2482,9 @@ class StaffWidget(QWidget):
                 accidental_info.append((accidental, accidental_column_x, y, note_head_width))
 
         accidental_info.sort(key=lambda item: item[2])
-        accidental_scale = max(0.4, float(self.staff_settings.get("accidental_scale", 1.0)))
+        accidental_scale = self._staff_float(
+            "accidental_scale", 1.0, min_value=0.4, platform_scale=WINDOWS_STAFF_GLYPH_SCALE
+        )
         accidental_font = QFont(self.staff_font_family, int(staff_spacing * 1.4 * accidental_scale))
         metrics = QFontMetricsF(accidental_font)
         accidental_x_offset = float(self.staff_settings.get("accidental_x_offset", 0.0)) * staff_spacing
@@ -2638,7 +2786,7 @@ class ControlWindow(QWidget):
         self.font_size_spin.setValue(80)
 
         try:
-            self.font_combo.setCurrentFont(QFont("Avenir Next"))
+            self.font_combo.setCurrentFont(QFont(UI_FONT_FAMILY))
         except Exception:
             pass
 
@@ -2876,7 +3024,7 @@ class ControlWindow(QWidget):
         label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
         label.setStyleSheet(
             "QLabel {"
-            "  font-family: 'Avenir Next', 'Helvetica Neue', Arial, sans-serif;"
+            f"  font-family: {UI_FONT_STACK};"
             "  font-size: 13px;"
             "  color: #1d1d1f;"
             "  background-color: rgba(248, 250, 252, 232);"
@@ -2947,9 +3095,16 @@ class ControlWindow(QWidget):
         if screen is not None:
             area = screen.availableGeometry()
             geometry = self.piano_window.frameGeometry()
-            if not geometry.isValid() or not area.intersects(geometry):
-                width = min(max(900, int(area.width() * 0.86)), area.width())
-                height = min(max(640, int(area.height() * 0.86)), area.height())
+            too_large = geometry.width() > int(area.width() * 0.94) or geometry.height() > int(area.height() * 0.92)
+            if not geometry.isValid() or not area.intersects(geometry) or (IS_WINDOWS and too_large):
+                if IS_WINDOWS:
+                    width = min(WINDOWS_DEFAULT_WIDTH, int(area.width() * 0.92))
+                    height = min(WINDOWS_DEFAULT_HEIGHT, int(area.height() * 0.88))
+                    width = min(area.width(), max(1040, width))
+                    height = min(area.height(), max(680, height))
+                else:
+                    width = min(max(900, int(area.width() * 0.86)), area.width())
+                    height = min(max(640, int(area.height() * 0.86)), area.height())
                 x = area.x() + max(0, int((area.width() - width) / 2))
                 y = area.y() + max(0, int((area.height() - height) / 2))
                 self.piano_window.setGeometry(x, y, width, height)
@@ -3595,6 +3750,15 @@ class ControlWindow(QWidget):
                 "  selection-background-color: #f09a00;"
                 "  selection-color: #1d1d1f;"
                 "}"
+            )
+            menu_style = menu_style.replace(
+                "'Avenir Next', 'Helvetica Neue', Arial, sans-serif", UI_FONT_STACK
+            )
+            control_style = control_style.replace(
+                "'Avenir Next', 'Helvetica Neue', Arial, sans-serif", UI_FONT_STACK
+            )
+            menu_panel_style = menu_panel_style.replace(
+                "'Avenir Next', 'Helvetica Neue', Arial, sans-serif", UI_FONT_STACK
             )
             self.menu_bar.setStyleSheet(menu_style)
             self.setStyleSheet(control_style)
@@ -6769,7 +6933,7 @@ class ControlWindow(QWidget):
             "QDialog {"
             "  background-color: #f7f7f8;"
             "  color: #1d1d1f;"
-            "  font-family: 'Avenir Next', 'Helvetica Neue', Arial, sans-serif;"
+            f"  font-family: {UI_FONT_STACK};"
             "  font-size: 13px;"
             "}"
             "QLabel { color: #1d1d1f; background-color: transparent; }"
@@ -6790,8 +6954,7 @@ class ControlWindow(QWidget):
         layout.setSpacing(12)
 
         title = QLabel("Midi learn está activo", dialog)
-        title_font = QFont("Avenir Next", 16)
-        title_font.setWeight(QFont.Weight.DemiBold)
+        title_font = ui_font(16, QFont.Weight.DemiBold)
         title.setFont(title_font)
         layout.addWidget(title)
 
@@ -6986,7 +7149,14 @@ class ControlWindow(QWidget):
 
 
 def main():
+    try:
+        QApplication.setHighDpiScaleFactorRoundingPolicy(
+            Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+        )
+    except Exception:
+        pass
     app = QApplication(sys.argv)
+    app.setFont(ui_font(10 if IS_WINDOWS else 13))
     app.setQuitOnLastWindowClosed(False)
 
     piano_window = PianoWindow()
