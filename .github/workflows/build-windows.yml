@@ -31,7 +31,7 @@ jobs:
       - name: Validate Windows fonts and layouts
         shell: pwsh
         env:
-          QT_QPA_PLATFORM: offscreen
+          QT_QPA_PLATFORM: windows
         run: python packaging/windows_layout_smoke.py --output windows-ui-smoke
 
       - name: Build executable
@@ -54,7 +54,7 @@ jobs:
           $asset = "dist\MIDI Piano Jaramillo\_internal\assets\fretboard-background.png"
           if (-not (Test-Path $app)) { throw "No se generó el ejecutable." }
           if (-not (Test-Path $asset)) { throw "No se incluyó el fondo del diapasón." }
-          $env:QT_QPA_PLATFORM = "offscreen"
+          $env:QT_QPA_PLATFORM = "windows"
           $process = Start-Process $app -PassThru
           Start-Sleep -Seconds 8
           if ($process.HasExited) {

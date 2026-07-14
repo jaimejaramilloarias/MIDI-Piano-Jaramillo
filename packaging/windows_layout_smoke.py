@@ -69,6 +69,8 @@ def main_smoke(output_dir: Path) -> int:
     app = QApplication.instance() or QApplication([])
     app.setFont(main.ui_font(10))
     app.setQuitOnLastWindowClosed(False)
+    report["qt_platform"] = QApplication.platformName()
+    checks["native_windows_platform"] = QApplication.platformName() == "windows"
     main.mido.get_input_names = lambda: []
 
     ControlWindow.CONFIG_PATH = output_dir / "preferences.json"
@@ -183,7 +185,7 @@ def main_smoke(output_dir: Path) -> int:
         capture(piano_window, output_dir / "guitar-chord-1280x760.png", app)
 
         fretboard.set_notes(set(), {})
-        scale_notes = FretboardWidget.guitar_scale_notes(0, main.SCALE_PATTERNS["Mayor"])
+        scale_notes = FretboardWidget.guitar_scale_notes(0, main.SCALE_PATTERNS["mayor"])
         scale_colors = {
             note: QColor(52, 199, 89) if note % 12 == 0 else QColor(45, 105, 220)
             for note in scale_notes
