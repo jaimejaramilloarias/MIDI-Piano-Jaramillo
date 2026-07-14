@@ -5456,8 +5456,14 @@ class ControlWindow(QWidget):
         self.display_panel_drop_combo.addItem("Drop 2", "drop2")
         self.display_panel_drop_combo.addItem("Drop 3", "drop3")
         self.display_panel_drop_combo.addItem("Drop 2-4", "drop2-4")
-        chord_primary_row.addWidget(self.display_panel_chord_checkbox)
-        chord_primary_row.addSpacing(10)
+        if IS_WINDOWS:
+            chord_toggle_row = QHBoxLayout()
+            chord_toggle_row.addWidget(self.display_panel_chord_checkbox)
+            chord_toggle_row.addStretch()
+            chord_page_layout.addLayout(chord_toggle_row)
+        else:
+            chord_primary_row.addWidget(self.display_panel_chord_checkbox)
+            chord_primary_row.addSpacing(10)
         chord_primary_row.addWidget(QLabel("Fundamental"))
         chord_primary_row.addWidget(self.display_panel_root_combo)
         chord_primary_row.addWidget(QLabel("Acorde"))
@@ -5490,8 +5496,14 @@ class ControlWindow(QWidget):
         self.display_panel_scale_combo.setMinimumContentsLength(26)
         self.display_panel_scale_combo.setMaxVisibleItems(18)
         self.display_panel_scale_combo.setToolTip("Seleccionar y activar una escala pregrabada")
-        scale_primary_row.addWidget(self.display_panel_scale_checkbox)
-        scale_primary_row.addSpacing(10)
+        if IS_WINDOWS:
+            scale_toggle_row = QHBoxLayout()
+            scale_toggle_row.addWidget(self.display_panel_scale_checkbox)
+            scale_toggle_row.addStretch()
+            scale_page_layout.addLayout(scale_toggle_row)
+        else:
+            scale_primary_row.addWidget(self.display_panel_scale_checkbox)
+            scale_primary_row.addSpacing(10)
         scale_primary_row.addWidget(QLabel("Fundamental"))
         scale_primary_row.addWidget(self.display_panel_scale_root_combo)
         scale_primary_row.addWidget(QLabel("Escala"))

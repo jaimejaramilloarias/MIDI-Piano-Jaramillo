@@ -57,6 +57,8 @@ class TestInterfaceImprovements(unittest.TestCase):
         self.assertIn("self.display_panel_scale_root_combo = QComboBox()", display_panel_source)
         self.assertIn("chord_primary_row.addWidget(QLabel(\"Acorde\"))", display_panel_source)
         self.assertIn("scale_primary_row.addWidget(QLabel(\"Escala\"))", display_panel_source)
+        self.assertIn("chord_toggle_row.addWidget(self.display_panel_chord_checkbox)", display_panel_source)
+        self.assertIn("scale_toggle_row.addWidget(self.display_panel_scale_checkbox)", display_panel_source)
         self.assertIn("_build_scale_role_palette", display_panel_source)
         self.assertNotIn("_build_single_window_menu_strip", display_panel_source)
         self.assertNotIn("display_panel_chord_select_button", display_panel_source)
