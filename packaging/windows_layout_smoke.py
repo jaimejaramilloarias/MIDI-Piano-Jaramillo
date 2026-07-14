@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from PyQt6.QtGui import QColor, QFontInfo, QFontMetrics  # noqa: E402
+from PyQt6.QtCore import QPoint  # noqa: E402
+from PyQt6.QtGui import QColor, QFontInfo, QFontMetrics, QPainter, QPixmap  # noqa: E402
 from PyQt6.QtWidgets import QApplication, QLabel, QMenu, QWidget  # noqa: E402
 
 import main  # noqa: E402
@@ -32,13 +33,47 @@ def process(app: QApplication) -> None:
         app.processEvents()
 
 
-def capture(widget: QWidget, path: Path, app: QApplication) -> None:
+def capture(widget: QWidget, path: Path, app: QApplication) -> QPixmap:
     widget.ensurePolished()
     widget.show()
     process(app)
-    pixmap = widget.grab()
+    widget.repaint()
+    process(app)
+    ratio = max(1.0, widget.devicePixelRatioF())
+    pixmap = QPixmap(
+        max(1, int(round(widget.width() * ratio))),
+        max(1, int(round(widget.height() * ratio))),
+    )
+    pixmap.setDevicePixelRatio(ratio)
+    pixmap.fill(QColor(0, 0, 0, 0))
+    painter = QPainter(pixmap)
+    widget.render(painter)
+    painter.end()
     if pixmap.isNull() or not pixmap.save(str(path), "PNG"):
         raise RuntimeError(f"No se pudo guardar {path.name}")
+    return pixmap
+
+
+def horizontal_content_coverage(
+    pixmap: QPixmap,
+    root: QWidget,
+    child: QWidget,
+) -> float:
+    image = pixmap.toImage()
+    ratio = max(1.0, pixmap.devicePixelRatio())
+    origin = child.mapTo(root, QPoint(0, 0))
+    y = int(round((origin.y() + child.height() * 0.5) * ratio))
+    left = int(round(origin.x() * ratio))
+    right = int(round((origin.x() + child.width()) * ratio))
+    if y < 0 or y >= image.height() or right <= left:
+        return 0.0
+    populated = 0
+    samples = 0
+    for x in range(max(0, left), min(image.width(), right)):
+        color = image.pixelColor(x, y)
+        populated += int(max(color.red(), color.green(), color.blue()) > 18)
+        samples += 1
+    return populated / samples if samples else 0.0
 
 
 def label_fits(label: QLabel) -> bool:
@@ -226,7 +261,18 @@ def main_smoke(output_dir: Path) -> int:
             fretboard._marker_opacity(note, secondary) == 1.0
             for note, _string, _fret, _x, _y, secondary in fretboard.display_assignment
         )
-        capture(piano_window, output_dir / "guitar-scale-1280x760.png", app)
+        scale_capture = capture(
+            piano_window,
+            output_dir / "guitar-scale-1280x760.png",
+            app,
+        )
+        scale_coverage = horizontal_content_coverage(
+            scale_capture,
+            piano_window,
+            fretboard,
+        )
+        report["scale_fretboard_horizontal_coverage"] = scale_coverage
+        checks["scale_fretboard_renders_continuously"] = scale_coverage >= 0.85
 
         controls.resize(700, 560)
         capture(controls, output_dir / "controls-700x560.png", app)
