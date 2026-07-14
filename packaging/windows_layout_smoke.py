@@ -54,6 +54,28 @@ def capture(widget: QWidget, path: Path, app: QApplication) -> QPixmap:
     return pixmap
 
 
+def capture_native(widget: QWidget, path: Path, app: QApplication) -> QPixmap:
+    widget.ensurePolished()
+    widget.show()
+    process(app)
+    pixmap = widget.grab()
+    if pixmap.isNull() or not pixmap.save(str(path), "PNG"):
+        raise RuntimeError(f"No se pudo guardar {path.name}")
+    return pixmap
+
+
+def opaque_pixel_coverage(pixmap: QPixmap) -> float:
+    image = pixmap.toImage()
+    total = image.width() * image.height()
+    if total <= 0:
+        return 0.0
+    opaque = 0
+    for y in range(image.height()):
+        for x in range(image.width()):
+            opaque += int(image.pixelColor(x, y).alpha() > 16)
+    return opaque / total
+
+
 def horizontal_content_coverage(
     pixmap: QPixmap,
     root: QWidget,
@@ -89,11 +111,12 @@ def label_fits(label: QLabel) -> bool:
     )
 
 
-def render_menu(menu: QMenu, path: Path, app: QApplication) -> None:
+def render_menu(menu: QMenu, path: Path, app: QApplication) -> QPixmap:
     hint = menu.sizeHint()
     menu.resize(max(menu.minimumWidth(), hint.width()), max(40, hint.height()))
-    capture(menu, path, app)
+    pixmap = capture_native(menu, path, app)
     menu.hide()
+    return pixmap
 
 
 def main_smoke(output_dir: Path) -> int:
@@ -279,13 +302,17 @@ def main_smoke(output_dir: Path) -> int:
         report["controls_size"] = [controls.width(), controls.height()]
         checks["controls_keep_requested_size"] = controls.size().width() == 700 and controls.size().height() == 560
 
+        menu_coverages: dict[str, float] = {}
         for name, menu in (
             ("chords", controls.chord_menu),
             ("scales", controls.scale_menu),
             ("controls", controls.controls_menu),
         ):
-            render_menu(menu, output_dir / f"menu-{name}.png", app)
+            menu_pixmap = render_menu(menu, output_dir / f"menu-{name}.png", app)
+            menu_coverages[name] = opaque_pixel_coverage(menu_pixmap)
             checks[f"menu_{name}_meets_minimum_width"] = menu.width() >= menu.minimumWidth()
+            checks[f"menu_{name}_renders_visible_content"] = menu_coverages[name] >= 0.95
+        report["menu_opaque_coverage"] = menu_coverages
 
         report["screenshots"] = sorted(path.name for path in output_dir.glob("*.png"))
         report["passed"] = all(checks.values())
