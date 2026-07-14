@@ -47,6 +47,7 @@ class TestInterfaceImprovements(unittest.TestCase):
         set_view_mode_source = self._class_method_source("ControlWindow", "set_view_mode")
 
         self.assertIn("panel.setObjectName(\"DisplayPanel\")", display_panel_source)
+        self.assertIn("panel = ResponsiveWidthWidget()", display_panel_source)
         self.assertIn("title = QLabel(\"Midi Piano Jaramillo\")", display_panel_source)
         self.assertIn("self.display_panel_section_stack = QStackedWidget(panel)", display_panel_source)
         self.assertIn("_build_panel_section_button(\"ACORDES\", 0)", display_panel_source)

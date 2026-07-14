@@ -6,7 +6,7 @@ from itertools import product
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, QPoint, QPointF, QEvent, QSettings, QObject, QT_VERSION_STR
+from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, QPoint, QPointF, QSize, QEvent, QSettings, QObject, QT_VERSION_STR
 from PyQt6.QtGui import (
     QActionGroup,
     QBrush,
@@ -162,6 +162,15 @@ class PersistentMenu(QMenu):
             event.accept()
             return
         super().focusOutEvent(event)
+
+
+class ResponsiveWidthWidget(QWidget):
+    """Container whose contents may reflow without imposing a window width."""
+
+    def minimumSizeHint(self) -> QSize:
+        hint = super().minimumSizeHint()
+        hint.setWidth(0)
+        return hint
 
 
 class MenuComboBox(QComboBox):
@@ -5391,7 +5400,7 @@ class ControlWindow(QWidget):
             )
 
     def _build_display_panel(self) -> QWidget:
-        panel = QWidget()
+        panel = ResponsiveWidthWidget()
         panel.setObjectName("DisplayPanel")
         layout = QVBoxLayout()
         layout.setContentsMargins(10, 8, 10, 10)
