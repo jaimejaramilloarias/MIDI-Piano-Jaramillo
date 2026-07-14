@@ -4061,6 +4061,7 @@ class ControlWindow(ResponsiveWidthWidget):
         top_layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
         self.setMinimumSize(520, 360)
         self.main_status_strip = self._build_compact_status_label()
+        self.main_status_strip.setWordWrap(True)
         top_layout.addWidget(self.main_status_strip)
         self.primary_controls_tabs = QTabWidget()
         midi_tab = QWidget()

@@ -47,9 +47,10 @@ def label_fits(label: QLabel) -> bool:
         return True
     metrics = QFontMetrics(label.font())
     contents = label.contentsRect()
+    ink_bounds = metrics.tightBoundingRect(text)
     return (
         metrics.horizontalAdvance(text) <= contents.width() + 2
-        and metrics.lineSpacing() <= contents.height() + 2
+        and ink_bounds.height() <= contents.height() + 2
     )
 
 
@@ -133,13 +134,17 @@ def main_smoke(output_dir: Path) -> int:
                     QFontMetrics(display.main_label.font()).horizontalAdvance(
                         display.main_label.text()
                     ),
-                    QFontMetrics(display.main_label.font()).lineSpacing(),
+                    QFontMetrics(display.main_label.font())
+                    .tightBoundingRect(display.main_label.text())
+                    .height(),
                 ],
                 "alternate_text": [
                     QFontMetrics(display.alt_label.font()).horizontalAdvance(
                         display.alt_label.text()
                     ),
-                    QFontMetrics(display.alt_label.font()).lineSpacing(),
+                    QFontMetrics(display.alt_label.font())
+                    .tightBoundingRect(display.alt_label.text())
+                    .height(),
                 ],
             }
             checks[f"main_chord_fits_{width}x{height}"] = label_fits(display.main_label)
