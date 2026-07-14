@@ -10,7 +10,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QTimer
 from PyQt6.QtGui import QColor
-from PyQt6.QtWidgets import QApplication, QDialog
+from PyQt6.QtWidgets import QApplication, QDialog, QWidget
 
 import main
 from main import CHORD_PATTERNS, ChordWindow, ControlWindow, FretboardWidget, PianoWindow, StaffWindow
@@ -165,7 +165,22 @@ class TestMenuRuntime(unittest.TestCase):
         window = self.controls.piano_window
         window.resize(800, 600)
         self.app.processEvents()
-        self.assertEqual((window.width(), window.height()), (800, 600))
+        large_children = []
+        for child in window.findChildren(QWidget):
+            hint = child.minimumSizeHint()
+            minimum = child.minimumSize()
+            if max(hint.width(), minimum.width()) >= 780:
+                large_children.append(
+                    f"{type(child).__name__}#{child.objectName() or '-'} "
+                    f"minimum={minimum.width()}x{minimum.height()} "
+                    f"minimumHint={hint.width()}x{hint.height()}"
+                )
+        diagnostic = "\n".join(large_children) or "No large child minimums."
+        self.assertEqual(
+            (window.width(), window.height()),
+            (800, 600),
+            diagnostic,
+        )
 
         chord_index = 1 if self.controls.display_panel_chord_combo.count() > 1 else 0
         scale_index = 1 if self.controls.display_panel_scale_combo.count() > 1 else 0
