@@ -51,7 +51,7 @@ class TestSingleWindowKeyboardNavigation(unittest.TestCase):
         self.assertIn("single_octave_up_button", build_source)
         self.assertIn("keyboard_nav_panel", set_view_mode_source)
         self.assertIn("layout.addWidget(keyboard_nav_panel)", piano_window_source)
-        self.assertIn("self.piano.setMinimumHeight(220)", piano_window_source)
+        self.assertIn("self.piano.setMinimumHeight(180)", piano_window_source)
         self.assertIn("self._apply_frameless(False)", piano_window_source)
         self.assertNotIn("self.resize(1280, 900)", piano_window_source)
 
