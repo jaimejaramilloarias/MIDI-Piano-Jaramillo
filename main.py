@@ -28,6 +28,7 @@ from PyQt6.QtWidgets import (
     QMenu,
     QWidget,
     QGridLayout,
+    QLayout,
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
@@ -1856,9 +1857,9 @@ class PianoWindow(QMainWindow):
 
         top_layout.addWidget(chord_widget, stretch=1)
 
-        self.piano.setMinimumHeight(220)
+        self.piano.setMinimumHeight(180)
         if self.fretboard is not None:
-            self.fretboard.setMinimumHeight(220)
+            self.fretboard.setMinimumHeight(180)
         self.instrument_stack = QStackedWidget(container)
         self.instrument_stack.setObjectName("InstrumentStack")
         self.instrument_stack.addWidget(self.piano)
@@ -1961,7 +1962,7 @@ class ChordDisplayWidget(QWidget):
         family = self._font_family or UI_FONT_FAMILY
         chord_scale = 0.72 if IS_WINDOWS else 1.0
         available_width = max(160, self.width() - 48)
-        available_height = max(70, self.height() - 12)
+        available_height = max(36, self.height() - 12)
         has_alternatives = bool(self.alt_label.text().strip())
         main_width_limit = available_width
         alt_width_limit = available_width
@@ -2171,7 +2172,7 @@ class FretboardWidget(QWidget):
         self._register_anchor: Optional[float] = None
         image_path = Path(__file__).resolve().parent / "assets" / "fretboard-background.png"
         self.background = QPixmap(str(image_path))
-        self.setMinimumSize(640, 190)
+        self.setMinimumSize(640, 180)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.setStyleSheet("background: #050505;")
 
@@ -4057,6 +4058,8 @@ class ControlWindow(ResponsiveWidthWidget):
 
         # Layout
         top_layout = QVBoxLayout()
+        top_layout.setSizeConstraint(QLayout.SizeConstraint.SetNoConstraint)
+        self.setMinimumSize(520, 360)
         self.main_status_strip = self._build_compact_status_label()
         top_layout.addWidget(self.main_status_strip)
         self.primary_controls_tabs = QTabWidget()

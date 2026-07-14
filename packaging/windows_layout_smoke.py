@@ -46,9 +46,11 @@ def label_fits(label: QLabel) -> bool:
     if not text:
         return True
     metrics = QFontMetrics(label.font())
-    bounds = metrics.boundingRect(text)
     contents = label.contentsRect()
-    return bounds.width() <= contents.width() + 2 and bounds.height() <= contents.height() + 2
+    return (
+        metrics.horizontalAdvance(text) <= contents.width() + 2
+        and metrics.lineSpacing() <= contents.height() + 2
+    )
 
 
 def render_menu(menu: QMenu, path: Path, app: QApplication) -> None:
@@ -127,6 +129,18 @@ def main_smoke(output_dir: Path) -> int:
                 "display": [display.width(), display.height()],
                 "main": [display.main_label.width(), display.main_label.height()],
                 "alternate": [display.alt_label.width(), display.alt_label.height()],
+                "main_text": [
+                    QFontMetrics(display.main_label.font()).horizontalAdvance(
+                        display.main_label.text()
+                    ),
+                    QFontMetrics(display.main_label.font()).lineSpacing(),
+                ],
+                "alternate_text": [
+                    QFontMetrics(display.alt_label.font()).horizontalAdvance(
+                        display.alt_label.text()
+                    ),
+                    QFontMetrics(display.alt_label.font()).lineSpacing(),
+                ],
             }
             checks[f"main_chord_fits_{width}x{height}"] = label_fits(display.main_label)
             checks[f"alternate_chords_fit_{width}x{height}"] = label_fits(display.alt_label)
