@@ -20,7 +20,19 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          pip install pyinstaller
+          pip install pyinstaller==6.20.0
+
+      - name: Run test suite
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python -m unittest discover -s tests -v
+
+      - name: Validate Windows fonts and layouts
+        shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: python packaging/windows_layout_smoke.py --output windows-ui-smoke
 
       - name: Build executable
         shell: cmd
@@ -34,6 +46,21 @@ jobs:
             --add-data "assets;assets" ^
             --add-data "diccionario_acordes.json;." ^
             main.py
+
+      - name: Smoke-test packaged executable
+        shell: pwsh
+        run: |
+          $app = "dist\MIDI Piano Jaramillo\MIDI Piano Jaramillo.exe"
+          $asset = "dist\MIDI Piano Jaramillo\_internal\assets\fretboard-background.png"
+          if (-not (Test-Path $app)) { throw "No se generó el ejecutable." }
+          if (-not (Test-Path $asset)) { throw "No se incluyó el fondo del diapasón." }
+          $env:QT_QPA_PLATFORM = "offscreen"
+          $process = Start-Process $app -PassThru
+          Start-Sleep -Seconds 8
+          if ($process.HasExited) {
+            throw "El ejecutable se cerró durante la prueba de arranque (código $($process.ExitCode))."
+          }
+          Stop-Process -Id $process.Id -Force
 
       - name: Package ZIP
         shell: pwsh
@@ -49,3 +76,10 @@ jobs:
         with:
           name: MIDI-Piano-Jaramillo-Windows
           path: MIDI-Piano-Jaramillo-Windows.zip
+
+      - name: Upload Windows UI verification
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: MIDI-Piano-Jaramillo-Windows-UI-Smoke
+          path: windows-ui-smoke

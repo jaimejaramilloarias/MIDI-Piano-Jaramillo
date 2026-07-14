@@ -25,7 +25,7 @@ pip install --upgrade pip
 
 echo "==> Instalando dependencias..."
 pip install -r requirements.txt
-pip install pyinstaller
+pip install 'pyinstaller==6.20.0'
 
 echo "==> Construyendo app macOS..."
 pyinstaller \
@@ -34,6 +34,8 @@ pyinstaller \
   --name "$APP_NAME" \
   --windowed \
   --icon="$ICON_FILE" \
+  --add-data "assets:assets" \
+  --add-data "diccionario_acordes.json:." \
   "$MAIN_FILE"
 
 echo

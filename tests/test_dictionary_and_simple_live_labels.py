@@ -57,9 +57,12 @@ class TestDictionaryAndSimpleLiveLabels(SourceTestCase):
         self.assertIn("midi_to_name(ordered[0])", helper_source)
         self.assertIn("SIMPLE_INTERVAL_LABELS", helper_source)
         self.assertIn("self.main_label.setText(live_note_or_interval_label(notas))", update_source)
-        self.assertIn("setWordWrap(True)", widget_source)
+        self.assertNotIn("setWordWrap(True)", widget_source)
+        self.assertIn("self.alt_label.setWordWrap(False)", widget_source)
+        self.assertIn("self.main_label.setAlignment(Qt.AlignmentFlag.AlignCenter)", widget_source)
+        self.assertIn("self.alt_label.setAlignment(Qt.AlignmentFlag.AlignCenter)", widget_source)
         self.assertIn("_format_alternative_chords(alternativos)", update_source)
-        self.assertIn('+"\\n"+', self.source.replace(" ", ""))
+        self.assertIn('return "   ".join(cleaned)', widget_source)
 
     def test_dictionary_and_learning_actions_remain_in_menus(self) -> None:
         window_menu_source = self.class_method_source("ControlWindow", "_setup_window_menu")

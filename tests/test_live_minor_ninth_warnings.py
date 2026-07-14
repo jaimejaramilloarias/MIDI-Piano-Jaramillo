@@ -40,7 +40,7 @@ class TestLiveMinorNinthWarnings(unittest.TestCase):
 
         self.assertIn("self._find_minor_ninth_warnings", helper_source)
         self.assertIn("self.piano.set_live_warning_notes", helper_source)
-        self.assertIn("self._update_live_minor_ninth_warnings(notas_para_acorde, chord_info)", poll_source)
+        self.assertIn("self._refresh_staff_for_current_notes()", poll_source)
         self.assertIn("self._update_live_minor_ninth_warnings(notes, chord_info)", refresh_source)
 
     def test_live_minor_ninth_warning_skips_major_third_minor_seventh_chords(self) -> None:

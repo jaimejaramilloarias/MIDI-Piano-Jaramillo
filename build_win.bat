@@ -25,7 +25,7 @@ python -m pip install --upgrade pip
 
 echo ==^> Instalando dependencias...
 pip install -r requirements.txt
-pip install pyinstaller
+pip install pyinstaller==6.20.0
 
 echo ==^> Construyendo app Windows...
 pyinstaller ^

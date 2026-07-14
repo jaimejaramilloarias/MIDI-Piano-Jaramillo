@@ -2,10 +2,11 @@
 import sys
 import json
 import time
+from itertools import product
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
-from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, QPoint, QPointF, QEvent, QSettings, QObject
+from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, QPoint, QPointF, QEvent, QSettings, QObject, QT_VERSION_STR
 from PyQt6.QtGui import (
     QActionGroup,
     QBrush,
@@ -17,6 +18,7 @@ from PyQt6.QtGui import (
     QFontMetricsF,
     QPainter,
     QPen,
+    QPixmap,
     QKeySequence,
     QShortcut,
 )
@@ -45,6 +47,7 @@ from PyQt6.QtWidgets import (
     QTabWidget,
     QKeySequenceEdit,
     QStackedWidget,
+    QScrollArea,
 )
 import mido
 
@@ -54,7 +57,6 @@ from music_theory import (
     NOTE_LETTER_TO_INDEX,
     NOTE_LETTER_TO_PC,
     NOTE_NAMES,
-    _degree_for_interval,
     _accidental_offset,
     _parse_root_spelling,
     midi_of_C,
@@ -77,6 +79,23 @@ DEFAULT_START_NOTE = 36  # C2
 DEFAULT_OCTAVES = 5      # C2–C7
 DEFAULT_VIEW_MODE = "single"
 IS_WINDOWS = sys.platform.startswith("win")
+IS_MAC = sys.platform == "darwin"
+
+
+def _qt_version_tuple() -> Tuple[int, int, int]:
+    parts = str(QT_VERSION_STR).split(".")
+    values = []
+    for part in parts[:3]:
+        try:
+            values.append(int(part))
+        except ValueError:
+            values.append(0)
+    while len(values) < 3:
+        values.append(0)
+    return tuple(values)
+
+
+IS_LEGACY_QT_MAC = IS_MAC and _qt_version_tuple() < (6, 5, 0)
 UI_FONT_FAMILY = "Segoe UI" if IS_WINDOWS else "Avenir Next"
 UI_FONT_STACK = (
     "'Segoe UI', 'Avenir Next', 'Helvetica Neue', Arial, sans-serif"
@@ -86,6 +105,10 @@ UI_FONT_STACK = (
 WINDOWS_FONT_SCALE = 0.82 if IS_WINDOWS else 1.0
 WINDOWS_STAFF_GLYPH_SCALE = 0.82 if IS_WINDOWS else 1.0
 WINDOWS_SCALE_CIRCLE_SCALE = 0.86 if IS_WINDOWS else 1.0
+LEGACY_QT_MAC_SCALE_CIRCLE_SCALE = 1.35 if IS_LEGACY_QT_MAC else 1.0
+LEGACY_QT_MAC_STAFF_LEFT_PAD = 3.2 if IS_LEGACY_QT_MAC else 0.0
+LEGACY_QT_MAC_NOTE_PAD = 10.0 if IS_LEGACY_QT_MAC else 0.0
+LEGACY_QT_MAC_NOTE_HEAD_SCALE = 0.95 if IS_LEGACY_QT_MAC else 1.0
 WINDOWS_DEFAULT_WIDTH = 1280
 WINDOWS_DEFAULT_HEIGHT = 760
 
@@ -318,7 +341,8 @@ def _prepare_popup_dialog(dialog: QDialog, draggable: bool = True) -> None:
         "  color: #1d1d1f;"
         "  background-color: transparent;"
         "}"
-        "QLineEdit, QSpinBox, QDoubleSpinBox, QTextEdit, QListWidget {"
+        "QLineEdit, QSpinBox, QDoubleSpinBox, QTextEdit, QListWidget, "
+        "QComboBox, QFontComboBox, QKeySequenceEdit {"
         "  color: #1d1d1f;"
         "  background-color: #ffffff;"
         "  border: 1px solid #b8b8bd;"
@@ -342,6 +366,19 @@ def _prepare_popup_dialog(dialog: QDialog, draggable: bool = True) -> None:
         "QPushButton:pressed {"
         "  background-color: #f09a00;"
         "}"
+        "QPushButton#PrimaryButton {"
+        "  background-color: #f09a00;"
+        "  border-color: #d88700;"
+        "  font-weight: 600;"
+        "}"
+        "QPushButton#PrimaryButton:hover { background-color: #ffad1f; }"
+        "QComboBox QAbstractItemView, QFontComboBox QAbstractItemView {"
+        "  color: #1d1d1f;"
+        "  background-color: #ffffff;"
+        "  selection-background-color: #f09a00;"
+        "  selection-color: #1d1d1f;"
+        "}"
+        "QCheckBox { color: #1d1d1f; background-color: transparent; }"
     )
     if draggable:
         _install_popup_drag_support(dialog)
@@ -1023,8 +1060,6 @@ class PianoWidget(QWidget):
         self.update()
 
     def set_pressed(self, note: int, pressed: bool):
-        if note < self.start_note or note > self.end_note:
-            return
         if pressed:
             self.pressed_notes.add(note)
             self.recent_released_notes.pop(note, None)
@@ -1046,8 +1081,6 @@ class PianoWidget(QWidget):
         self.update()
 
     def set_sustained(self, note: int, sustained: bool):
-        if note < self.start_note or note > self.end_note:
-            return
         if sustained:
             self.sustained_notes.add(note)
         else:
@@ -1192,7 +1225,8 @@ class PianoWidget(QWidget):
             else:
                 note_to_white_index[n] = max(0, white_index - 1)
 
-        white_base_radius = max(3.0, min(key_width, key_height) * 0.18 * WINDOWS_SCALE_CIRCLE_SCALE)
+        scale_circle_platform_scale = WINDOWS_SCALE_CIRCLE_SCALE * LEGACY_QT_MAC_SCALE_CIRCLE_SCALE
+        white_base_radius = max(3.0, min(key_width, key_height) * 0.18 * scale_circle_platform_scale)
         white_radius = white_base_radius * self.scale_circle_size_factor
         for n in white_notes:
             if n not in self.display_scale_notes:
@@ -1205,7 +1239,7 @@ class PianoWidget(QWidget):
 
         black_height = key_height * 0.6
         black_width = key_width * 0.6
-        black_base_radius = max(2.5, min(black_width, black_height) * 0.2 * WINDOWS_SCALE_CIRCLE_SCALE)
+        black_base_radius = max(2.5, min(black_width, black_height) * 0.2 * scale_circle_platform_scale)
         black_radius = black_base_radius * self.scale_circle_size_factor
         for n in range(self.start_note, self.end_note + 1):
             if is_white(n) or n not in self.display_scale_notes:
@@ -1368,6 +1402,7 @@ class PianoWidget(QWidget):
         if self.display_chord_notes or self.display_scale_notes:
             chord_notes = self.display_chord_notes
             scale_notes = self.display_scale_notes
+            scale_circle_platform_scale = WINDOWS_SCALE_CIRCLE_SCALE * LEGACY_QT_MAC_SCALE_CIRCLE_SCALE
             for n in white_notes:
                 idx = note_to_white_index[n]
                 x = x_offset + idx * key_width
@@ -1379,7 +1414,7 @@ class PianoWidget(QWidget):
                 if n in scale_notes:
                     color = scale_notes[n]
                     radius = (
-                        max(3.0, min(key_width, key_height) * 0.18 * WINDOWS_SCALE_CIRCLE_SCALE)
+                        max(3.0, min(key_width, key_height) * 0.18 * scale_circle_platform_scale)
                         * self.scale_circle_size_factor
                     )
                     center = QPointF(key_rect.center().x(), key_rect.bottom() - radius * 1.8)
@@ -1448,6 +1483,7 @@ class PianoWidget(QWidget):
         if self.display_chord_notes or self.display_scale_notes:
             chord_notes = self.display_chord_notes
             scale_notes = self.display_scale_notes
+            scale_circle_platform_scale = WINDOWS_SCALE_CIRCLE_SCALE * LEGACY_QT_MAC_SCALE_CIRCLE_SCALE
 
             for n in range(self.start_note, self.end_note + 1):
                 if is_white(n):
@@ -1462,7 +1498,7 @@ class PianoWidget(QWidget):
                 if n in scale_notes:
                     color = scale_notes[n]
                     radius = (
-                        max(2.5, min(black_width, black_height) * 0.2 * WINDOWS_SCALE_CIRCLE_SCALE)
+                        max(2.5, min(black_width, black_height) * 0.2 * scale_circle_platform_scale)
                         * self.scale_circle_size_factor
                     )
                     center = QPointF(key_rect.center().x(), key_rect.bottom() - radius * 1.6)
@@ -1661,6 +1697,9 @@ class PianoWindow(QMainWindow):
         self.piano = PianoWidget()
         self.setCentralWidget(self.piano)
 
+        self.fretboard: Optional[QWidget] = None
+        self.instrument_stack: Optional[QStackedWidget] = None
+        self.instrument_view = "piano"
         self._combined_container: Optional[QWidget] = None
         self._combined_background = QColor(Qt.GlobalColor.white)
         self.on_double_click = None
@@ -1669,6 +1708,44 @@ class PianoWindow(QMainWindow):
         self._apply_frameless(True)
         self.setContentsMargins(0, 0, 0, 0)
         self.resize(900, 220)
+
+    def set_fretboard_widget(self, widget: QWidget) -> None:
+        self.fretboard = widget
+        self.fretboard.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+
+    def set_instrument_view(self, mode: str) -> None:
+        if mode not in ("piano", "guitar"):
+            return
+        if mode == "guitar" and self.fretboard is None:
+            mode = "piano"
+        self.instrument_view = mode
+        target = self.fretboard if mode == "guitar" else self.piano
+        if target is None:
+            return
+
+        if self.instrument_stack is not None:
+            self.instrument_stack.setCurrentWidget(target)
+        elif self._combined_container is None and self.centralWidget() is not target:
+            current = self.takeCentralWidget()
+            if current is not None:
+                current.setParent(None)
+            self.setCentralWidget(target)
+
+        if self._combined_container is None:
+            self.setWindowTitle(
+                "MIDI Piano - Diapasón" if mode == "guitar" else "MIDI Piano - Teclado"
+            )
+
+    def _release_instrument_stack(self) -> None:
+        if self.instrument_stack is None:
+            return
+        for widget in (self.piano, self.fretboard):
+            if widget is not None:
+                self.instrument_stack.removeWidget(widget)
+                widget.setParent(None)
+        self.instrument_stack.setParent(None)
+        self.instrument_stack.deleteLater()
+        self.instrument_stack = None
 
     def _apply_frameless(self, enabled: bool) -> None:
         flags = self.windowFlags()
@@ -1700,16 +1777,27 @@ class PianoWindow(QMainWindow):
             child.removeEventFilter(self._drag_filter)
 
     def show_keyboard_only(self) -> None:
+        if self.centralWidget() is self._combined_container:
+            self.takeCentralWidget()
+        self._release_instrument_stack()
         if self._combined_container is not None:
             self._combined_container.setParent(None)
             self._combined_container.deleteLater()
             self._combined_container = None
 
-        if self.centralWidget() is not self.piano:
-            self.setCentralWidget(self.piano)
+        target = self.fretboard if self.instrument_view == "guitar" else self.piano
+        if target is None:
+            target = self.piano
+        if self.centralWidget() is not target:
+            current = self.takeCentralWidget()
+            if current is not None:
+                current.setParent(None)
+            self.setCentralWidget(target)
 
-        self.setWindowTitle("MIDI Piano - Teclado")
-        self._install_drag_support(self.piano)
+        self.setWindowTitle(
+            "MIDI Piano - Diapasón" if self.instrument_view == "guitar" else "MIDI Piano - Teclado"
+        )
+        self._install_drag_support(target)
         self._apply_frameless(True)
 
     def set_combined_background_color(self, color: QColor) -> None:
@@ -1721,18 +1809,25 @@ class PianoWindow(QMainWindow):
 
     def show_combined_view(
         self,
-        staff_widget: QWidget,
         chord_widget: QWidget,
         display_panel: Optional[QWidget],
         keyboard_nav_panel: Optional[QWidget] = None,
+        fretboard_widget: Optional[QWidget] = None,
     ) -> None:
+        if fretboard_widget is not None:
+            self.set_fretboard_widget(fretboard_widget)
+        if self.centralWidget() is self._combined_container:
+            self.takeCentralWidget()
+        self._release_instrument_stack()
         if self._combined_container is not None:
             self._combined_container.setParent(None)
             self._combined_container.deleteLater()
             self._combined_container = None
 
-        if self.centralWidget() is self.piano:
-            self.takeCentralWidget()
+        if self.centralWidget() in (self.piano, self.fretboard):
+            current = self.takeCentralWidget()
+            if current is not None:
+                current.setParent(None)
 
         container = QWidget()
         layout = QVBoxLayout()
@@ -1746,15 +1841,20 @@ class PianoWindow(QMainWindow):
         top_layout.setContentsMargins(0, 0, 0, 0)
         top_layout.setSpacing(0)
 
-        staff_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         chord_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
 
-        top_layout.addWidget(staff_widget, stretch=2 if IS_WINDOWS else 1)
-        top_layout.addWidget(chord_widget, stretch=3)
+        top_layout.addWidget(chord_widget, stretch=1)
 
-        self.piano.setMinimumHeight(300)
+        self.piano.setMinimumHeight(220)
+        if self.fretboard is not None:
+            self.fretboard.setMinimumHeight(220)
+        self.instrument_stack = QStackedWidget(container)
+        self.instrument_stack.setObjectName("InstrumentStack")
+        self.instrument_stack.addWidget(self.piano)
+        if self.fretboard is not None:
+            self.instrument_stack.addWidget(self.fretboard)
         layout.addLayout(top_layout, stretch=2)
-        layout.addWidget(self.piano, stretch=3)
+        layout.addWidget(self.instrument_stack, stretch=3)
         if keyboard_nav_panel is not None:
             layout.addWidget(keyboard_nav_panel)
         container.setLayout(layout)
@@ -1762,6 +1862,7 @@ class PianoWindow(QMainWindow):
         self._combined_container = container
         self._install_drag_support(container)
         container.setStyleSheet(f"background: {self._combined_background.name()}; border: none;")
+        self.set_instrument_view(self.instrument_view)
 
         self.setWindowTitle("MIDI Piano — Vista única")
         self._apply_frameless(False)
@@ -1786,26 +1887,27 @@ class ChordDisplayWidget(QWidget):
         self._requested_font_size = 80
 
         self.main_label = QLabel("")
-        self.main_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.main_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.main_label.setStyleSheet("background: transparent;")
-        self.main_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.main_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         self.main_label.setMinimumWidth(0)
         self.main_label.setTextFormat(Qt.TextFormat.PlainText)
         self.main_label.setWordWrap(False)
 
         self.alt_label = QLabel("")
-        self.alt_label.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        self.alt_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.alt_label.setStyleSheet("color: #ffffff; background: transparent;")
-        self.alt_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        self.alt_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Ignored)
         self.alt_label.setMinimumWidth(0)
-        self.alt_label.setContentsMargins(8, 0, 0, 0)
-        self.alt_label.setWordWrap(True)
+        self.alt_label.setContentsMargins(0, 0, 0, 0)
+        self.alt_label.setWordWrap(False)
         self.alt_label.setTextFormat(Qt.TextFormat.PlainText)
+        self.alt_label.hide()
 
-        layout = QHBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-        layout.addWidget(self.main_label, stretch=2)
+        layout = QVBoxLayout()
+        layout.setContentsMargins(24, 4, 24, 8)
+        layout.setSpacing(0)
+        layout.addWidget(self.main_label, stretch=3)
         layout.addWidget(self.alt_label, stretch=1)
         self.setLayout(layout)
 
@@ -1829,12 +1931,16 @@ class ChordDisplayWidget(QWidget):
         weight: QFont.Weight,
     ) -> int:
         size = max(min_size, int(desired_size))
-        probe_text = text or "G13sus4"
+        lines = [line for line in (text or "G13sus4").splitlines() if line.strip()]
+        if not lines:
+            lines = ["G13sus4"]
         while size > min_size:
             font = QFont(self._font_family, size)
             font.setWeight(weight)
             metrics = QFontMetrics(font)
-            if metrics.horizontalAdvance(probe_text) <= max_width and metrics.height() <= max_height:
+            text_width = max(metrics.horizontalAdvance(line) for line in lines)
+            text_height = metrics.lineSpacing() * len(lines)
+            if text_width <= max_width and text_height <= max_height:
                 return size
             size -= 1
         return size
@@ -1843,17 +1949,20 @@ class ChordDisplayWidget(QWidget):
         size = int(self._requested_font_size)
         family = self._font_family or UI_FONT_FAMILY
         chord_scale = 0.72 if IS_WINDOWS else 1.0
-        available_width = max(160, self.width() - 20)
-        available_height = max(70, self.height() - 20)
+        available_width = max(160, self.width() - 48)
+        available_height = max(70, self.height() - 12)
         has_alternatives = bool(self.alt_label.text().strip())
-        main_width_limit = int(available_width * (0.58 if has_alternatives else 0.94))
-        alt_width_limit = max(80, available_width - main_width_limit - 12)
-        main_height_limit = int(available_height * 0.76)
-        alt_height_limit = int(available_height * 0.62)
+        main_width_limit = available_width
+        alt_width_limit = available_width
+        main_height_limit = int(available_height * (0.72 if has_alternatives else 0.94))
+        alt_height_limit = max(28, int(available_height * 0.27))
 
         self.main_label.setMaximumWidth(main_width_limit)
 
-        main_desired = min(int(size * 1.35 * chord_scale), int(available_height * 0.58))
+        main_desired = min(
+            int(size * 1.75 * chord_scale),
+            int(available_height * (0.66 if has_alternatives else 0.82)),
+        )
         main_size = self._fit_font_size(
             self.main_label.text(),
             main_desired,
@@ -1866,11 +1975,15 @@ class ChordDisplayWidget(QWidget):
         main_font.setWeight(QFont.Weight.Medium)
         self.main_label.setFont(main_font)
 
-        alt_desired = min(int(size * 0.60 * chord_scale), int(available_height * 0.28))
+        alt_text = self.alt_label.text()
+        alt_desired = min(
+            int(size * 0.50 * chord_scale),
+            int(available_height * 0.22),
+        )
         alt_size = self._fit_font_size(
-            self.alt_label.text().replace("\n", " "),
+            alt_text,
             alt_desired,
-            12,
+            10,
             alt_width_limit,
             alt_height_limit,
             QFont.Weight.Normal,
@@ -1879,7 +1992,9 @@ class ChordDisplayWidget(QWidget):
         alt_font.setWeight(QFont.Weight.Normal)
         self.alt_label.setFont(alt_font)
         metrics = QFontMetrics(alt_font)
-        self.alt_label.setMaximumHeight(max(34, metrics.lineSpacing() * 2 + 4))
+        alt_height = metrics.lineSpacing() + metrics.descent() + 6
+        self.alt_label.setMinimumHeight(alt_height)
+        self.alt_label.setMaximumHeight(min(alt_height_limit, max(28, alt_height)))
 
     def resizeEvent(self, event):
         self._apply_responsive_fonts()
@@ -1896,7 +2011,7 @@ class ChordDisplayWidget(QWidget):
         if not color.isValid():
             return
         self.background_color = color
-        self.setStyleSheet(f"background: {color.name()}; padding: 10px;")
+        self.setStyleSheet(f"background: {color.name()};")
 
     def update_chord(self, notas):
         info = analizar_cifrado_alternativos(notas)
@@ -1906,6 +2021,7 @@ class ChordDisplayWidget(QWidget):
         if not principal:
             self.main_label.setText(live_note_or_interval_label(notas))
             self.alt_label.setText("")
+            self.alt_label.hide()
             self._apply_responsive_fonts()
             return info
 
@@ -1913,19 +2029,17 @@ class ChordDisplayWidget(QWidget):
 
         if alternativos:
             self.alt_label.setText(self._format_alternative_chords(alternativos))
+            self.alt_label.show()
         else:
             self.alt_label.setText("")
+            self.alt_label.hide()
         self._apply_responsive_fonts()
 
         return info
 
     def _format_alternative_chords(self, alternatives: List[str]) -> str:
         cleaned = [str(item).strip() for item in alternatives if str(item).strip()]
-        if len(cleaned) <= 2:
-            return " ".join(cleaned)
-
-        midpoint = (len(cleaned) + 1) // 2
-        return " ".join(cleaned[:midpoint]) + "\n" + " ".join(cleaned[midpoint:])
+        return "   ".join(cleaned)
 
 
 class ChordWindow(QMainWindow):
@@ -1991,6 +2105,1051 @@ class ChordWindow(QMainWindow):
 
     def update_chord(self, notas):
         return self.display_widget.update_chord(notas)
+
+
+class FretboardWidget(QWidget):
+    """Diapasón de guitarra que refleja las alturas MIDI activas."""
+
+    IMAGE_WIDTH = 1672.0
+    IMAGE_HEIGHT = 941.0
+    EMBEDDED_SOURCE_TOP = 270.0
+    EMBEDDED_SOURCE_HEIGHT = 410.0
+    STRING_Y = (352.0, 397.0, 444.0, 493.0, 543.0, 586.0)
+    OPEN_STRING_X = 42.0
+    FRET_EDGES = (
+        88.0,
+        256.0,
+        405.0,
+        537.0,
+        657.0,
+        765.0,
+        867.0,
+        962.0,
+        1050.0,
+        1136.0,
+        1217.0,
+        1294.0,
+        1368.0,
+        1438.0,
+        1505.0,
+        1570.0,
+        1630.0,
+    )
+    # Orden visual de arriba a abajo: E4, B3, G3, D3, A2, E2.
+    OPEN_STRING_MIDI = (64, 59, 55, 50, 45, 40)
+    NOTE_COLOR = QColor(240, 154, 0)
+    ROOT_COLOR = QColor(52, 199, 89)
+    MIN_POSITION = 1
+    MAX_POSITION = 13
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.notes: Set[int] = set()
+        self.chord_info: Dict[str, object] = {}
+        self.note_order: List[int] = []
+        self.display_chord_notes: Dict[int, QColor] = {}
+        self.display_scale_notes: Dict[int, QColor] = {}
+        self.display_interval_labels: Dict[int, str] = {}
+        self.display_root_pc: Optional[int] = None
+        self.display_root_label = ""
+        self.embedded_mode = False
+        self.current_position = self.MIN_POSITION
+        self.display_assignment: List[Tuple[int, int, int, float, float, bool]] = []
+        self.partial_assignment = False
+        self._position_initialized = False
+        self._register_anchor: Optional[float] = None
+        image_path = Path(__file__).resolve().parent / "assets" / "fretboard-background.png"
+        self.background = QPixmap(str(image_path))
+        self.setMinimumSize(640, 190)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        self.setStyleSheet("background: #050505;")
+
+    def set_embedded_mode(self, enabled: bool) -> None:
+        self.embedded_mode = bool(enabled)
+        self.update()
+
+    @classmethod
+    def fret_center(cls, fret: int) -> float:
+        if fret <= 0:
+            return cls.OPEN_STRING_X
+        if fret >= len(cls.FRET_EDGES):
+            fret = len(cls.FRET_EDGES) - 1
+        return (cls.FRET_EDGES[fret - 1] + cls.FRET_EDGES[fret]) / 2.0
+
+    @classmethod
+    def positions_for_notes(cls, notes: Set[int]) -> List[Tuple[int, int, int, float, float]]:
+        positions: List[Tuple[int, int, int, float, float]] = []
+        max_fret = len(cls.FRET_EDGES) - 1
+        for note in sorted({int(value) for value in notes}):
+            for string_index, open_note in enumerate(cls.OPEN_STRING_MIDI):
+                fret = note - open_note
+                if 0 <= fret <= max_fret:
+                    positions.append(
+                        (note, string_index, fret, cls.fret_center(fret), cls.STRING_Y[string_index])
+                    )
+        return positions
+
+    @classmethod
+    def _candidates_for_note(
+        cls,
+        note: int,
+        position: int,
+    ) -> List[Tuple[int, int, float, float]]:
+        playable = [
+            (string_index, fret, x, y)
+            for candidate_note, string_index, fret, x, y in cls.positions_for_notes({note})
+            if candidate_note == note
+        ]
+        lower_fret = max(0, int(position) - 1)
+        upper_fret = min(len(cls.FRET_EDGES) - 1, int(position) + 4)
+        in_window = [
+            candidate
+            for candidate in playable
+            if lower_fret <= candidate[1] <= upper_fret
+        ]
+        if in_window:
+            return in_window
+
+        # Una cuerda al aire sigue disponible en posiciones altas cuando esa
+        # altura no existe dentro de la ventana activa.
+        return [candidate for candidate in playable if candidate[1] == 0]
+
+    @classmethod
+    def _pitch_class_candidates_for_position(
+        cls,
+        pitch_class: int,
+        position: int,
+    ) -> List[Tuple[int, int, int, float, float]]:
+        lower_fret = max(0, int(position) - 1)
+        upper_fret = min(len(cls.FRET_EDGES) - 1, int(position) + 4)
+        candidates: List[Tuple[int, int, int, float, float]] = []
+        open_candidates: List[Tuple[int, int, int, float, float]] = []
+        for string_index, open_note in enumerate(cls.OPEN_STRING_MIDI):
+            for fret in range(0, len(cls.FRET_EDGES)):
+                note = open_note + fret
+                if note % 12 != int(pitch_class) % 12:
+                    continue
+                candidate = (
+                    note,
+                    string_index,
+                    fret,
+                    cls.fret_center(fret),
+                    cls.STRING_Y[string_index],
+                )
+                if lower_fret <= fret <= upper_fret:
+                    candidates.append(candidate)
+                elif fret == 0:
+                    open_candidates.append(candidate)
+        return candidates or open_candidates
+
+    @staticmethod
+    def _string_continuity_penalties(string_indexes: Set[int]) -> Tuple[int, int]:
+        string_numbers = sorted({int(index) + 1 for index in string_indexes})
+        high_string_skip = 0
+        gap_penalty = 0
+        for first, second in zip(string_numbers, string_numbers[1:]):
+            gap = second - first - 1
+            if gap <= 0:
+                continue
+            if (first, second) == (4, 6):
+                continue
+            if (first, second) == (1, 3):
+                high_string_skip += 1
+            gap_penalty += gap
+        return high_string_skip, gap_penalty
+
+    @classmethod
+    def guitar_scale_notes(cls, root_pc: int, steps: List[int]) -> List[int]:
+        if not steps:
+            return []
+        scale_span = sum(int(step) for step in steps[:-1])
+        highest_playable = max(cls.OPEN_STRING_MIDI) + len(cls.FRET_EDGES) - 1
+        lowest_playable = min(cls.OPEN_STRING_MIDI)
+        best_notes: List[int] = []
+        best_score: Optional[Tuple[int, int, int]] = None
+
+        for root_note in range(
+            lowest_playable,
+            highest_playable - scale_span + 1,
+        ):
+            if root_note % 12 != int(root_pc) % 12:
+                continue
+            notes = [root_note]
+            for step in steps[:-1]:
+                notes.append(notes[-1] + int(step))
+            assignment = cls.guitar_scale_assignment(set(notes))
+            if len(assignment["placements"]) != len(notes):
+                continue
+            score = (
+                int(assignment["fret_span"]),
+                int(assignment["position"]),
+                root_note,
+            )
+            if best_score is None or score < best_score:
+                best_score = score
+                best_notes = notes
+
+        return best_notes
+
+    @classmethod
+    def guitar_scale_assignment(cls, notes: Set[int]) -> Dict[str, object]:
+        ordered_notes = sorted({int(note) for note in notes})
+        if not ordered_notes:
+            return {
+                "placements": [],
+                "position": cls.MIN_POSITION,
+                "fret_span": 0,
+            }
+
+        candidates_by_note = []
+        for note in ordered_notes:
+            candidates = [
+                (candidate_note, string_index, fret, x, y)
+                for candidate_note, string_index, fret, x, y in cls.positions_for_notes({note})
+            ]
+            if not candidates:
+                return {
+                    "placements": [],
+                    "position": cls.MIN_POSITION,
+                    "fret_span": 0,
+                }
+            candidates_by_note.append(candidates)
+
+        best_score: Optional[Tuple[int, int, int, int, int]] = None
+        best_placements: List[Tuple[int, int, int, float, float]] = []
+        for placements in product(*candidates_by_note):
+            frets = [placement[2] for placement in placements]
+            fret_span = max(frets) - min(frets) + 1
+            reversals = sum(
+                1
+                for current, following in zip(placements, placements[1:])
+                if following[1] > current[1]
+            )
+            string_jumps = sum(
+                max(0, abs(following[1] - current[1]) - 1)
+                for current, following in zip(placements, placements[1:])
+            )
+            score = (
+                fret_span,
+                reversals,
+                string_jumps,
+                min(frets),
+                sum(frets),
+            )
+            if best_score is None or score < best_score:
+                best_score = score
+                best_placements = list(placements)
+
+        occupied_strings: Set[int] = set()
+        display_placements: List[Tuple[int, int, int, float, float, bool]] = []
+        for note, string_index, fret, x, y in best_placements:
+            secondary = string_index in occupied_strings
+            occupied_strings.add(string_index)
+            display_placements.append((note, string_index, fret, x, y, secondary))
+
+        frets = [placement[2] for placement in best_placements]
+        first_fret = min(frets) if frets else cls.MIN_POSITION
+        position = max(cls.MIN_POSITION, min(cls.MAX_POSITION, first_fret or 1))
+        return {
+            "placements": display_placements,
+            "position": position,
+            "fret_span": (max(frets) - min(frets) + 1) if frets else 0,
+        }
+
+    @classmethod
+    def guitar_voicing_for_pitch_classes(
+        cls,
+        root_pc: int,
+        pitch_classes: Set[int],
+        pitch_order_constraints: Optional[List[Tuple[int, int]]] = None,
+    ) -> Dict[str, object]:
+        pcs = {int(pc) % 12 for pc in pitch_classes}
+        pcs.add(int(root_pc) % 12)
+        if not pcs or len(pcs) > len(cls.OPEN_STRING_MIDI):
+            return {"notes": set(), "position": cls.MIN_POSITION, "placements": []}
+
+        order_constraints = [
+            (int(upper_pc) % 12, int(lower_pc) % 12)
+            for upper_pc, lower_pc in (pitch_order_constraints or [])
+            if int(upper_pc) % 12 != int(lower_pc) % 12
+        ]
+
+        best_result: Optional[
+            Tuple[
+                Tuple[float, ...],
+                int,
+                List[Tuple[int, int, int, float, float]],
+            ]
+        ] = None
+        root_pc = int(root_pc) % 12
+
+        for position in range(cls.MIN_POSITION, cls.MAX_POSITION + 1):
+            candidates_by_pc = {
+                pc: cls._pitch_class_candidates_for_position(pc, position)
+                for pc in pcs
+            }
+            if any(not candidates for candidates in candidates_by_pc.values()):
+                continue
+
+            ordered_pcs = sorted(
+                pcs,
+                key=lambda pc: (
+                    len(candidates_by_pc[pc]),
+                    0 if pc == root_pc else 1,
+                    pc,
+                ),
+            )
+            best_for_position: Optional[
+                Tuple[
+                    Tuple[float, ...],
+                    List[Tuple[int, int, int, float, float]],
+                ]
+            ] = None
+
+            def visit(
+                index: int,
+                used_strings: Set[int],
+                placements: List[Tuple[int, int, int, float, float]],
+            ) -> None:
+                nonlocal best_for_position
+                if index >= len(ordered_pcs):
+                    note_by_pitch_class = {
+                        candidate[0] % 12: candidate[0]
+                        for candidate in placements
+                    }
+                    if any(
+                        upper_pc in note_by_pitch_class
+                        and lower_pc in note_by_pitch_class
+                        and note_by_pitch_class[upper_pc] <= note_by_pitch_class[lower_pc]
+                        for upper_pc, lower_pc in order_constraints
+                    ):
+                        return
+                    lowest_note = min(candidate[0] for candidate in placements)
+                    bass_penalty = 0 if lowest_note % 12 == root_pc else 1
+                    high_string_skip, gap_penalty = cls._string_continuity_penalties(
+                        {candidate[1] for candidate in placements}
+                    )
+                    crossings = 0
+                    for left_index, left in enumerate(placements):
+                        for right in placements[left_index + 1:]:
+                            if left[1] < right[1] and left[0] < right[0]:
+                                crossings += 1
+                            elif right[1] < left[1] and right[0] < left[0]:
+                                crossings += 1
+                    frets = [candidate[2] for candidate in placements]
+                    extension_count = sum(
+                        1
+                        for fret in frets
+                        if not position <= fret <= position + 3
+                    )
+                    fret_span = max(frets) - min(frets)
+                    center = float(position) + 1.5
+                    center_distance = sum(abs(float(fret) - center) for fret in frets)
+                    total_midi = sum(candidate[0] for candidate in placements)
+                    score = (
+                        bass_penalty,
+                        high_string_skip,
+                        gap_penalty,
+                        crossings,
+                        extension_count,
+                        center_distance,
+                        fret_span,
+                        total_midi,
+                    )
+                    if best_for_position is None or score < best_for_position[0]:
+                        best_for_position = (score, list(placements))
+                    return
+
+                pitch_class = ordered_pcs[index]
+                candidates = sorted(
+                    candidates_by_pc[pitch_class],
+                    key=lambda candidate: (
+                        0 if position <= candidate[2] <= position + 3 else 1,
+                        abs(float(candidate[2]) - (float(position) + 1.5)),
+                        candidate[0],
+                    ),
+                )
+                for candidate in candidates:
+                    string_index = candidate[1]
+                    if string_index in used_strings:
+                        continue
+                    used_strings.add(string_index)
+                    placements.append(candidate)
+                    visit(index + 1, used_strings, placements)
+                    placements.pop()
+                    used_strings.remove(string_index)
+
+            visit(0, set(), [])
+            if best_for_position is None:
+                continue
+
+            position_score, placements = best_for_position
+            global_score = (
+                position_score[0],
+                position_score[1],
+                position_score[2],
+                position_score[3],
+                position_score[4],
+                position,
+                position_score[5],
+                position_score[6],
+                position_score[7],
+            )
+            if best_result is None or global_score < best_result[0]:
+                best_result = (global_score, position, placements)
+
+        if best_result is None:
+            return {"notes": set(), "position": cls.MIN_POSITION, "placements": []}
+
+        _score, position, placements = best_result
+        return {
+            "notes": {candidate[0] for candidate in placements},
+            "position": position,
+            "placements": placements,
+        }
+
+    def _priority_notes(self, notes: Set[int], note_order: List[int]) -> List[int]:
+        ordered_notes = sorted({int(note) for note in notes})
+        if not ordered_notes:
+            return []
+
+        root_pc = self._root_pc()
+        bass = ordered_notes[0]
+        melody = ordered_notes[-1]
+        recency = {int(note): index for index, note in enumerate(note_order)}
+
+        def priority(note: int) -> Tuple[int, int, int]:
+            interval = (note - root_pc) % 12 if root_pc is not None else None
+            role_score = 0
+            if note == bass:
+                role_score += 10000
+            if root_pc is not None and note % 12 == root_pc:
+                role_score += 9000
+            if note == melody:
+                role_score += 8000
+            if interval in (3, 4):
+                role_score += 7000
+            elif interval in (10, 11):
+                role_score += 6500
+            elif interval == 7:
+                role_score += 6000
+            elif interval in (1, 2, 5, 6, 8, 9):
+                role_score += 5500
+            return role_score, recency.get(note, -1), -note
+
+        return sorted(ordered_notes, key=priority, reverse=True)
+
+    def _assignment_for_position(
+        self,
+        notes: Set[int],
+        position: int,
+        note_order: List[int],
+    ) -> Dict[str, object]:
+        priority_notes = self._priority_notes(notes, note_order)
+        candidates = {
+            note: self._candidates_for_note(note, position)
+            for note in priority_notes
+        }
+        playable_notes = [note for note in priority_notes if candidates[note]]
+        missing_notes = {note for note in priority_notes if not candidates[note]}
+
+        # El estado solo necesita recordar qué cuerdas ya tienen una nota
+        # principal. Así se maximizan cuerdas distintas sin perder alturas.
+        states: Dict[
+            int,
+            Tuple[Tuple[int, int, float, int], List[Tuple[int, int, int, float, float]]],
+        ] = {0: ((0, 0, 0.0, 0), [])}
+        core_center = float(position) + 1.5
+        for note in playable_notes:
+            next_states: Dict[
+                int,
+                Tuple[Tuple[int, int, float, int], List[Tuple[int, int, int, float, float]]],
+            ] = {}
+            for used_strings, (cost, placements) in states.items():
+                for string_index, fret, x, y in candidates[note]:
+                    string_mask = 1 << string_index
+                    duplicate = 1 if used_strings & string_mask else 0
+                    extension = 0 if position <= fret <= position + 3 else 1
+                    distance = abs(float(fret) - core_center)
+                    next_cost = (
+                        cost[0] + duplicate,
+                        cost[1] + extension,
+                        cost[2] + distance,
+                        cost[3] + fret,
+                    )
+                    next_mask = used_strings | string_mask
+                    next_placements = placements + [(note, string_index, fret, x, y)]
+                    previous = next_states.get(next_mask)
+                    if previous is None or next_cost < previous[0]:
+                        next_states[next_mask] = (next_cost, next_placements)
+            states = next_states
+
+        if not states:
+            best_cost: Tuple[int, int, float, int] = (0, 0, 0.0, 0)
+            raw_placements: List[Tuple[int, int, int, float, float]] = []
+        else:
+            best_cost, raw_placements = min(
+                states.values(),
+                key=lambda value: (
+                    value[0][0],
+                    *self._string_continuity_penalties(
+                        {placement[1] for placement in value[1]}
+                    ),
+                    value[0][1],
+                    value[0][2],
+                    value[0][3],
+                ),
+            )
+
+        high_string_skip, gap_penalty = self._string_continuity_penalties(
+            {placement[1] for placement in raw_placements}
+        )
+
+        occupied_strings: Set[int] = set()
+        placements: List[Tuple[int, int, int, float, float, bool]] = []
+        for note, string_index, fret, x, y in raw_placements:
+            secondary = string_index in occupied_strings
+            occupied_strings.add(string_index)
+            placements.append((note, string_index, fret, x, y, secondary))
+
+        return {
+            "position": position,
+            "placements": placements,
+            "assigned_count": len(placements),
+            "duplicate_count": best_cost[0],
+            "high_string_skip": high_string_skip,
+            "gap_penalty": gap_penalty,
+            "extension_count": best_cost[1],
+            "missing_notes": missing_notes,
+        }
+
+    def _choose_position(self, notes: Set[int], note_order: List[int]) -> Dict[str, object]:
+        results = {
+            position: self._assignment_for_position(notes, position, note_order)
+            for position in range(self.MIN_POSITION, self.MAX_POSITION + 1)
+        }
+        best_assigned = max(int(result["assigned_count"]) for result in results.values())
+        best_duplicates = min(
+            int(result["duplicate_count"])
+            for result in results.values()
+            if int(result["assigned_count"]) == best_assigned
+        )
+        best_high_string_skip = min(
+            int(result["high_string_skip"])
+            for result in results.values()
+            if int(result["assigned_count"]) == best_assigned
+            and int(result["duplicate_count"]) == best_duplicates
+        )
+        best_gap_penalty = min(
+            int(result["gap_penalty"])
+            for result in results.values()
+            if int(result["assigned_count"]) == best_assigned
+            and int(result["duplicate_count"]) == best_duplicates
+            and int(result["high_string_skip"]) == best_high_string_skip
+        )
+        eligible = [
+            position
+            for position, result in results.items()
+            if int(result["assigned_count"]) == best_assigned
+            and int(result["duplicate_count"]) == best_duplicates
+            and int(result["high_string_skip"]) == best_high_string_skip
+            and int(result["gap_penalty"]) == best_gap_penalty
+        ]
+
+        if self._position_initialized and self.current_position in eligible:
+            chosen_position = self.current_position
+        elif not self._position_initialized:
+            chosen_position = min(eligible)
+        else:
+            register = sum(notes) / max(1, len(notes))
+            anchor = self._register_anchor if self._register_anchor is not None else register
+            if register > anchor:
+                higher = [position for position in eligible if position > self.current_position]
+                chosen_position = min(higher) if higher else min(
+                    eligible,
+                    key=lambda position: (abs(position - self.current_position), position),
+                )
+            elif register < anchor:
+                lower = [position for position in eligible if position < self.current_position]
+                chosen_position = max(lower) if lower else min(
+                    eligible,
+                    key=lambda position: (abs(position - self.current_position), position),
+                )
+            else:
+                chosen_position = min(
+                    eligible,
+                    key=lambda position: (abs(position - self.current_position), position),
+                )
+
+        self.current_position = chosen_position
+        self._position_initialized = True
+        self._register_anchor = sum(notes) / max(1, len(notes))
+        return results[chosen_position]
+
+    def set_notes(
+        self,
+        notes: Set[int],
+        chord_info: Optional[Dict[str, object]] = None,
+        note_order: Optional[List[int]] = None,
+    ) -> None:
+        self.notes = {int(note) for note in notes}
+        self.chord_info = dict(chord_info or {})
+        self.note_order = [
+            int(note)
+            for note in (note_order or [])
+            if int(note) in self.notes
+        ]
+        for note in sorted(self.notes):
+            if note not in self.note_order:
+                self.note_order.append(note)
+
+        if not self.notes:
+            self._reset_position()
+        self._refresh_assignment()
+        self.update()
+
+    def set_display_overlays(
+        self,
+        chord_notes: Dict[int, QColor],
+        scale_notes: Dict[int, QColor],
+        interval_labels: Optional[Dict[int, str]] = None,
+        root_pc: Optional[int] = None,
+        root_label: str = "",
+    ) -> None:
+        self.display_chord_notes = {
+            int(note): QColor(color) for note, color in chord_notes.items()
+        }
+        self.display_scale_notes = {
+            int(note): QColor(color) for note, color in scale_notes.items()
+        }
+        self.display_interval_labels = {
+            int(note): str(label)
+            for note, label in (interval_labels or {}).items()
+            if str(label).strip()
+        }
+        self.display_root_pc = int(root_pc) % 12 if root_pc is not None else None
+        self.display_root_label = str(root_label or "").strip()
+        self._reset_position()
+        self._refresh_assignment()
+        self.update()
+
+    def _visual_notes(self) -> Set[int]:
+        return (
+            set(self.notes)
+            | set(self.display_chord_notes)
+            | set(self.display_scale_notes)
+        )
+
+    def _reset_position(self) -> None:
+        self.current_position = self.MIN_POSITION
+        self._position_initialized = False
+        self._register_anchor = None
+
+    def _refresh_assignment(self) -> None:
+        visual_notes = self._visual_notes()
+        if not visual_notes:
+            self.display_assignment = []
+            self.partial_assignment = False
+            return
+
+        if (
+            self.display_scale_notes
+            and not self.notes
+            and not self.display_chord_notes
+        ):
+            scale_assignment = self.guitar_scale_assignment(
+                set(self.display_scale_notes)
+            )
+            self.display_assignment = list(scale_assignment["placements"])
+            self.current_position = int(scale_assignment["position"])
+            self._position_initialized = True
+            self.partial_assignment = len(self.display_assignment) < len(visual_notes)
+            return
+
+        visual_order = list(self.note_order)
+        for note in sorted(visual_notes):
+            if note not in visual_order:
+                visual_order.append(note)
+        assignment = self._choose_position(visual_notes, visual_order)
+        self.display_assignment = list(assignment["placements"])
+        self.partial_assignment = len(self.display_assignment) < len(visual_notes)
+
+    def _root_pc(self) -> Optional[int]:
+        principal_match = self.chord_info.get("principal_match")
+        if isinstance(principal_match, dict) and isinstance(principal_match.get("root"), int):
+            return int(principal_match["root"]) % 12
+        if self.notes:
+            return min(self.notes) % 12
+        if self.display_root_pc is not None:
+            return self.display_root_pc
+        return None
+
+    def _note_label(self, note: int) -> str:
+        pitch_class = int(note) % 12
+        custom_map = self.chord_info.get("custom_spelling_map")
+        if isinstance(custom_map, dict):
+            custom_label = custom_map.get(pitch_class)
+            if isinstance(custom_label, str) and custom_label.strip():
+                return self._display_accidentals(custom_label.strip())
+
+        principal = str(self.chord_info.get("principal") or "")
+        principal_match = self.chord_info.get("principal_match")
+        if isinstance(principal_match, dict):
+            root_pc = principal_match.get("root")
+            chord_name = str(principal_match.get("nombre") or "")
+            root_letter, _accidental = _parse_root_spelling(principal)
+            if root_letter is not None and isinstance(root_pc, int):
+                interval = (pitch_class - int(root_pc)) % 12
+                return self._display_accidentals(
+                    spell_note_for_interval(root_letter, int(root_pc), chord_name, interval)
+                )
+
+        return self._display_accidentals(DETECT_NOTE_NAMES[pitch_class])
+
+    def _marker_label(self, note: int) -> str:
+        if note in self.notes:
+            return self._note_label(note)
+        interval_label = self.display_interval_labels.get(note)
+        if interval_label:
+            return self._display_accidentals(interval_label)
+        return self._display_accidentals(DETECT_NOTE_NAMES[int(note) % 12])
+
+    def _marker_color(self, note: int, root_pc: Optional[int]) -> QColor:
+        if note in self.notes:
+            if root_pc is not None and note % 12 == root_pc:
+                return QColor(self.ROOT_COLOR)
+            return QColor(self.NOTE_COLOR)
+        if note in self.display_chord_notes:
+            return QColor(self.display_chord_notes[note])
+        if note in self.display_scale_notes:
+            return QColor(self.display_scale_notes[note])
+        return QColor(self.NOTE_COLOR)
+
+    def _marker_opacity(self, note: int, secondary: bool) -> float:
+        if not secondary or note in self.display_scale_notes:
+            return 1.0
+        return 0.24
+
+    @staticmethod
+    def _display_accidentals(label: str) -> str:
+        return str(label).replace("#", "♯").replace("b", "♭")
+
+    def _chord_texts(self) -> Tuple[str, str]:
+        principal = str(self.chord_info.get("principal") or "")
+        if not principal:
+            principal = live_note_or_interval_label(self.notes)
+
+        alternatives = [
+            str(value).strip()
+            for value in (self.chord_info.get("alternativos") or [])
+            if str(value).strip()
+        ]
+        if len(alternatives) <= 2:
+            alternate_text = " ".join(alternatives)
+        else:
+            midpoint = (len(alternatives) + 1) // 2
+            alternate_text = " ".join(alternatives[:midpoint]) + "\n" + " ".join(alternatives[midpoint:])
+        return principal, alternate_text
+
+    @staticmethod
+    def _fit_pixel_font(
+        text: str,
+        family: str,
+        maximum: int,
+        minimum: int,
+        max_width: float,
+        max_height: float,
+        weight: QFont.Weight,
+    ) -> QFont:
+        lines = [line for line in str(text).splitlines() if line] or [" "]
+        for pixel_size in range(maximum, minimum - 1, -1):
+            font = QFont(family)
+            font.setPixelSize(pixel_size)
+            font.setWeight(weight)
+            metrics = QFontMetricsF(font)
+            width = max(metrics.horizontalAdvance(line) for line in lines)
+            height = metrics.lineSpacing() * len(lines)
+            if width <= max_width and height <= max_height:
+                return font
+        font = QFont(family)
+        font.setPixelSize(minimum)
+        font.setWeight(weight)
+        return font
+
+    def _embedded_map_point(self, x: float, y: float) -> QPointF:
+        x_scale = max(1.0, float(self.width())) / self.IMAGE_WIDTH
+        y_scale = max(1.0, float(self.height())) / self.EMBEDDED_SOURCE_HEIGHT
+        return QPointF(
+            float(x) * x_scale,
+            (float(y) - self.EMBEDDED_SOURCE_TOP) * y_scale,
+        )
+
+    def _embedded_map_rect(self, rect: QRectF) -> QRectF:
+        top_left = self._embedded_map_point(rect.left(), rect.top())
+        bottom_right = self._embedded_map_point(rect.right(), rect.bottom())
+        return QRectF(top_left, bottom_right).normalized()
+
+    def _embedded_marker_radius(self) -> float:
+        string_positions = [
+            self._embedded_map_point(0.0, string_y).y()
+            for string_y in self.STRING_Y
+        ]
+        minimum_spacing = min(
+            abs(second - first)
+            for first, second in zip(string_positions, string_positions[1:])
+        )
+        return max(6.0, minimum_spacing / 2.0)
+
+    @staticmethod
+    def _marker_radius_for_note(_note: int, string_radius: float) -> float:
+        return float(string_radius)
+
+    def _paint_embedded_fretboard(self, painter: QPainter) -> None:
+        target_rect = QRectF(self.rect())
+        source_rect = QRectF(
+            0.0,
+            self.EMBEDDED_SOURCE_TOP,
+            self.IMAGE_WIDTH,
+            self.EMBEDDED_SOURCE_HEIGHT,
+        )
+        if not self.background.isNull():
+            painter.drawPixmap(target_rect, self.background, source_rect)
+
+        fret_font = QFont(UI_FONT_FAMILY)
+        fret_font.setPixelSize(max(10, min(18, int(self.height() * 0.065))))
+        fret_font.setWeight(QFont.Weight.Medium)
+        painter.setFont(fret_font)
+        painter.setPen(QColor(244, 239, 231, 190))
+        for fret in range(len(self.FRET_EDGES)):
+            label_rect = self._embedded_map_rect(
+                QRectF(self.fret_center(fret) - 30.0, 292.0, 60.0, 42.0)
+            )
+            painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, str(fret))
+
+        meta_font = QFont(UI_FONT_FAMILY)
+        meta_font.setPixelSize(max(10, min(17, int(self.height() * 0.06))))
+        meta_font.setWeight(QFont.Weight.Medium)
+        painter.setFont(meta_font)
+        painter.setPen(QColor(244, 239, 231, 185))
+        painter.drawText(
+            self._embedded_map_rect(QRectF(1260.0, 632.0, 330.0, 34.0)),
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            f"Posición {self.current_position}",
+        )
+
+        if self.partial_assignment:
+            painter.setPen(QColor(240, 154, 0, 220))
+            painter.drawText(
+                self._embedded_map_rect(QRectF(70.0, 632.0, 410.0, 30.0)),
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                "Fuera del diapasón",
+            )
+
+        root_pc = self._root_pc()
+        marker_radius = self._embedded_marker_radius()
+        for note, _string_index, _fret, x, y, secondary in self.display_assignment:
+            painter.save()
+            painter.setOpacity(self._marker_opacity(note, secondary))
+            note_radius = self._marker_radius_for_note(note, marker_radius)
+
+            center = self._embedded_map_point(x, y)
+            fill = self._marker_color(note, root_pc)
+            painter.setBrush(QBrush(fill))
+            outline = QColor(255, 255, 255, 225)
+            outline_width = 2.0
+            if note in self.display_chord_notes and note in self.display_scale_notes:
+                outline = QColor(self.display_scale_notes[note])
+                outline.setAlpha(245)
+                outline_width = 4.0
+            outline_pen = QPen(outline, outline_width)
+            outline_pen.setCosmetic(True)
+            painter.setPen(outline_pen)
+            painter.drawEllipse(center, note_radius, note_radius)
+
+            label = self._marker_label(note)
+            label_font = self._fit_pixel_font(
+                label,
+                UI_FONT_FAMILY,
+                max(8, min(24, int(note_radius * 1.05))),
+                7,
+                note_radius * 1.55,
+                note_radius * 1.45,
+                QFont.Weight.DemiBold,
+            )
+            painter.setFont(label_font)
+            painter.setPen(QColor(24, 20, 14))
+            painter.drawText(
+                QRectF(
+                    center.x() - note_radius,
+                    center.y() - note_radius,
+                    note_radius * 2.0,
+                    note_radius * 2.0,
+                ),
+                Qt.AlignmentFlag.AlignCenter,
+                label,
+            )
+            painter.restore()
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+        painter.fillRect(self.rect(), QColor(5, 5, 5))
+
+        if self.embedded_mode:
+            self._paint_embedded_fretboard(painter)
+            painter.end()
+            super().paintEvent(event)
+            return
+
+        source_top = 0.0
+        source_height = self.IMAGE_HEIGHT
+        scale = min(self.width() / self.IMAGE_WIDTH, self.height() / source_height)
+        drawn_width = self.IMAGE_WIDTH * scale
+        drawn_height = source_height * scale
+        offset_x = (self.width() - drawn_width) / 2.0
+        offset_y = (self.height() - drawn_height) / 2.0 - source_top * scale
+
+        painter.save()
+        painter.translate(offset_x, offset_y)
+        painter.scale(scale, scale)
+        if not self.background.isNull():
+            painter.drawPixmap(
+                QRectF(0.0, 0.0, self.IMAGE_WIDTH, self.IMAGE_HEIGHT),
+                self.background,
+                QRectF(self.background.rect()),
+            )
+
+        fret_font = QFont(UI_FONT_FAMILY)
+        fret_font.setPixelSize(20)
+        fret_font.setWeight(QFont.Weight.Medium)
+        painter.setFont(fret_font)
+        painter.setPen(QColor(244, 239, 231, 185))
+        for fret in range(len(self.FRET_EDGES)):
+            label_rect = QRectF(self.fret_center(fret) - 30.0, 292.0, 60.0, 42.0)
+            painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, str(fret))
+
+        principal, alternatives = self._chord_texts()
+        if principal and not self.embedded_mode:
+            if alternatives:
+                principal_rect = QRectF(82.0, 54.0, 800.0, 190.0)
+                principal_alignment = Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+            else:
+                principal_rect = QRectF(82.0, 54.0, 1508.0, 190.0)
+                principal_alignment = Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter
+            principal_font = self._fit_pixel_font(
+                principal,
+                UI_FONT_FAMILY,
+                86,
+                34,
+                principal_rect.width(),
+                principal_rect.height(),
+                QFont.Weight.Medium,
+            )
+            painter.setFont(principal_font)
+            painter.setPen(QColor(250, 250, 250))
+            painter.drawText(principal_rect, principal_alignment, principal)
+
+        if alternatives and not self.embedded_mode:
+            alternate_rect = QRectF(930.0, 60.0, 660.0, 180.0)
+            alternate_font = self._fit_pixel_font(
+                alternatives,
+                UI_FONT_FAMILY,
+                34,
+                22,
+                alternate_rect.width(),
+                alternate_rect.height(),
+                QFont.Weight.Normal,
+            )
+            painter.setFont(alternate_font)
+            painter.setPen(QColor(245, 245, 245, 225))
+            painter.drawText(
+                alternate_rect,
+                Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                alternatives,
+            )
+
+        position_font = QFont(UI_FONT_FAMILY)
+        position_font.setPixelSize(20)
+        position_font.setWeight(QFont.Weight.Medium)
+        painter.setFont(position_font)
+        painter.setPen(QColor(244, 239, 231, 175))
+        position_rect = (
+            QRectF(1280.0, 632.0, 310.0, 32.0)
+            if self.embedded_mode
+            else QRectF(1260.0, 18.0, 330.0, 34.0)
+        )
+        painter.drawText(
+            position_rect,
+            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+            f"Posición {self.current_position}",
+        )
+
+        if self.partial_assignment:
+            warning_font = QFont(UI_FONT_FAMILY)
+            warning_font.setPixelSize(18)
+            warning_font.setWeight(QFont.Weight.Medium)
+            painter.setFont(warning_font)
+            painter.setPen(QColor(240, 154, 0, 210))
+            warning_rect = (
+                QRectF(70.0, 632.0, 410.0, 30.0)
+                if self.embedded_mode
+                else QRectF(1180.0, 250.0, 410.0, 30.0)
+            )
+            painter.drawText(
+                warning_rect,
+                Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                "Fuera del diapasón",
+            )
+
+        root_pc = self._root_pc()
+        marker_radius = min(
+            abs(second - first)
+            for first, second in zip(self.STRING_Y, self.STRING_Y[1:])
+        ) / 2.0
+        for note, _string_index, _fret, x, y, secondary in self.display_assignment:
+            painter.save()
+            painter.setOpacity(self._marker_opacity(note, secondary))
+            note_radius = self._marker_radius_for_note(note, marker_radius)
+            fill = self._marker_color(note, root_pc)
+            painter.setBrush(QBrush(fill))
+            outline = QColor(255, 255, 255, 225)
+            outline_width = 3.0
+            if note in self.display_chord_notes and note in self.display_scale_notes:
+                outline = QColor(self.display_scale_notes[note])
+                outline.setAlpha(245)
+                outline_width = 6.0
+            painter.setPen(QPen(outline, outline_width))
+            painter.drawEllipse(QPointF(x, y), note_radius, note_radius)
+
+            label = self._marker_label(note)
+            label_font = self._fit_pixel_font(
+                label,
+                UI_FONT_FAMILY,
+                24,
+                11,
+                note_radius * 1.55,
+                note_radius * 1.45,
+                QFont.Weight.DemiBold,
+            )
+            painter.setFont(label_font)
+            painter.setPen(QColor(24, 20, 14))
+            painter.drawText(
+                QRectF(
+                    x - note_radius,
+                    y - note_radius,
+                    note_radius * 2.0,
+                    note_radius * 2.0,
+                ),
+                Qt.AlignmentFlag.AlignCenter,
+                label,
+            )
+            painter.restore()
+
+        painter.restore()
+        painter.end()
+        super().paintEvent(event)
 
 
 class StaffWidget(QWidget):
@@ -2116,11 +3275,16 @@ class StaffWidget(QWidget):
             line_index = 1  # Los puntos abrazan la cuarta línea (F3)
             y_offset = float(self.staff_settings.get("bass_clef_y_offset", 0.0)) * staff_spacing
             y = staff_top_y + line_index * staff_spacing + y_offset
+        if IS_LEGACY_QT_MAC:
+            y -= staff_spacing
 
-        rect_height = staff_spacing * 4.2 * clef_scale
-        rect_width = staff_spacing * 3.2 * clef_scale
+        rect_height_factor = 4.8 if IS_LEGACY_QT_MAC else 4.2
+        rect_width_factor = 4.4 if IS_LEGACY_QT_MAC else 3.2
+        rect_x_pad = staff_spacing * 0.6 * clef_scale if IS_LEGACY_QT_MAC else 0.0
+        rect_height = staff_spacing * rect_height_factor * clef_scale
+        rect_width = staff_spacing * rect_width_factor * clef_scale
         return QRectF(
-            x,
+            x - rect_x_pad,
             y - rect_height / 2,
             rect_width,
             rect_height,
@@ -2168,7 +3332,7 @@ class StaffWidget(QWidget):
         """Calcula márgenes, anchos y posiciones básicas a partir del rectángulo."""
 
         staff_spacing = max(7.0, min(16.0 if IS_WINDOWS else 18.0, rect.height() / 18.0))
-        margin = staff_spacing * 1.2
+        margin = staff_spacing * (1.2 + LEGACY_QT_MAC_STAFF_LEFT_PAD)
         label_width = 0.0
         base_clef_scale = self._staff_float(
             "clef_scale", 1.0, min_value=0.4, platform_scale=WINDOWS_STAFF_GLYPH_SCALE
@@ -2182,9 +3346,12 @@ class StaffWidget(QWidget):
         clef_scale = max(treble_scale, bass_scale)
         clef_width = staff_spacing * 3.0 * clef_scale
 
-        usable_width = max(rect.width() - 2 * margin - label_width - clef_width, staff_spacing * 10)
-
-        line_x_start = margin + label_width + clef_width
+        if IS_LEGACY_QT_MAC:
+            line_x_start = margin + label_width + staff_spacing * 0.4
+            usable_width = max(rect.width() - line_x_start - margin, staff_spacing * 10)
+        else:
+            line_x_start = margin + label_width + clef_width
+            usable_width = max(rect.width() - 2 * margin - label_width - clef_width, staff_spacing * 10)
         min_staff_width = staff_spacing * 10
         center_y = rect.center().y()
 
@@ -2285,12 +3452,17 @@ class StaffWidget(QWidget):
             symbol = "𝄢"
             y_offset = float(self.staff_settings.get("bass_clef_y_offset", 0.0)) * staff_spacing
             y = staff_top_y + line_index * staff_spacing + y_offset
+        if IS_LEGACY_QT_MAC:
+            y -= staff_spacing
 
-        rect_height = staff_spacing * 4.2
+        rect_height_factor = 4.8 if IS_LEGACY_QT_MAC else 4.2
+        rect_width_factor = 4.4 if IS_LEGACY_QT_MAC else 3.2
+        rect_x_pad = staff_spacing * 0.6 if IS_LEGACY_QT_MAC else 0.0
+        rect_height = staff_spacing * rect_height_factor
         rect = QRectF(
-            x,
+            x - rect_x_pad,
             y - rect_height / 2,
-            staff_spacing * 3.2,
+            staff_spacing * rect_width_factor,
             rect_height,
         )
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, symbol)
@@ -2301,6 +3473,18 @@ class StaffWidget(QWidget):
         note_scale = self._staff_float(
             "note_head_scale", 1.0, min_value=0.5, platform_scale=WINDOWS_STAFF_GLYPH_SCALE
         )
+        if IS_LEGACY_QT_MAC:
+            width = staff_spacing * 1.32 * LEGACY_QT_MAC_NOTE_HEAD_SCALE * note_scale
+            height = staff_spacing * LEGACY_QT_MAC_NOTE_HEAD_SCALE * note_scale
+            painter.save()
+            painter.translate(center_x, center_y)
+            painter.rotate(-10)
+            painter.setBrush(QBrush(self._color_from_setting("note_head_color", QColor(Qt.GlobalColor.black))))
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.drawEllipse(QRectF(-width / 2.0, -height / 2.0, width, height))
+            painter.restore()
+            return
+
         font_size = staff_spacing * 2.4 * note_scale
         font = QFont(self.staff_font_family, int(font_size))
         painter.setFont(font)
@@ -2365,14 +3549,53 @@ class StaffWidget(QWidget):
         font = QFont(self.staff_font_family, int(staff_spacing * 1.4 * accidental_scale))
         painter.setFont(font)
         metrics = QFontMetricsF(font)
+        _rect, origin = self._accidental_text_layout(
+            accidental, column_x, note_y, staff_spacing, note_head_width, metrics
+        )
+        painter.drawText(origin, accidental)
+
+    def _accidental_text_layout(
+        self,
+        accidental: str,
+        column_x: float,
+        note_y: float,
+        staff_spacing: float,
+        note_head_width: float,
+        metrics: QFontMetricsF,
+    ) -> Tuple[QRectF, QPointF]:
+        """Devuelve el rectángulo real y punto de baseline para centrar la alteración en la nota."""
+
         accidental_x_offset = float(self.staff_settings.get("accidental_x_offset", 0.0)) * staff_spacing
         accidental_y_offset = float(self.staff_settings.get("accidental_y_offset", 0.0)) * staff_spacing
         accidental_x = column_x - note_head_width * 1.2 + accidental_x_offset
+        center_x = accidental_x + (note_head_width * 1.2) / 2.0
+
+        if IS_LEGACY_QT_MAC:
+            bounds = metrics.tightBoundingRect(accidental)
+            if bounds.isNull() or bounds.width() <= 0 or bounds.height() <= 0:
+                bounds = metrics.boundingRect(accidental)
+            origin = QPointF(
+                center_x - bounds.center().x(),
+                note_y + accidental_y_offset - bounds.center().y(),
+            )
+            padding_x = staff_spacing * 0.08
+            padding_y = staff_spacing * 0.05
+            rect = QRectF(bounds).translated(origin).adjusted(
+                -padding_x, -padding_y, padding_x, padding_y
+            )
+            return rect, origin
+
         text_width = metrics.horizontalAdvance(accidental)
         text_height = metrics.height()
-        center_x = accidental_x + (note_head_width * 1.2) / 2.0
         baseline_y = note_y - text_height / 2.0 + metrics.ascent() + accidental_y_offset
-        painter.drawText(QPointF(center_x - text_width / 2.0, baseline_y), accidental)
+        origin = QPointF(center_x - text_width / 2.0, baseline_y)
+        rect = QRectF(
+            origin.x(),
+            baseline_y - metrics.ascent(),
+            text_width,
+            text_height,
+        )
+        return rect, origin
 
     def paintEvent(self, event):
         painter = QPainter(self)
@@ -2387,9 +3610,6 @@ class StaffWidget(QWidget):
         step_height = staff_spacing / 2.0
         center_y = layout["centerY"]
         line_start = layout["lineStart"]
-        label_x_offset = float(self.staff_settings.get("label_x_offset", 0.0)) * staff_spacing
-        label_y_offset = float(self.staff_settings.get("label_y_offset", 0.0)) * staff_spacing
-
         staff_line_color = self._color_from_setting("staff_line_color", QColor(40, 40, 40))
         pen = QPen(staff_line_color)
         pen.setWidthF(max(1.2, staff_spacing * 0.12))
@@ -2401,12 +3621,25 @@ class StaffWidget(QWidget):
         content_x_offset = float(self.staff_settings.get("content_x_offset", 0.0)) * staff_spacing
         note_x_offset = float(self.staff_settings.get("note_x_offset", 0.0)) * staff_spacing
         note_y_offset = float(self.staff_settings.get("note_y_offset", 0.0)) * staff_spacing
-        note_x_base = line_start + staff_spacing * 1.2 + note_x_offset + content_x_offset
+        note_x_base = (
+            line_start
+            + staff_spacing * (1.2 + LEGACY_QT_MAC_NOTE_PAD)
+            + note_x_offset
+            + content_x_offset
+        )
         note_head_scale = self._staff_float(
             "note_head_scale", 1.0, min_value=0.5, platform_scale=WINDOWS_STAFF_GLYPH_SCALE
         )
-        note_head_width = staff_spacing * 1.2 * note_head_scale
-        note_head_size = staff_spacing * 2.2 * note_head_scale
+        note_head_width = (
+            staff_spacing
+            * (1.32 * LEGACY_QT_MAC_NOTE_HEAD_SCALE if IS_LEGACY_QT_MAC else 1.2)
+            * note_head_scale
+        )
+        note_head_size = (
+            staff_spacing
+            * (1.32 * LEGACY_QT_MAC_NOTE_HEAD_SCALE if IS_LEGACY_QT_MAC else 2.2)
+            * note_head_scale
+        )
         ledger_length = note_head_width * 1.4
         collision_y_offset = float(self.staff_settings.get("collision_y_offset_steps", 0.0)) * step_height
 
@@ -2487,27 +3720,16 @@ class StaffWidget(QWidget):
         )
         accidental_font = QFont(self.staff_font_family, int(staff_spacing * 1.4 * accidental_scale))
         metrics = QFontMetricsF(accidental_font)
-        accidental_x_offset = float(self.staff_settings.get("accidental_x_offset", 0.0)) * staff_spacing
-        accidental_y_offset = float(self.staff_settings.get("accidental_y_offset", 0.0)) * staff_spacing
-
+        accidental_min_left = max(rect.right() for rect in clef_rects) + staff_spacing * 0.35
         if accidental_info:
             min_left = None
             for symbol, column_x, y, head_width in accidental_info:
-                text_width = metrics.horizontalAdvance(symbol)
-                text_height = metrics.height()
-                accidental_x = column_x - head_width * 1.2 + accidental_x_offset
-                center_x = accidental_x + (head_width * 1.2) / 2.0
-                baseline_y = y - text_height / 2.0 + metrics.ascent() + accidental_y_offset
-                rect = QRectF(
-                    center_x - text_width / 2.0,
-                    baseline_y - metrics.ascent(),
-                    text_width,
-                    text_height,
+                rect, _origin = self._accidental_text_layout(
+                    symbol, column_x, y, staff_spacing, head_width, metrics
                 )
                 min_left = rect.left() if min_left is None else min(min_left, rect.left())
-            min_allowed = max(rect.right() for rect in clef_rects) + staff_spacing * 0.4
-            if min_left is not None and min_left < min_allowed:
-                shift_x = min_allowed - min_left
+            if min_left is not None and min_left < accidental_min_left:
+                shift_x = accidental_min_left - min_left
                 note_positions = [x + shift_x for x in note_positions]
                 note_rows = [
                     (note, y, ledger_steps, note_x + shift_x)
@@ -2559,31 +3781,33 @@ class StaffWidget(QWidget):
         accidental_rects: List[QRectF] = []
         for symbol, column_x, y, head_width in accidental_info:
             stack_offset = float(self.staff_settings.get("accidental_stack_offset", 0.25))
-            step = max(staff_spacing * 0.35, head_width * stack_offset)
+            if IS_LEGACY_QT_MAC:
+                step = max(staff_spacing * 0.9, head_width * 0.8)
+            else:
+                step = max(staff_spacing * 0.35, head_width * stack_offset)
             accidental_color = self._color_from_setting("accidental_color", QColor(Qt.GlobalColor.black))
             painter.setPen(QPen(accidental_color))
             painter.setFont(accidental_font)
-            text_width = metrics.horizontalAdvance(symbol)
-            text_height = metrics.height()
 
             def accidental_rect(x_pos: float) -> Tuple[QRectF, float, float]:
-                accidental_x = x_pos - head_width * 1.2 + accidental_x_offset
-                center_x = accidental_x + (head_width * 1.2) / 2.0
-                baseline_y = y - text_height / 2.0 + metrics.ascent() + accidental_y_offset
-                rect = QRectF(
-                    center_x - text_width / 2.0,
-                    baseline_y - metrics.ascent(),
-                    text_width,
-                    text_height,
+                rect, origin = self._accidental_text_layout(
+                    symbol, x_pos, y, staff_spacing, head_width, metrics
                 )
-                return rect, center_x, baseline_y
+                return rect, rect.left(), origin.y()
 
-            column_offsets = [0.0, -step, -2 * step]
+            column_offsets = (
+                [0.0, -step, -2 * step, -3 * step, -4 * step, -5 * step]
+                if IS_LEGACY_QT_MAC
+                else [0.0, -step, -2 * step]
+            )
             placed = False
             for offset in column_offsets:
                 candidate_x = column_x + offset
                 rect, center_x, _baseline_y = accidental_rect(candidate_x)
-                if not self._rects_intersect(rect, base_occupied_rects + accidental_rects):
+                if (
+                    rect.left() >= accidental_min_left
+                    and not self._rects_intersect(rect, base_occupied_rects + accidental_rects)
+                ):
                     column_x = candidate_x
                     accidental_rects.append(QRectF(rect))
                     placed = True
@@ -2599,7 +3823,9 @@ class StaffWidget(QWidget):
                     prefer_left=True,
                     allow_right=False,
                 )
-                column_x += rect.left() - (center_x - text_width / 2.0)
+                if rect.left() < accidental_min_left:
+                    rect.translate(accidental_min_left - rect.left(), 0)
+                column_x += rect.left() - center_x
                 accidental_rects.append(QRectF(rect))
 
             self.drawAccidental(
@@ -2676,8 +3902,11 @@ class ControlWindow(QWidget):
         piano_window: PianoWindow,
         chord_window: ChordWindow,
         staff_window: StaffWindow,
+        fretboard_widget: FretboardWidget,
     ):
         super().__init__()
+        self.setObjectName("ControlWindow")
+        self.setWindowTitle("Controles - MIDI Piano Jaramillo")
 
         self.settings = QSettings("MIDI-Piano-Jaramillo", "MIDI-Piano")
 
@@ -2686,8 +3915,15 @@ class ControlWindow(QWidget):
         self.piano = piano_window.piano
         self.chord_window = chord_window
         self.staff_window = staff_window
+        self.fretboard_widget = fretboard_widget
+        self.instrument_view = "piano"
+        self.fretboard_widget.set_embedded_mode(True)
+        self.piano_window.set_fretboard_widget(self.fretboard_widget)
         self.active_notes: Set[int] = set()
         self.sustained_notes: Set[int] = set()
+        self._held_note_sources: Dict[int, Set[Tuple[int, int]]] = {}
+        self._sustain_sources: Set[Tuple[int, int]] = set()
+        self.note_activation_order: List[int] = []
         self.sustain_on: bool = False
         self._midi_backend_error_shown: bool = False
         self.custom_chords: List[Dict] = []
@@ -2815,15 +4051,19 @@ class ControlWindow(QWidget):
         top_layout.addWidget(self.main_status_strip)
         self.primary_controls_tabs = QTabWidget()
         midi_tab = QWidget()
+        midi_tab.setObjectName("ControlTabPage")
         midi_layout = QVBoxLayout()
         midi_layout.setContentsMargins(6, 6, 6, 6)
         keyboard_tab = QWidget()
+        keyboard_tab.setObjectName("ControlTabPage")
         keyboard_layout = QVBoxLayout()
         keyboard_layout.setContentsMargins(6, 6, 6, 6)
         appearance_tab = QWidget()
+        appearance_tab.setObjectName("ControlTabPage")
         appearance_layout = QVBoxLayout()
         appearance_layout.setContentsMargins(6, 6, 6, 6)
         learn_tab = QWidget()
+        learn_tab.setObjectName("ControlTabPage")
         learn_layout = QVBoxLayout()
         learn_layout.setContentsMargins(6, 6, 6, 6)
 
@@ -2921,6 +4161,7 @@ class ControlWindow(QWidget):
         self._setup_window_menu()
         self.display_panel_widget = self._build_display_panel()
         self.keyboard_nav_panel = self._build_keyboard_navigation_panel()
+        self._set_instrument_view("piano", persist=False, show_status=False)
 
         self._load_external_chord_dictionary()
 
@@ -2931,7 +4172,11 @@ class ControlWindow(QWidget):
         self.learned_chords_layout.setContentsMargins(0, 0, 0, 0)
         self.learned_chords_layout.setSpacing(6)
         self.learned_chords_container.setLayout(self.learned_chords_layout)
-        learn_layout.addWidget(self.learned_chords_container)
+        self.learned_chords_scroll = QScrollArea()
+        self.learned_chords_scroll.setObjectName("LearnedChordsScroll")
+        self.learned_chords_scroll.setWidgetResizable(True)
+        self.learned_chords_scroll.setWidget(self.learned_chords_container)
+        learn_layout.addWidget(self.learned_chords_scroll)
 
         midi_layout.addStretch()
         keyboard_layout.addStretch()
@@ -2995,13 +4240,14 @@ class ControlWindow(QWidget):
         self.refresh_inputs()
         self._populate_display_controls()
         self._apply_startup_defaults()
+        self.load_preferences()
         self._load_default_appearance()
         self._install_shortcuts()
-        self._visual_state_tracking_enabled = True
         self.range_changed(fit_window=False)
         self._apply_chord_font()
         self._refresh_learned_chords_ui()
-        self._update_display_overlays()
+        self._update_display_overlays(show_status=False)
+        self._visual_state_tracking_enabled = True
         QTimer.singleShot(0, self._ensure_startup_window_visible)
 
     def _connect_signal_handler(self, signal, handler_name: str, widget: Optional[QWidget] = None, control_label: str = "control") -> None:
@@ -3069,11 +4315,46 @@ class ControlWindow(QWidget):
     def _clear_transient_status_message(self) -> None:
         self._last_status_message = ""
         self._update_status_strip()
+        toast = getattr(self, "_status_toast", None)
+        if isinstance(toast, QLabel):
+            toast.hide()
+
+    def _show_status_toast(self, text: str) -> None:
+        parent = self.piano_window
+        toast = getattr(self, "_status_toast", None)
+        if not isinstance(toast, QLabel):
+            toast = QLabel(parent)
+            toast.setObjectName("StatusToast")
+            toast.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            toast.setWordWrap(True)
+            toast.setStyleSheet(
+                "QLabel#StatusToast {"
+                f"  font-family: {UI_FONT_STACK};"
+                "  font-size: 12px;"
+                "  color: #1d1d1f;"
+                "  background-color: rgba(247, 247, 248, 242);"
+                "  border: 1px solid #f09a00;"
+                "  border-radius: 6px;"
+                "  padding: 7px 12px;"
+                "}"
+            )
+            self._status_toast = toast
+
+        toast.setText(str(text))
+        toast.setMaximumWidth(max(260, min(560, parent.width() - 32)))
+        toast.adjustSize()
+        x = max(16, int((parent.width() - toast.width()) / 2))
+        y = max(parent.menuBar().height() + 10, 10)
+        toast.move(x, y)
+        toast.show()
+        toast.raise_()
 
     def _show_status_message(self, text: str, timeout_ms: int = 6000) -> None:
         self._last_status_message = str(text)
         self._status_message_timer.start(max(250, int(timeout_ms)))
         self._update_status_strip()
+        if self.piano_window.isVisible():
+            self._show_status_toast(str(text))
         window = self.window()
         status_bar = None
         if hasattr(window, "statusBar"):
@@ -3112,9 +4393,29 @@ class ControlWindow(QWidget):
         self._bring_to_front(self.piano_window)
 
     def _confirm_action(self, title: str, message: str) -> bool:
-        text = f"{title}: {message}" if title else message
-        self._show_status_message(text, timeout_ms=10000)
-        return True
+        dialog = QDialog(self)
+        dialog.setWindowTitle(title or "Confirmar")
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(18, 16, 18, 16)
+        layout.setSpacing(14)
+
+        message_label = QLabel(str(message), dialog)
+        message_label.setWordWrap(True)
+        message_label.setMinimumWidth(380)
+        layout.addWidget(message_label)
+
+        button_row = QHBoxLayout()
+        cancel_button = QPushButton("Cancelar", dialog)
+        confirm_button = QPushButton("Continuar", dialog)
+        confirm_button.setObjectName("PrimaryButton")
+        button_row.addStretch()
+        button_row.addWidget(cancel_button)
+        button_row.addWidget(confirm_button)
+        layout.addLayout(button_row)
+
+        cancel_button.clicked.connect(dialog.reject)
+        confirm_button.clicked.connect(dialog.accept)
+        return _dialog_accepted(_exec_popup_dialog(dialog))
 
     def _prompt_text_foreground(self, title: str, label: str, default_text: str = "") -> Tuple[str, bool]:
         parent = self.window() if isinstance(self.window(), QWidget) else self
@@ -3258,7 +4559,10 @@ class ControlWindow(QWidget):
         if app is not None:
             app.aboutToQuit.connect(self._persist_preferences_on_close)
 
-        for window in (self.piano_window, self.chord_window, self.staff_window):
+        for window in (
+            self.piano_window,
+            self.chord_window,
+        ):
             window.installEventFilter(self)
 
     def _schedule_visual_state_save(self) -> None:
@@ -3302,11 +4606,13 @@ class ControlWindow(QWidget):
             lambda checked: self._toggle_window_visibility(self.chord_window, checked)
         )
 
-        self.staff_action = self.window_menu.addAction("Ocultar Partitura")
-        self.staff_action.setCheckable(True)
-        self.staff_action.setChecked(True)
-        self.staff_action.triggered.connect(
-            lambda checked: self._toggle_window_visibility(self.staff_window, checked)
+        self.fretboard_action = self.window_menu.addAction("Vista de guitarra")
+        self.fretboard_action.setCheckable(True)
+        self.fretboard_action.setChecked(False)
+        self.fretboard_action.triggered.connect(
+            lambda checked: self._set_instrument_view(
+                "guitar" if checked else "piano"
+            )
         )
 
         self.window_menu.addSeparator()
@@ -3330,7 +4636,6 @@ class ControlWindow(QWidget):
         self._setup_display_menus()
         self._setup_controls_menu()
         self._setup_interval_menu()
-        self._setup_staff_menu()
 
         QTimer.singleShot(0, self._update_window_actions)
 
@@ -3395,7 +4700,7 @@ class ControlWindow(QWidget):
 
         self.menu_bar.show()
         self.display_panel_widget.show()
-        self.keyboard_nav_panel.show()
+        self.keyboard_nav_panel.setVisible(self.instrument_view == "piano")
         if self._presentation_previous_mode == "separate":
             self.set_view_mode("separate", persist=False)
         elif not self._presentation_previous_fullscreen:
@@ -3421,7 +4726,10 @@ class ControlWindow(QWidget):
         self._update_window_actions()
 
     def show_all_windows(self):
-        for win in (self.piano_window, self.chord_window, self.staff_window):
+        for win in (
+            self.piano_window,
+            self.chord_window,
+        ):
             self._bring_to_front(win)
         self._update_window_actions()
 
@@ -3437,9 +4745,12 @@ class ControlWindow(QWidget):
         else:
             top_height = max(260, int(area.height() * 0.42))
             bottom_height = max(180, int(area.height() * 0.24))
-            half_width = max(420, int((area.width() - margin * 3) / 2))
-            self.staff_window.setGeometry(area.x() + margin, area.y() + margin, half_width, top_height)
-            self.chord_window.setGeometry(area.x() + margin * 2 + half_width, area.y() + margin, half_width, top_height)
+            self.chord_window.setGeometry(
+                area.x() + margin,
+                area.y() + margin,
+                max(900, area.width() - margin * 2),
+                top_height,
+            )
             self.piano_window.setGeometry(
                 area.x() + margin,
                 area.y() + margin * 2 + top_height,
@@ -3453,15 +4764,19 @@ class ControlWindow(QWidget):
     def _update_window_actions(self):
         keyboard_visible = self._window_is_visible(self.piano_window)
         chords_visible = self._window_is_visible(self.chord_window)
-        staff_visible = self._window_is_visible(self.staff_window)
         single_view = self.view_mode == "single"
+        instrument_label = "Guitarra" if self.instrument_view == "guitar" else "Teclado"
 
         self.keyboard_action.blockSignals(True)
         self.keyboard_action.setChecked(keyboard_visible or single_view)
         self.keyboard_action.setText(
-            "Teclado (vista única)"
+            f"{instrument_label} (vista única)"
             if single_view
-            else ("Ocultar Teclado" if keyboard_visible else "Mostrar Teclado")
+            else (
+                f"Ocultar {instrument_label}"
+                if keyboard_visible
+                else f"Mostrar {instrument_label}"
+            )
         )
         self.keyboard_action.setEnabled(not single_view)
         self.keyboard_action.blockSignals(False)
@@ -3476,15 +4791,10 @@ class ControlWindow(QWidget):
         self.chord_action.setEnabled(not single_view)
         self.chord_action.blockSignals(False)
 
-        self.staff_action.blockSignals(True)
-        self.staff_action.setChecked(staff_visible or single_view)
-        self.staff_action.setText(
-            "Partitura (vista única)"
-            if single_view
-            else ("Ocultar Partitura" if staff_visible else "Mostrar Partitura")
-        )
-        self.staff_action.setEnabled(not single_view)
-        self.staff_action.blockSignals(False)
+        self.fretboard_action.blockSignals(True)
+        self.fretboard_action.setChecked(self.instrument_view == "guitar")
+        self.fretboard_action.setText("Vista de guitarra")
+        self.fretboard_action.blockSignals(False)
 
     def _take_window_widget(self, window: QMainWindow) -> Optional[QWidget]:
         widget = window.takeCentralWidget()
@@ -3507,30 +4817,30 @@ class ControlWindow(QWidget):
             return
 
         if mode == "single":
-            staff_widget = self._take_window_widget(self.staff_window) or self.staff_window.widget
             chord_widget = self._take_window_widget(self.chord_window) or self.chord_window.display_widget
             self.piano_window.piano.set_force_full_width(True)
             self.piano_window.show_combined_view(
-                staff_widget,
                 chord_widget,
                 self.display_panel_widget,
                 self.keyboard_nav_panel,
+                self.fretboard_widget,
             )
             self.piano_window.set_combined_background_color(self.single_window_bg_color)
+            self.piano_window.set_instrument_view(self.instrument_view)
+            self.keyboard_nav_panel.setVisible(self.instrument_view == "piano")
             self._sync_single_window_keyboard_controls()
             self.staff_window.hide()
             self.chord_window.hide()
             self._bring_to_front(self.piano_window)
         else:
             self.piano_window.piano.set_force_full_width(False)
-            self._restore_window_widget(self.staff_window, self.staff_window.widget)
             self._restore_window_widget(self.chord_window, self.chord_window.display_widget)
-            self.piano_window._remove_drag_support(self.staff_window.widget)
             self.piano_window._remove_drag_support(self.chord_window.display_widget)
             self.display_panel_widget.setParent(None)
             self.keyboard_nav_panel.setParent(None)
             self.piano_window.show_keyboard_only()
-            self.staff_window.show()
+            self.piano_window.set_instrument_view(self.instrument_view)
+            self.staff_window.hide()
             self.chord_window.show()
             self._bring_to_front(self.piano_window)
 
@@ -3575,13 +4885,15 @@ class ControlWindow(QWidget):
                 "QMenu {"
                 "  font-family: 'Avenir Next', 'Helvetica Neue', Arial, sans-serif;"
                 "  font-size: 13px;"
-                "  background-color: #15110d;"
-                "  color: #f7f3ed;"
-                "  border: 1px solid rgba(255, 255, 255, 70);"
+                "  background-color: #f7f7f8;"
+                "  color: #1d1d1f;"
+                "  border: 1px solid #c7c7cc;"
                 "  padding: 6px;"
                 "}"
-                "QMenu::item { padding: 7px 18px; border-radius: 5px; }"
+                "QMenu::item { color: #1d1d1f; padding: 7px 24px 7px 20px; border-radius: 5px; }"
                 "QMenu::item:selected { background-color: #f09a00; color: #1d1d1f; }"
+                "QMenu::item:disabled { color: #8e8e93; background-color: transparent; }"
+                "QMenu::separator { height: 1px; background: #d1d1d6; margin: 5px 8px; }"
             )
             control_style = (
                 "QWidget {"
@@ -3672,6 +4984,24 @@ class ControlWindow(QWidget):
                 "  background-color: rgba(240, 154, 0, 232);"
                 "  border-color: #f09a00;"
                 "}"
+                "QPushButton#InstrumentSegmentButton {"
+                "  color: #f7f3ed;"
+                "  background-color: rgba(255, 255, 255, 24);"
+                "  border: 1px solid rgba(255, 255, 255, 62);"
+                "  border-radius: 5px;"
+                "  padding: 5px 13px;"
+                "  font-size: 10px;"
+                "  font-weight: 700;"
+                "}"
+                "QPushButton#InstrumentSegmentButton:hover {"
+                "  background-color: rgba(240, 154, 0, 90);"
+                "  border-color: #f09a00;"
+                "}"
+                "QPushButton#InstrumentSegmentButton:checked {"
+                "  color: #1d1d1f;"
+                "  background-color: #f09a00;"
+                "  border-color: #f09a00;"
+                "}"
                 "QToolButton#MenuButton {"
                 "  color: #1d1d1f;"
                 "  background-color: #fbfbfc;"
@@ -3718,9 +5048,34 @@ class ControlWindow(QWidget):
                 "  font-family: 'Avenir Next', 'Helvetica Neue', Arial, sans-serif;"
                 "  font-size: 13px;"
                 "  color: #1d1d1f;"
-                "  background-color: #fbfbfc;"
+                "  background-color: #f7f7f8;"
                 "}"
+                "QWidget#ControlWindow { background-color: #f2f2f4; }"
+                "QWidget#ControlTabPage, QScrollArea#LearnedChordsScroll, "
+                "QScrollArea#LearnedChordsScroll > QWidget > QWidget { background-color: #fbfbfc; }"
                 "QLabel, QCheckBox { color: #1d1d1f; background-color: transparent; }"
+                "QTabWidget::pane {"
+                "  background-color: #fbfbfc;"
+                "  border: 1px solid #c7c7cc;"
+                "  border-radius: 7px;"
+                "  top: -1px;"
+                "}"
+                "QTabBar::tab {"
+                "  color: #3a3a3c;"
+                "  background-color: #e8e8eb;"
+                "  border: 1px solid #c7c7cc;"
+                "  border-bottom: none;"
+                "  border-top-left-radius: 7px;"
+                "  border-top-right-radius: 7px;"
+                "  padding: 7px 20px;"
+                "  margin-right: 2px;"
+                "}"
+                "QTabBar::tab:selected {"
+                "  color: #1d1d1f;"
+                "  background-color: #f09a00;"
+                "  border-color: #d88700;"
+                "}"
+                "QTabBar::tab:hover:!selected { background-color: #fff3df; color: #1d1d1f; }"
                 "QCheckBox::indicator {"
                 "  width: 16px;"
                 "  height: 16px;"
@@ -3732,7 +5087,7 @@ class ControlWindow(QWidget):
                 "  background-color: #f09a00;"
                 "  border-color: #b87300;"
                 "}"
-                "QPushButton, QComboBox, QSpinBox {"
+                "QPushButton, QComboBox, QSpinBox, QFontComboBox, QKeySequenceEdit {"
                 "  color: #1d1d1f;"
                 "  background-color: #ffffff;"
                 "  border: 1px solid #c7c7cc;"
@@ -3740,9 +5095,14 @@ class ControlWindow(QWidget):
                 "  padding: 5px 10px;"
                 "  min-height: 20px;"
                 "}"
-                "QPushButton:hover, QComboBox:hover, QSpinBox:hover {"
+                "QPushButton:hover, QComboBox:hover, QSpinBox:hover, QFontComboBox:hover, QKeySequenceEdit:hover {"
                 "  background-color: #fff7cc;"
                 "  border-color: #f09a00;"
+                "}"
+                "QPushButton#PrimaryButton { background-color: #f09a00; border-color: #d88700; font-weight: 600; }"
+                "QPushButton#PrimaryButton:hover { background-color: #ffad1f; }"
+                "QPushButton:disabled, QComboBox:disabled, QSpinBox:disabled {"
+                "  color: #8e8e93; background-color: #ececef; border-color: #d1d1d6;"
                 "}"
                 "QComboBox QAbstractItemView {"
                 "  background-color: #ffffff;"
@@ -3761,7 +5121,7 @@ class ControlWindow(QWidget):
                 "'Avenir Next', 'Helvetica Neue', Arial, sans-serif", UI_FONT_STACK
             )
             self.menu_bar.setStyleSheet(menu_style)
-            self.setStyleSheet(control_style)
+            self.setStyleSheet(menu_panel_style)
             self.display_panel_widget.setStyleSheet(control_style)
             self.keyboard_nav_panel.setStyleSheet(control_style)
             for widget in self._menu_panel_widgets:
@@ -3867,7 +5227,6 @@ class ControlWindow(QWidget):
             ("Escalas", self.scale_menu),
             ("Controles", self.controls_menu),
             ("Ver", self.interval_menu),
-            ("Partitura", self.staff_menu),
         ):
             button = QToolButton()
             button.setObjectName("MenuButton")
@@ -3972,6 +5331,58 @@ class ControlWindow(QWidget):
                 button.setChecked(button_index == index)
                 button.blockSignals(False)
 
+    def _build_instrument_view_button(self, text: str, mode: str) -> QPushButton:
+        button = QPushButton(text)
+        button.setObjectName("InstrumentSegmentButton")
+        button.setCheckable(True)
+        button.setMinimumWidth(92)
+        button.setToolTip(
+            "Mostrar teclado" if mode == "piano" else "Mostrar diapasón"
+        )
+        button.clicked.connect(
+            lambda _checked=False, selected_mode=mode: self._set_instrument_view(selected_mode)
+        )
+        return button
+
+    def _set_instrument_view(
+        self,
+        mode: str,
+        persist: bool = True,
+        show_status: bool = True,
+    ) -> None:
+        if mode not in ("piano", "guitar"):
+            return
+        self.instrument_view = mode
+        self.piano_window.set_instrument_view(mode)
+
+        for button_mode, button in getattr(self, "instrument_view_buttons", []):
+            button.blockSignals(True)
+            button.setChecked(button_mode == mode)
+            button.blockSignals(False)
+
+        nav_panel = getattr(self, "keyboard_nav_panel", None)
+        if isinstance(nav_panel, QWidget):
+            nav_panel.setVisible(
+                mode == "piano"
+                and self.view_mode == "single"
+                and not self._presentation_mode_enabled
+            )
+
+        if hasattr(self, "fretboard_action"):
+            self.fretboard_action.blockSignals(True)
+            self.fretboard_action.setChecked(mode == "guitar")
+            self.fretboard_action.blockSignals(False)
+
+        if persist and self._visual_state_tracking_enabled:
+            self._schedule_visual_state_save()
+        if show_status:
+            self._show_status_message(
+                "Vista de guitarra activada."
+                if mode == "guitar"
+                else "Vista de piano activada.",
+                timeout_ms=2200,
+            )
+
     def _build_display_panel(self) -> QWidget:
         panel = QWidget()
         panel.setObjectName("DisplayPanel")
@@ -3987,6 +5398,12 @@ class ControlWindow(QWidget):
         header_row.addWidget(title)
         header_row.addWidget(subtitle)
         header_row.addStretch()
+        self.instrument_view_buttons = [
+            ("piano", self._build_instrument_view_button("PIANO", "piano")),
+            ("guitar", self._build_instrument_view_button("GUITARRA", "guitar")),
+        ]
+        for _mode, button in self.instrument_view_buttons:
+            header_row.addWidget(button)
         layout.addLayout(header_row)
 
         self.display_panel_status_strip = self._build_compact_status_label()
@@ -4010,9 +5427,11 @@ class ControlWindow(QWidget):
 
         chord_page = QWidget(panel)
         chord_page.setObjectName("PanelPage")
-        chord_page_layout = QHBoxLayout()
+        chord_page_layout = QVBoxLayout()
         chord_page_layout.setContentsMargins(14, 10, 14, 10)
-        chord_page_layout.setSpacing(9)
+        chord_page_layout.setSpacing(7)
+        chord_primary_row = QHBoxLayout()
+        chord_primary_row.setSpacing(9)
         self.display_panel_chord_checkbox = QCheckBox("Mostrar acorde")
         self.display_panel_root_combo = QComboBox()
         self.display_panel_root_combo.setFixedWidth(86)
@@ -4030,23 +5449,32 @@ class ControlWindow(QWidget):
         self.display_panel_drop_combo.addItem("Drop 2", "drop2")
         self.display_panel_drop_combo.addItem("Drop 3", "drop3")
         self.display_panel_drop_combo.addItem("Drop 2-4", "drop2-4")
-        chord_page_layout.addWidget(self.display_panel_chord_checkbox)
-        chord_page_layout.addWidget(QLabel("Fundamental"))
-        chord_page_layout.addWidget(self.display_panel_root_combo)
-        chord_page_layout.addWidget(QLabel("Acorde"))
-        chord_page_layout.addWidget(self.display_panel_chord_combo)
-        chord_page_layout.addWidget(QLabel("Inversión"))
-        chord_page_layout.addWidget(self.display_panel_inversion_spin)
-        chord_page_layout.addWidget(QLabel("Drop"))
-        chord_page_layout.addWidget(self.display_panel_drop_combo)
-        chord_page_layout.addStretch()
+        chord_primary_row.addWidget(self.display_panel_chord_checkbox)
+        chord_primary_row.addSpacing(10)
+        chord_primary_row.addWidget(QLabel("Fundamental"))
+        chord_primary_row.addWidget(self.display_panel_root_combo)
+        chord_primary_row.addWidget(QLabel("Acorde"))
+        chord_primary_row.addWidget(self.display_panel_chord_combo)
+        chord_primary_row.addStretch()
+        chord_page_layout.addLayout(chord_primary_row)
+
+        chord_secondary_row = QHBoxLayout()
+        chord_secondary_row.setSpacing(9)
+        chord_secondary_row.addWidget(QLabel("Inversión"))
+        chord_secondary_row.addWidget(self.display_panel_inversion_spin)
+        chord_secondary_row.addWidget(QLabel("Drop"))
+        chord_secondary_row.addWidget(self.display_panel_drop_combo)
+        chord_secondary_row.addStretch()
+        chord_page_layout.addLayout(chord_secondary_row)
         chord_page.setLayout(chord_page_layout)
 
         scale_page = QWidget(panel)
         scale_page.setObjectName("PanelPage")
-        scale_page_layout = QHBoxLayout()
+        scale_page_layout = QVBoxLayout()
         scale_page_layout.setContentsMargins(14, 10, 14, 10)
-        scale_page_layout.setSpacing(9)
+        scale_page_layout.setSpacing(7)
+        scale_primary_row = QHBoxLayout()
+        scale_primary_row.setSpacing(9)
         self.display_panel_scale_checkbox = QCheckBox("Mostrar escala")
         self.display_panel_scale_root_combo = QComboBox()
         self.display_panel_scale_root_combo.setFixedWidth(86)
@@ -4055,14 +5483,15 @@ class ControlWindow(QWidget):
         self.display_panel_scale_combo.setMinimumContentsLength(26)
         self.display_panel_scale_combo.setMaxVisibleItems(18)
         self.display_panel_scale_combo.setToolTip("Seleccionar y activar una escala pregrabada")
-        scale_page_layout.addWidget(self.display_panel_scale_checkbox)
-        scale_page_layout.addWidget(QLabel("Fundamental"))
-        scale_page_layout.addWidget(self.display_panel_scale_root_combo)
-        scale_page_layout.addWidget(QLabel("Escala"))
-        scale_page_layout.addWidget(self.display_panel_scale_combo)
-        scale_page_layout.addSpacing(12)
+        scale_primary_row.addWidget(self.display_panel_scale_checkbox)
+        scale_primary_row.addSpacing(10)
+        scale_primary_row.addWidget(QLabel("Fundamental"))
+        scale_primary_row.addWidget(self.display_panel_scale_root_combo)
+        scale_primary_row.addWidget(QLabel("Escala"))
+        scale_primary_row.addWidget(self.display_panel_scale_combo)
+        scale_primary_row.addStretch()
+        scale_page_layout.addLayout(scale_primary_row)
         scale_page_layout.addWidget(self._build_scale_role_palette())
-        scale_page_layout.addStretch()
         scale_page.setLayout(scale_page_layout)
 
         self.display_panel_section_stack.addWidget(chord_page)
@@ -4076,6 +5505,7 @@ class ControlWindow(QWidget):
 
     def _build_keyboard_navigation_panel(self) -> QWidget:
         panel = QWidget()
+        panel.setObjectName("KeyboardNavigationPanel")
         layout = QHBoxLayout()
         layout.setContentsMargins(8, 4, 8, 8)
         layout.setSpacing(8)
@@ -4326,6 +5756,8 @@ class ControlWindow(QWidget):
         chord_layout.addLayout(chord_row2)
 
         chord_widget.setLayout(chord_layout)
+        chord_widget.setMinimumWidth(650)
+        self.chord_menu.setMinimumWidth(666)
         chord_action = QWidgetAction(self.chord_menu)
         chord_action.setDefaultWidget(chord_widget)
         self.chord_menu.addAction(chord_action)
@@ -4342,16 +5774,22 @@ class ControlWindow(QWidget):
         scale_row.addWidget(self.display_scale_checkbox)
         scale_row.addWidget(QLabel("Escala:"))
         scale_row.addWidget(self.display_scale_combo)
+        scale_row.addStretch()
+        scale_layout.addLayout(scale_row)
+
+        scale_mode_row = QHBoxLayout()
         self.scale_edit_mode_button = QPushButton("Modo edición de categorías: OFF")
         self.scale_edit_mode_button.setCheckable(True)
         self.scale_edit_mode_button.setChecked(False)
         self.scale_edit_mode_button.toggled.connect(self._toggle_scale_edit_mode)
-        scale_row.addWidget(self.scale_edit_mode_button)
-        scale_row.addStretch()
-        scale_layout.addLayout(scale_row)
+        scale_mode_row.addWidget(self.scale_edit_mode_button)
+        scale_mode_row.addStretch()
+        scale_layout.addLayout(scale_mode_row)
         scale_layout.addWidget(self._build_scale_role_palette())
 
         scale_widget.setLayout(scale_layout)
+        scale_widget.setMinimumWidth(610)
+        self.scale_menu.setMinimumWidth(626)
         scale_action = QWidgetAction(self.scale_menu)
         scale_action.setDefaultWidget(scale_widget)
         self.scale_menu.addAction(scale_action)
@@ -4396,356 +5834,12 @@ class ControlWindow(QWidget):
         self.raise_()
         self.activateWindow()
 
-    def _setup_staff_menu(self):
-        self.staff_menu = self.menu_bar.addMenu("Partitura")
-
-        clef_menu = self.staff_menu.addMenu("Claves")
-        clef_size_action = clef_menu.addAction("Tamaño global de claves…")
-        clef_size_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "clef_scale",
-                "Tamaño global de claves (escala)",
-                "Escala (1.0 = por defecto)",
-                0.4,
-                3.0,
-            )
-        )
-
-        clef_x_action = clef_menu.addAction("Posición X global de claves…")
-        clef_x_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "clef_x_offset",
-                "Posición X global de claves",
-                "Offset en espaciado",
-                -6.0,
-                6.0,
-            )
-        )
-
-        treble_size_action = clef_menu.addAction("Tamaño clave de Sol…")
-        treble_size_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "treble_clef_scale",
-                "Tamaño clave de Sol",
-                "Escala (1.0 = por defecto)",
-                0.4,
-                3.0,
-            )
-        )
-
-        treble_x_action = clef_menu.addAction("Posición X clave de Sol…")
-        treble_x_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "treble_clef_x_offset",
-                "Posición X clave de Sol",
-                "Offset en espaciado",
-                -6.0,
-                6.0,
-            )
-        )
-
-        treble_y_action = clef_menu.addAction("Posición Y clave de Sol…")
-        treble_y_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "treble_clef_y_offset",
-                "Posición Y clave de Sol",
-                "Offset en espaciado",
-                -6.0,
-                6.0,
-            )
-        )
-
-        bass_size_action = clef_menu.addAction("Tamaño clave de Fa…")
-        bass_size_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "bass_clef_scale",
-                "Tamaño clave de Fa",
-                "Escala (1.0 = por defecto)",
-                0.4,
-                3.0,
-            )
-        )
-
-        bass_x_action = clef_menu.addAction("Posición X clave de Fa…")
-        bass_x_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "bass_clef_x_offset",
-                "Posición X clave de Fa",
-                "Offset en espaciado",
-                -6.0,
-                6.0,
-            )
-        )
-
-        bass_y_action = clef_menu.addAction("Posición Y clave de Fa…")
-        bass_y_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "bass_clef_y_offset",
-                "Posición Y clave de Fa",
-                "Offset en espaciado",
-                -6.0,
-                6.0,
-            )
-        )
-
-        labels_menu = self.staff_menu.addMenu("Etiquetas")
-        label_size_action = labels_menu.addAction("Tamaño etiquetas de nota…")
-        label_size_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "label_font_scale",
-                "Tamaño etiquetas de nota",
-                "Escala (1.0 = por defecto)",
-                0.5,
-                3.0,
-            )
-        )
-
-        label_font_action = labels_menu.addAction("Fuente etiquetas…")
-        label_font_action.triggered.connect(self._choose_staff_label_font)
-
-        label_color_action = labels_menu.addAction("Color etiquetas…")
-        label_color_action.triggered.connect(
-            lambda: self._choose_staff_color("label_color", "Color etiquetas")
-        )
-
-        label_x_action = labels_menu.addAction("Posición X etiquetas…")
-        label_x_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "label_x_offset",
-                "Posición X etiquetas",
-                "Offset en espaciado",
-                -6.0,
-                6.0,
-            )
-        )
-
-        label_y_action = labels_menu.addAction("Posición Y etiquetas…")
-        label_y_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "label_y_offset",
-                "Posición Y etiquetas",
-                "Offset en espaciado",
-                -6.0,
-                6.0,
-            )
-        )
-
-        notes_menu = self.staff_menu.addMenu("Notas")
-        content_x_action = notes_menu.addAction("Desplazamiento horizontal global…")
-        content_x_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "content_x_offset",
-                "Desplazamiento horizontal global",
-                "Offset en espaciado",
-                -10.0,
-                10.0,
-            )
-        )
-
-        note_head_action = notes_menu.addAction("Tamaño de cabeza de nota…")
-        note_head_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "note_head_scale",
-                "Tamaño de cabeza de nota",
-                "Escala (1.0 = por defecto)",
-                0.5,
-                3.0,
-            )
-        )
-
-        note_x_action = notes_menu.addAction("Posición X de notas…")
-        note_x_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "note_x_offset",
-                "Posición X de notas",
-                "Offset en espaciado",
-                -6.0,
-                6.0,
-            )
-        )
-
-        note_y_action = notes_menu.addAction("Posición Y de notas…")
-        note_y_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "note_y_offset",
-                "Posición Y de notas",
-                "Offset en espaciado",
-                -6.0,
-                6.0,
-            )
-        )
-
-        note_color_action = notes_menu.addAction("Color de cabezas…")
-        note_color_action.triggered.connect(
-            lambda: self._choose_staff_color("note_head_color", "Color de cabezas de nota")
-        )
-
-        collision_y_action = notes_menu.addAction("Desplazamiento vertical segundas…")
-        collision_y_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "collision_y_offset_steps",
-                "Desplazamiento vertical en segundas",
-                "Offset en pasos (0 = sin cambio)",
-                -4.0,
-                4.0,
-            )
-        )
-
-        collision_x_action = notes_menu.addAction("Desplazamiento horizontal segundas…")
-        collision_x_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "collision_x_offset_scale",
-                "Desplazamiento horizontal en segundas",
-                "Escala (1.0 = por defecto)",
-                0.2,
-                3.0,
-            )
-        )
-
-        accidentals_menu = self.staff_menu.addMenu("Alteraciones")
-        accidental_size_action = accidentals_menu.addAction("Tamaño de alteraciones…")
-        accidental_size_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "accidental_scale",
-                "Tamaño de alteraciones",
-                "Escala (1.0 = por defecto)",
-                0.4,
-                3.0,
-            )
-        )
-
-        accidental_x_action = accidentals_menu.addAction("Posición X alteraciones…")
-        accidental_x_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "accidental_x_offset",
-                "Posición X alteraciones",
-                "Offset en espaciado",
-                -6.0,
-                6.0,
-            )
-        )
-
-        accidental_y_action = accidentals_menu.addAction("Posición Y alteraciones…")
-        accidental_y_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "accidental_y_offset",
-                "Posición Y alteraciones",
-                "Offset en espaciado",
-                -6.0,
-                6.0,
-            )
-        )
-
-        accidental_collision_action = accidentals_menu.addAction("Posición X alteraciones en segundas…")
-        accidental_collision_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "accidental_collision_x_offset",
-                "Posición X alteraciones para notas desplazadas",
-                "Offset en espaciado",
-                -6.0,
-                6.0,
-            )
-        )
-
-        accidental_stack_action = accidentals_menu.addAction("Desplazamiento alteraciones repetidas…")
-        accidental_stack_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "accidental_stack_offset",
-                "Desplazamiento alteraciones repetidas",
-                "Multiplicador de ancho (0.25 = por defecto)",
-                0.0,
-                2.0,
-            )
-        )
-
-        accidental_color_action = accidentals_menu.addAction("Color alteraciones…")
-        accidental_color_action.triggered.connect(
-            lambda: self._choose_staff_color("accidental_color", "Color alteraciones")
-        )
-
-        lines_menu = self.staff_menu.addMenu("Líneas")
-        line_length_action = lines_menu.addAction("Longitud de líneas…")
-        line_length_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "staff_line_length_scale",
-                "Longitud de líneas",
-                "Escala (1.0 = por defecto)",
-                0.3,
-                3.0,
-            )
-        )
-
-        line_extra_action = lines_menu.addAction("Extra de longitud…")
-        line_extra_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "staff_line_extra",
-                "Extra de longitud",
-                "Offset en espaciado",
-                -10.0,
-                20.0,
-            )
-        )
-
-        ledger_x_action = lines_menu.addAction("Posición X líneas auxiliares…")
-        ledger_x_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "ledger_x_offset",
-                "Posición X líneas auxiliares",
-                "Offset en espaciado",
-                -6.0,
-                6.0,
-            )
-        )
-
-        ledger_y_action = lines_menu.addAction("Posición Y líneas auxiliares…")
-        ledger_y_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "ledger_y_offset",
-                "Posición Y líneas auxiliares",
-                "Offset en espaciado",
-                -6.0,
-                6.0,
-            )
-        )
-
-        middle_c_ledger_action = lines_menu.addAction("Posición X línea C central…")
-        middle_c_ledger_action.triggered.connect(
-            lambda: self._prompt_staff_setting(
-                "middle_c_ledger_x_offset",
-                "Posición X línea adicional del C central",
-                "Offset en espaciado",
-                -6.0,
-                6.0,
-            )
-        )
-
-        line_color_action = lines_menu.addAction("Color líneas del pentagrama…")
-        line_color_action.triggered.connect(
-            lambda: self._choose_staff_color("staff_line_color", "Color líneas del pentagrama")
-        )
-
-        ledger_color_action = lines_menu.addAction("Color líneas auxiliares…")
-        ledger_color_action.triggered.connect(
-            lambda: self._choose_staff_color("ledger_line_color", "Color líneas auxiliares")
-        )
-
-        colors_menu = self.staff_menu.addMenu("Colores")
-        background_action = colors_menu.addAction("Fondo de ventana…")
-        background_action.triggered.connect(
-            lambda: self._choose_staff_color("background_color", "Color de fondo")
-        )
-
-        clef_color_action = colors_menu.addAction("Color de claves…")
-        clef_color_action.triggered.connect(
-            lambda: self._choose_staff_color("clef_color", "Color de claves")
-        )
-
     def _default_interval_label_settings(self) -> Dict:
         return {
             "font_family": "",
             "font_size": 14,
             "color_white": QColor(Qt.GlobalColor.black),
-            "color_black": QColor(Qt.GlobalColor.white),
+            "color_black": QColor(Qt.GlobalColor.black),
             "y_anchor_mode_white": "bottom25",
             "y_percent_white": 87.5,
             "y_anchor_mode_black": "center",
@@ -4780,6 +5874,8 @@ class ControlWindow(QWidget):
         color_black = QColor(color_name_black)
         if color_black.isValid():
             settings["color_black"] = color_black
+        if IS_LEGACY_QT_MAC and settings["color_black"].lightness() > 190:
+            settings["color_black"] = QColor(Qt.GlobalColor.black)
 
         position_mode_white = self.settings.value("intervals/position_mode_white", "bottom25", type=str)
         settings["y_anchor_mode_white"] = position_mode_white or "bottom25"
@@ -5121,7 +6217,10 @@ class ControlWindow(QWidget):
         self._sync_interval_position_actions()
 
     def eventFilter(self, watched: QObject, event: QEvent) -> bool:
-        if watched in {self.piano_window, self.chord_window, self.staff_window}:
+        if watched in {
+            self.piano_window,
+            self.chord_window,
+        }:
             if event.type() in {
                 QEvent.Type.Move,
                 QEvent.Type.Resize,
@@ -5515,10 +6614,289 @@ class ControlWindow(QWidget):
         warnings = self._find_minor_ninth_warnings(sorted(int(note) for note in notes), chord_info)
         self.piano.set_live_warning_notes(warnings, self.display_chord_warning_color)
 
+    @staticmethod
+    def _normalized_guitar_chord_name(name: str) -> str:
+        normalized = str(name or "").replace(" ", "")
+        if "_ó_" in normalized:
+            left, right = normalized.split("_ó_", 1)
+            normalized = right if left.startswith("phryg.") else left
+        aliases = {
+            "M": "",
+            "maj7": "∆",
+            "ø": "m7(b5)",
+            "6/9": "6(9)",
+            "m∆(9)": "m∆9",
+            "º∆(9)": "º∆9",
+            "∆9(sus4)": "∆9sus4",
+            "∆(9)#11": "∆9(#11)",
+            "m∆(9)11": "m∆11",
+            "m∆(9)#11": "m∆#11",
+            "º∆(9)11": "º∆11",
+        }
+        return aliases.get(normalized, normalized)
+
+    @staticmethod
+    def _guitar_interval_priority(interval: int, present: Set[int]) -> int:
+        interval = int(interval) % 12
+        if interval == 0:
+            return 100
+        if interval in (3, 4):
+            return 96
+        if interval in (10, 11):
+            return 95
+        if interval in (1, 6, 8):
+            return 93
+        if interval == 5:
+            return 92 if not ({3, 4} & present) else 86
+        if interval == 2:
+            return 92 if not ({3, 4, 5} & present) else 87
+        if interval == 9:
+            return 90
+        if interval == 7:
+            return 70
+        return 80
+
+    @classmethod
+    def _guitar_chord_required_intervals(
+        cls,
+        chord_key: str,
+        intervals: List[int],
+    ) -> List[int]:
+        target = {0} | {int(interval) % 12 for interval in intervals}
+        normalized_name = cls._normalized_guitar_chord_name(chord_key)
+        name_matches = [
+            pattern
+            for pattern in BASE_CHORD_PATTERNS
+            if cls._normalized_guitar_chord_name(str(pattern.get("nombre", "")))
+            == normalized_name
+        ]
+        signature_matches = []
+        for pattern in BASE_CHORD_PATTERNS:
+            mandatory = {int(value) % 12 for value in pattern.get("obligatorias", [])}
+            optional = {int(value) % 12 for value in pattern.get("opcionales", [])}
+            if mandatory | optional == target:
+                signature_matches.append(pattern)
+        matches = name_matches or signature_matches
+        if normalized_name.lower().startswith("penta"):
+            matches = []
+
+        optional_intervals: Set[int] = set()
+        if matches:
+            mandatory_sets = [
+                {int(value) % 12 for value in pattern.get("obligatorias", [])} & target
+                for pattern in matches
+            ]
+            mandatory = set.intersection(*mandatory_sets) if mandatory_sets else set(target)
+            optional_intervals.update(target - mandatory)
+            for pattern in matches:
+                optional_intervals.update(
+                    int(value) % 12
+                    for value in pattern.get("opcionales", [])
+                    if int(value) % 12 in target
+                )
+
+        required = set(target) - optional_intervals
+        required.add(0)
+
+        # Antes de usar las seis cuerdas, se prefieren voicings de cuatro o
+        # cinco voces. La quinta justa puede omitirse; con tritono, puede
+        # omitirse la tercera que el cifrado reconoce como tal.
+        if len(required) > 5 and 7 in required:
+            required.remove(7)
+        if len(required) > 5 and 6 in required:
+            labels = {
+                interval: interval_label_for_context(
+                    interval,
+                    required,
+                    normalized_name,
+                )
+                for interval in required
+            }
+            thirds = [
+                interval
+                for interval, label in labels.items()
+                if label in {"3m", "3M"}
+            ]
+            if thirds:
+                required.remove(thirds[0])
+
+        if len(required) > len(FretboardWidget.OPEN_STRING_MIDI):
+            required = set(
+                sorted(
+                    required,
+                    key=lambda interval: (
+                        cls._guitar_interval_priority(interval, target),
+                        -interval,
+                    ),
+                    reverse=True,
+                )[: len(FretboardWidget.OPEN_STRING_MIDI)]
+            )
+            required.add(0)
+            while len(required) > len(FretboardWidget.OPEN_STRING_MIDI):
+                removable = min(
+                    (interval for interval in required if interval != 0),
+                    key=lambda interval: cls._guitar_interval_priority(interval, target),
+                )
+                required.remove(removable)
+        return sorted(required)
+
+    @classmethod
+    def _guitar_chord_voicing(
+        cls,
+        root_pc: int,
+        chord_key: str,
+        intervals: List[int],
+    ) -> Dict[str, object]:
+        required = cls._guitar_chord_required_intervals(chord_key, intervals)
+        present = set(required)
+        normalized_name = cls._normalized_guitar_chord_name(chord_key)
+
+        if normalized_name.lower().startswith("penta"):
+            ordered_intervals: List[int] = []
+            for interval in intervals:
+                normalized_interval = int(interval) % 12
+                if (
+                    normalized_interval in required
+                    and normalized_interval not in ordered_intervals
+                ):
+                    ordered_intervals.append(normalized_interval)
+            for interval in required:
+                if interval not in ordered_intervals:
+                    ordered_intervals.append(interval)
+
+            relative_order = [
+                (ordered_intervals[index], ordered_intervals[index - 1])
+                for index in range(1, len(ordered_intervals))
+            ]
+            pitch_classes = {
+                (int(root_pc) + interval) % 12
+                for interval in required
+            }
+            order_constraints = [
+                (
+                    (int(root_pc) + upper_interval) % 12,
+                    (int(root_pc) + lower_interval) % 12,
+                )
+                for upper_interval, lower_interval in relative_order
+            ]
+            result = FretboardWidget.guitar_voicing_for_pitch_classes(
+                root_pc,
+                pitch_classes,
+                order_constraints,
+            )
+            result["intervals"] = set(required)
+            result["voice_order"] = list(ordered_intervals)
+            return result
+
+        while required:
+            pitch_classes = {(int(root_pc) + interval) % 12 for interval in required}
+            labels = {
+                interval: interval_label_for_context(
+                    interval,
+                    set(required),
+                    normalized_name,
+                )
+                for interval in required
+            }
+            relative_constraints: Set[Tuple[int, int]] = set()
+
+            ninths = [
+                interval
+                for interval, label in labels.items()
+                if label in {"9m", "9M", "9+"}
+            ]
+            thirds = [
+                interval
+                for interval, label in labels.items()
+                if label in {"3m", "3M"}
+            ]
+            relative_constraints.update((ninth, 0) for ninth in ninths)
+            relative_constraints.update(
+                (ninth, third)
+                for ninth in ninths
+                for third in thirds
+                if ninth != third
+            )
+
+            elevenths = [
+                interval
+                for interval, label in labels.items()
+                if label in {"11j", "11+"}
+            ]
+            fifths = [
+                interval
+                for interval, label in labels.items()
+                if label in {"5b", "5j", "5+"}
+            ]
+            relative_constraints.update(
+                (eleventh, fifth)
+                for eleventh in elevenths
+                for fifth in fifths
+                if eleventh != fifth
+            )
+
+            thirteenths = [
+                interval
+                for interval, label in labels.items()
+                if label in {"13m", "13"}
+            ]
+            sevenths = [
+                interval
+                for interval, label in labels.items()
+                if label in {"7b", "7m", "7M"}
+            ]
+            if (
+                "º" in normalized_name
+                and ("b13" in normalized_name or "♭13" in normalized_name)
+                and 8 in required
+                and 9 in required
+            ):
+                sevenths.append(9)
+            relative_constraints.update(
+                (thirteenth, seventh)
+                for thirteenth in thirteenths
+                for seventh in sevenths
+                if thirteenth != seventh
+            )
+
+            order_constraints = [
+                (
+                    (int(root_pc) + upper_interval) % 12,
+                    (int(root_pc) + lower_interval) % 12,
+                )
+                for upper_interval, lower_interval in sorted(relative_constraints)
+            ]
+            result = FretboardWidget.guitar_voicing_for_pitch_classes(
+                root_pc,
+                pitch_classes,
+                order_constraints,
+            )
+            if result.get("notes"):
+                result["intervals"] = set(required)
+                return result
+            removable = [interval for interval in required if interval != 0]
+            if not removable:
+                break
+            remove_interval = min(
+                removable,
+                key=lambda interval: cls._guitar_interval_priority(interval, present),
+            )
+            required.remove(remove_interval)
+
+        return {
+            "notes": set(),
+            "position": FretboardWidget.MIN_POSITION,
+            "placements": [],
+            "intervals": set(),
+        }
+
     def _update_display_overlays(self, *_args, show_status: bool = True):
         chord_overlays: Dict[int, QColor] = {}
         chord_interval_labels: Dict[int, str] = {}
+        guitar_chord_overlays: Dict[int, QColor] = {}
+        guitar_chord_interval_labels: Dict[int, str] = {}
         scale_overlays: Dict[int, QColor] = {}
+        guitar_scale_overlays: Dict[int, QColor] = {}
         display_label_parts: List[str] = []
         should_persist = self._visual_state_tracking_enabled and not self._syncing_display_panel
 
@@ -5527,6 +6905,7 @@ class ControlWindow(QWidget):
             self.piano.set_display_chord_notes({})
             self.piano.set_display_scale_notes({})
             self.piano.set_display_scale_label("")
+            self.fretboard_widget.set_display_overlays({}, {}, {}, None, "")
             self._sync_panel_from_primary()
             self._update_status_strip()
             return
@@ -5534,6 +6913,7 @@ class ControlWindow(QWidget):
         root_pc = int(root_pc)
         transpose = int(self.display_transpose_spin.value())
         root_label = str(self.display_root_combo.currentText() or "").strip()
+        guitar_root_pc = (root_pc + transpose) % 12
 
         if self.display_chord_checkbox.isChecked():
             chord_key = self.display_chord_combo.currentData()
@@ -5578,6 +6958,39 @@ class ControlWindow(QWidget):
                         if label:
                             chord_interval_labels[note] = label
 
+                guitar_voicing = self._guitar_chord_voicing(
+                    guitar_root_pc,
+                    str(chord_key or ""),
+                    list(intervals),
+                )
+                guitar_notes = sorted(
+                    int(note) for note in guitar_voicing.get("notes", set())
+                )
+                guitar_present_intervals = {
+                    int(interval) % 12
+                    for interval in guitar_voicing.get("intervals", set())
+                }
+                guitar_warnings = self._find_minor_ninth_warnings(guitar_notes)
+                for note in guitar_notes:
+                    interval = (note - guitar_root_pc) % 12
+                    if note in guitar_warnings:
+                        guitar_chord_overlays[note] = QColor(
+                            self.display_chord_warning_color
+                        )
+                    elif interval == 0:
+                        guitar_chord_overlays[note] = QColor(
+                            self.display_chord_root_color
+                        )
+                    else:
+                        guitar_chord_overlays[note] = QColor(self.display_chord_color)
+                    label = interval_label_for_context(
+                        interval,
+                        guitar_present_intervals,
+                        str(chord_key or ""),
+                    )
+                    if label:
+                        guitar_chord_interval_labels[note] = label
+
         if self.display_scale_checkbox.isChecked():
             scale_key = self.display_scale_combo.currentData()
             intervals = SCALE_PATTERNS.get(scale_key or "")
@@ -5605,8 +7018,24 @@ class ControlWindow(QWidget):
                     if self.piano.start_note <= note <= self.piano.end_note:
                         scale_overlays[note] = QColor(scale_notes_with_colors[idx][1])
 
+                guitar_scale_notes = FretboardWidget.guitar_scale_notes(
+                    scale_pcs[0],
+                    list(intervals),
+                )
+                for idx, note in enumerate(guitar_scale_notes):
+                    guitar_scale_overlays[note] = QColor(
+                        scale_notes_with_colors[idx][1]
+                    )
+
         self.piano.set_display_chord_notes(chord_overlays)
         self.piano.set_display_scale_notes(scale_overlays)
+        self.fretboard_widget.set_display_overlays(
+            guitar_chord_overlays,
+            guitar_scale_overlays,
+            guitar_chord_interval_labels,
+            guitar_root_pc,
+            root_label,
+        )
         self.display_chord_interval_labels = chord_interval_labels
         if not self.active_notes and not self.sustained_notes:
             self.piano.set_interval_labels(dict(self.display_chord_interval_labels))
@@ -5671,6 +7100,7 @@ class ControlWindow(QWidget):
             "display_drop": str(self.display_drop_combo.currentData() or "none"),
             "display_transpose": 0,
             "view_mode": str(self.view_mode),
+            "instrument_view": str(self.instrument_view),
             "start_note": int(self.start_combo.currentData() or DEFAULT_START_NOTE),
             "octaves": int(self.octaves_spin.value()),
             "interval_label_settings": self._serialize_interval_settings(self.interval_label_settings),
@@ -5845,6 +7275,13 @@ class ControlWindow(QWidget):
             self._apply_staff_settings()
 
         self.set_view_mode(DEFAULT_VIEW_MODE, persist=False)
+        saved_instrument_view = prefs.get("instrument_view")
+        if saved_instrument_view in ("piano", "guitar"):
+            self._set_instrument_view(
+                str(saved_instrument_view),
+                persist=False,
+                show_status=False,
+            )
 
         keyboard_labels = prefs.get("keyboard_labels_visible")
         if isinstance(keyboard_labels, bool):
@@ -5933,17 +7370,16 @@ class ControlWindow(QWidget):
             "display_drop": str(self.display_drop_combo.currentData() or "none"),
             "display_transpose": 0,
             "view_mode": str(self.view_mode),
+            "instrument_view": str(self.instrument_view),
             "window_visibility": {
                 "keyboard": bool(self.piano_window.isVisible()),
                 "chords": bool(self.chord_window.isVisible()),
-                "staff": bool(self.staff_window.isVisible()),
             },
             "interval_label_settings": self._serialize_interval_settings(self.interval_label_settings),
             "staff_settings": self._serialize_staff_settings(self.staff_window.widget.staff_settings),
             "window_geometries": {
                 "keyboard": self._geometry_payload_for(self.piano_window),
                 "chords": self._geometry_payload_for(self.chord_window),
-                "staff": self._geometry_payload_for(self.staff_window),
             },
             "shortcut_overrides": dict(self._shortcut_overrides),
         }
@@ -6030,6 +7466,8 @@ class ControlWindow(QWidget):
         added = self._import_dictionary_from_path(
             Path(file_path), record_extra=True, allow_overwrite=True
         )
+        if added:
+            self._write_preferences(False)
         self._show_status_message(
             f"Diccionario cargado en memoria. Acordes agregados o actualizados: {added}."
         )
@@ -6190,17 +7628,23 @@ class ControlWindow(QWidget):
             self._apply_staff_settings()
 
         self.set_view_mode(DEFAULT_VIEW_MODE, persist=False)
+        saved_instrument_view = prefs.get("instrument_view")
+        if saved_instrument_view in ("piano", "guitar"):
+            self._set_instrument_view(
+                str(saved_instrument_view),
+                persist=False,
+                show_status=False,
+            )
 
         self._restore_window_geometries(prefs)
 
         visibility = prefs.get("window_visibility")
-        if isinstance(visibility, dict) and self.view_mode == "separate":
-            if not bool(visibility.get("keyboard", True)):
-                self.piano_window.hide()
-            if not bool(visibility.get("chords", True)):
-                self.chord_window.hide()
-            if not bool(visibility.get("staff", True)):
-                self.staff_window.hide()
+        if isinstance(visibility, dict):
+            if self.view_mode == "separate":
+                if not bool(visibility.get("keyboard", True)):
+                    self.piano_window.hide()
+                if not bool(visibility.get("chords", True)):
+                    self.chord_window.hide()
             self._update_window_actions()
 
 
@@ -6357,7 +7801,6 @@ class ControlWindow(QWidget):
 
         self._apply_geometry_if_valid(self.piano_window, rect_from_payload(geoms.get("keyboard")))
         self._apply_geometry_if_valid(self.chord_window, rect_from_payload(geoms.get("chords")))
-        self._apply_geometry_if_valid(self.staff_window, rect_from_payload(geoms.get("staff")))
 
     def _apply_geometry_if_valid(self, window: QMainWindow, rect: Optional[QRect]):
         if rect is None:
@@ -6443,21 +7886,39 @@ class ControlWindow(QWidget):
 
         self.change_input()
 
+    def _clear_live_midi_state(self) -> None:
+        had_notes = bool(self.active_notes or self.sustained_notes)
+        self.active_notes.clear()
+        self.sustained_notes.clear()
+        self._held_note_sources.clear()
+        self._sustain_sources.clear()
+        self.note_activation_order.clear()
+        self.sustain_on = False
+        self.piano.clear_pressed()
+        self.piano.clear_sustained()
+        if had_notes:
+            self._refresh_staff_for_current_notes()
+
     def _close_midi_inputs(self) -> None:
+        ports = []
         if self.midi_in is not None:
+            ports.append(self.midi_in)
+        ports.extend(port for port in self.midi_inputs if port is not None)
+
+        seen = set()
+        for port in ports:
+            port_id = id(port)
+            if port_id in seen:
+                continue
+            seen.add(port_id)
             try:
-                self.midi_in.close()
+                port.close()
             except Exception:
                 pass
-            self.midi_in = None
 
-        if self.midi_inputs:
-            for port in self.midi_inputs:
-                try:
-                    port.close()
-                except Exception:
-                    pass
-            self.midi_inputs = []
+        self.midi_in = None
+        self.midi_inputs = []
+        self._clear_live_midi_state()
 
     def change_input(self):
         self._close_midi_inputs()
@@ -6547,10 +8008,26 @@ class ControlWindow(QWidget):
             self._write_preferences(False)
 
     def choose_chord_background(self):
-        self._set_absolute_black_backgrounds(True)
+        color = _get_popup_color(
+            self,
+            self.chord_bg_color,
+            "Seleccionar fondo de acordes",
+        )
+        if color.isValid():
+            self.chord_bg_color = QColor(color)
+            self.chord_window.set_background_color(color)
+            self._write_preferences(False)
 
     def choose_single_window_background(self):
-        self._set_absolute_black_backgrounds(True)
+        color = _get_popup_color(
+            self,
+            self.single_window_bg_color,
+            "Seleccionar fondo de la vista única",
+        )
+        if color.isValid():
+            self.single_window_bg_color = QColor(color)
+            self.piano_window.set_combined_background_color(color)
+            self._write_preferences(False)
 
     def _apply_chord_font(self):
         family = self.font_combo.currentFont().family()
@@ -6684,12 +8161,25 @@ class ControlWindow(QWidget):
 
     def _refresh_staff_for_current_notes(self):
         notes = set(self.active_notes) | set(self.sustained_notes)
+        self._sync_note_activation_order(notes)
         chord_info = self.chord_window.update_chord(notes)
         if chord_info is not None:
             chord_info["custom_spelling_map"] = self._custom_spelling_for_notes(notes, chord_info)
         self._update_live_minor_ninth_warnings(notes, chord_info)
         self.staff_window.set_notes(notes, chord_info)
+        self.fretboard_widget.set_notes(notes, chord_info, self.note_activation_order)
         self._update_interval_labels(notes, chord_info)
+
+    def _sync_note_activation_order(self, notes: Set[int]) -> None:
+        active = {int(note) for note in notes}
+        self.note_activation_order = [
+            note for note in self.note_activation_order if note in active
+        ]
+        known = set(self.note_activation_order)
+        for note in sorted(active):
+            if note not in known:
+                self.note_activation_order.append(note)
+                known.add(note)
 
     def _parse_note_labels(self, text: str) -> Optional[Dict[int, str]]:
         tokens = [
@@ -6732,7 +8222,6 @@ class ControlWindow(QWidget):
             root_pc = principal_match.get("root") if isinstance(principal_match, dict) else None
             interval_spellings = self.custom_chord_quality_spellings.get(str(quality))
             if root_letter is not None and root_pc is not None and interval_spellings:
-                root_index = NOTE_LETTER_TO_INDEX[root_letter]
                 root_pc = int(root_pc)
                 spellings: Dict[int, str] = {}
                 for note in notes:
@@ -6790,7 +8279,7 @@ class ControlWindow(QWidget):
         )
         if existing_idx is not None:
             old_name = self.custom_chords[existing_idx].get("nombre", "(sin nombre)")
-            if not self._confirm_action(
+            if persist and not self._confirm_action(
                 "Midi learn",
                 f"Ya existe un acorde aprendido con esos intervalos: «{old_name}». "
                 f"Se reemplazará por «{name}».",
@@ -6855,7 +8344,13 @@ class ControlWindow(QWidget):
     def _delete_custom_chord(self, index: int):
         if index < 0 or index >= len(self.custom_chords):
             return
-        pattern = self.custom_chords.pop(index)
+        pattern = self.custom_chords[index]
+        if not self._confirm_action(
+            "Eliminar cifrado",
+            f"Se eliminará «{pattern.get('nombre', '(sin nombre)')}» del diccionario aprendido.",
+        ):
+            return
+        self.custom_chords.pop(index)
         try:
             CHORD_PATTERNS.remove(pattern)
         except ValueError:
@@ -7084,14 +8579,19 @@ class ControlWindow(QWidget):
             new_note_on = False
             for midi_input in inputs:
                 for msg in midi_input.iter_pending():
+                    source = (
+                        id(midi_input),
+                        int(getattr(msg, "channel", 0) or 0),
+                    )
                     # Pedal de sustain (CC 64)
                     if msg.type == "control_change" and getattr(msg, "control", None) == 64:
+                        sustain_was_on = self.sustain_on
                         if msg.value >= 64:
-                            # Sustain ON
-                            self.sustain_on = True
+                            self._sustain_sources.add(source)
                         else:
-                            # Sustain OFF: limpiar todas las notas sostenidas
-                            self.sustain_on = False
+                            self._sustain_sources.discard(source)
+                        self.sustain_on = bool(self._sustain_sources)
+                        if sustain_was_on and not self.sustain_on:
                             if self.sustained_notes:
                                 for n in list(self.sustained_notes):
                                     self.piano.set_sustained(n, False)
@@ -7100,42 +8600,39 @@ class ControlWindow(QWidget):
                     elif msg.type in ("note_on", "note_off"):
                         note = msg.note
                         if msg.type == "note_on" and msg.velocity > 0:
-                            # Pulsación física
-                            self.piano.set_pressed(note, True)
+                            note_sources = self._held_note_sources.setdefault(note, set())
+                            was_held = bool(note_sources)
+                            note_sources.add(source)
+                            if not was_held:
+                                self.piano.set_pressed(note, True)
                             self.active_notes.add(note)
+                            if note in self.note_activation_order:
+                                self.note_activation_order.remove(note)
+                            self.note_activation_order.append(note)
                             # Si estaba en sustain, lo quitamos de ahí
                             if note in self.sustained_notes:
                                 self.sustained_notes.discard(note)
                                 self.piano.set_sustained(note, False)
                             new_note_on = True
                         else:
-                            # Nota liberada físicamente
+                            note_sources = self._held_note_sources.get(note, set())
+                            note_sources.discard(source)
+                            if note_sources:
+                                continue
+                            self._held_note_sources.pop(note, None)
                             self.piano.set_pressed(note, False)
                             if self.sustain_on:
-                                # Mientras el pedal está ON, pasamos la nota a sostenida
-                                if note in self.active_notes:
-                                    self.active_notes.discard(note)
+                                self.active_notes.discard(note)
                                 self.sustained_notes.add(note)
                                 self.piano.set_sustained(note, True)
                             else:
-                                # Sin pedal: simplemente se apaga
-                                if note in self.active_notes:
-                                    self.active_notes.discard(note)
-                                if note in self.sustained_notes:
-                                    self.sustained_notes.discard(note)
-                                    self.piano.set_sustained(note, False)
+                                self.active_notes.discard(note)
+                                self.sustained_notes.discard(note)
+                                self.piano.set_sustained(note, False)
                         changed = True
             if changed:
                 notas_para_acorde = set(self.active_notes) | set(self.sustained_notes)
-                chord_info = self.chord_window.update_chord(notas_para_acorde)
-                if chord_info is not None:
-                    chord_info["custom_spelling_map"] = self._custom_spelling_for_notes(
-                        notas_para_acorde,
-                        chord_info,
-                    )
-                self._update_live_minor_ninth_warnings(notas_para_acorde, chord_info)
-                self.staff_window.set_notes(notas_para_acorde, chord_info)
-                self._update_interval_labels(notas_para_acorde, chord_info)
+                self._refresh_staff_for_current_notes()
                 if self.learning_chord:
                     if self.learning_waiting_first_note and new_note_on and notas_para_acorde:
                         self._begin_capture_window(notas_para_acorde)
@@ -7162,14 +8659,21 @@ def main():
     piano_window = PianoWindow()
     chord_window = ChordWindow()
     staff_window = StaffWindow()
+    fretboard_widget = FretboardWidget()
     app.piano_window = piano_window
     app.chord_window = chord_window
     app.staff_window = staff_window
+    app.fretboard_widget = fretboard_widget
     piano_window.show()
     chord_window.show()
-    staff_window.show()
+    staff_window.hide()
 
-    control_window = ControlWindow(piano_window, chord_window, staff_window)
+    control_window = ControlWindow(
+        piano_window,
+        chord_window,
+        staff_window,
+        fretboard_widget,
+    )
     app.control_window = control_window  # mantiene vivos los controles y atajos durante toda la sesión
 
     sys.exit(app.exec())

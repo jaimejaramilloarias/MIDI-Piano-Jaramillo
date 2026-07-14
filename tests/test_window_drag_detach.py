@@ -24,7 +24,11 @@ class TestWindowDragDetach(unittest.TestCase):
 
     def test_set_view_mode_detaches_keyboard_drag_filter_from_child_windows(self) -> None:
         set_view_mode_source = self._class_method_source("ControlWindow", "set_view_mode")
-        self.assertIn("self.piano_window._remove_drag_support(self.staff_window.widget)", set_view_mode_source)
+        self.assertNotIn(
+            "self.piano_window._remove_drag_support(self.staff_window.widget)",
+            set_view_mode_source,
+        )
+        self.assertNotIn("self._take_window_widget(self.staff_window)", set_view_mode_source)
         self.assertIn(
             "self.piano_window._remove_drag_support(self.chord_window.display_widget)",
             set_view_mode_source,
@@ -33,4 +37,3 @@ class TestWindowDragDetach(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
-

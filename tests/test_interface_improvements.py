@@ -55,8 +55,8 @@ class TestInterfaceImprovements(unittest.TestCase):
         self.assertIn("self.display_panel_chord_combo = QComboBox(panel)", display_panel_source)
         self.assertIn("self.display_panel_scale_combo = QComboBox(panel)", display_panel_source)
         self.assertIn("self.display_panel_scale_root_combo = QComboBox()", display_panel_source)
-        self.assertIn("chord_page_layout.addWidget(QLabel(\"Acorde\"))", display_panel_source)
-        self.assertIn("scale_page_layout.addWidget(QLabel(\"Escala\"))", display_panel_source)
+        self.assertIn("chord_primary_row.addWidget(QLabel(\"Acorde\"))", display_panel_source)
+        self.assertIn("scale_primary_row.addWidget(QLabel(\"Escala\"))", display_panel_source)
         self.assertIn("_build_scale_role_palette", display_panel_source)
         self.assertNotIn("_build_single_window_menu_strip", display_panel_source)
         self.assertNotIn("display_panel_chord_select_button", display_panel_source)
@@ -112,7 +112,6 @@ class TestInterfaceImprovements(unittest.TestCase):
         self.assertIn("too_large", ensure_source)
 
     def test_black_key_interval_labels_have_independent_smaller_scale(self) -> None:
-        piano_source = self._class_source("PianoWidget")
         paint_source = self._class_method_source("PianoWidget", "paintEvent")
         size_source = self._class_method_source("PianoWidget", "_interval_label_font_size")
 
