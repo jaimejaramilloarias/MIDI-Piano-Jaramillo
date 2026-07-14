@@ -1341,6 +1341,7 @@ class PianoWidget(QWidget):
         self.update()
 
     def paintEvent(self, event):
+        super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
@@ -3001,6 +3002,7 @@ class FretboardWidget(QWidget):
             painter.restore()
 
     def paintEvent(self, event):
+        super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
         painter.setRenderHint(QPainter.RenderHint.TextAntialiasing, True)
@@ -3010,7 +3012,6 @@ class FretboardWidget(QWidget):
         if self.embedded_mode:
             self._paint_embedded_fretboard(painter)
             painter.end()
-            super().paintEvent(event)
             return
 
         source_top = 0.0
@@ -3159,7 +3160,6 @@ class FretboardWidget(QWidget):
 
         painter.restore()
         painter.end()
-        super().paintEvent(event)
 
 
 class StaffWidget(QWidget):
@@ -3893,7 +3893,7 @@ class StaffWindow(QMainWindow):
     def set_notes(self, notes: Set[int], chord_info: Optional[Dict[str, object]] = None):
         self.widget.set_notes(notes, chord_info)
 
-class ControlWindow(QWidget):
+class ControlWindow(ResponsiveWidthWidget):
     """
     Panel de controles (se aloja en el menú superior):
     - Selección de dispositivo MIDI
@@ -5465,14 +5465,8 @@ class ControlWindow(QWidget):
         self.display_panel_drop_combo.addItem("Drop 2", "drop2")
         self.display_panel_drop_combo.addItem("Drop 3", "drop3")
         self.display_panel_drop_combo.addItem("Drop 2-4", "drop2-4")
-        if IS_WINDOWS:
-            chord_toggle_row = QHBoxLayout()
-            chord_toggle_row.addWidget(self.display_panel_chord_checkbox)
-            chord_toggle_row.addStretch()
-            chord_page_layout.addLayout(chord_toggle_row)
-        else:
-            chord_primary_row.addWidget(self.display_panel_chord_checkbox)
-            chord_primary_row.addSpacing(10)
+        chord_primary_row.addWidget(self.display_panel_chord_checkbox)
+        chord_primary_row.addSpacing(10)
         chord_primary_row.addWidget(QLabel("Fundamental"))
         chord_primary_row.addWidget(self.display_panel_root_combo)
         chord_primary_row.addWidget(QLabel("Acorde"))
@@ -5505,14 +5499,8 @@ class ControlWindow(QWidget):
         self.display_panel_scale_combo.setMinimumContentsLength(26)
         self.display_panel_scale_combo.setMaxVisibleItems(18)
         self.display_panel_scale_combo.setToolTip("Seleccionar y activar una escala pregrabada")
-        if IS_WINDOWS:
-            scale_toggle_row = QHBoxLayout()
-            scale_toggle_row.addWidget(self.display_panel_scale_checkbox)
-            scale_toggle_row.addStretch()
-            scale_page_layout.addLayout(scale_toggle_row)
-        else:
-            scale_primary_row.addWidget(self.display_panel_scale_checkbox)
-            scale_primary_row.addSpacing(10)
+        scale_primary_row.addWidget(self.display_panel_scale_checkbox)
+        scale_primary_row.addSpacing(10)
         scale_primary_row.addWidget(QLabel("Fundamental"))
         scale_primary_row.addWidget(self.display_panel_scale_root_combo)
         scale_primary_row.addWidget(QLabel("Escala"))

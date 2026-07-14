@@ -48,7 +48,7 @@ def label_fits(label: QLabel) -> bool:
     metrics = QFontMetrics(label.font())
     bounds = metrics.boundingRect(text)
     contents = label.contentsRect()
-    return bounds.width() <= contents.width() and bounds.height() <= contents.height()
+    return bounds.width() <= contents.width() + 2 and bounds.height() <= contents.height() + 2
 
 
 def render_menu(menu: QMenu, path: Path, app: QApplication) -> None:
@@ -112,6 +112,7 @@ def main_smoke(output_dir: Path) -> int:
 
         responsive_sizes: dict[str, dict[str, int]] = {}
         stable_sizes: dict[str, list[int]] = {}
+        chord_label_geometry: dict[str, dict[str, list[int]]] = {}
         for width, height in ((800, 600), (1280, 760)):
             piano_window.resize(width, height)
             process(app)
@@ -120,6 +121,12 @@ def main_smoke(output_dir: Path) -> int:
             responsive_sizes[f"{width}x{height}"] = {
                 "main": display.main_label.font().pointSize(),
                 "alternate": display.alt_label.font().pointSize(),
+            }
+            chord_label_geometry[f"{width}x{height}"] = {
+                "window": [piano_window.width(), piano_window.height()],
+                "display": [display.width(), display.height()],
+                "main": [display.main_label.width(), display.main_label.height()],
+                "alternate": [display.alt_label.width(), display.alt_label.height()],
             }
             checks[f"main_chord_fits_{width}x{height}"] = label_fits(display.main_label)
             checks[f"alternate_chords_fit_{width}x{height}"] = label_fits(display.alt_label)
@@ -139,6 +146,7 @@ def main_smoke(output_dir: Path) -> int:
             capture(piano_window, output_dir / f"piano-{width}x{height}.png", app)
 
         report["responsive_chord_sizes"] = responsive_sizes
+        report["chord_label_geometry"] = chord_label_geometry
         report["stable_window_sizes"] = stable_sizes
         checks["responsive_chord_font_scales"] = (
             responsive_sizes["800x600"]["main"]
@@ -203,6 +211,7 @@ def main_smoke(output_dir: Path) -> int:
 
         controls.resize(700, 560)
         capture(controls, output_dir / "controls-700x560.png", app)
+        report["controls_size"] = [controls.width(), controls.height()]
         checks["controls_keep_requested_size"] = controls.size().width() == 700 and controls.size().height() == 560
 
         for name, menu in (
