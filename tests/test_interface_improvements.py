@@ -138,6 +138,8 @@ class TestInterfaceImprovements(unittest.TestCase):
         self.assertIn("\"critical\": \"Nota evitada\"", init_source)
         self.assertIn("button.setObjectName(\"ScaleRoleCircle\")", palette_source)
         self.assertIn("button.setFixedSize(24, 24)", palette_source)
+        self.assertIn("QGridLayout() if IS_WINDOWS else QHBoxLayout()", palette_source)
+        self.assertIn("layout.addWidget(item, index // 2, index % 2)", palette_source)
         self.assertIn("border-radius: 12px", sync_source)
 
     def test_window_rearrange_presentation_and_shortcuts_exist(self) -> None:

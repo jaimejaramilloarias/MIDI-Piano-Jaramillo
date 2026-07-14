@@ -27,6 +27,7 @@ from PyQt6.QtWidgets import (
     QMainWindow,
     QMenu,
     QWidget,
+    QGridLayout,
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
@@ -5245,10 +5246,10 @@ class ControlWindow(QWidget):
 
     def _build_scale_role_palette(self) -> QWidget:
         panel = QWidget()
-        layout = QHBoxLayout()
+        layout = QGridLayout() if IS_WINDOWS else QHBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
-        for role in ("root", "stable", "tension", "critical"):
+        for index, role in enumerate(("root", "stable", "tension", "critical")):
             item = QWidget()
             item_layout = QHBoxLayout()
             item_layout.setContentsMargins(0, 0, 0, 0)
@@ -5267,8 +5268,14 @@ class ControlWindow(QWidget):
             item_layout.addWidget(button)
             item_layout.addWidget(text_label)
             item.setLayout(item_layout)
-            layout.addWidget(item)
-        layout.addStretch()
+            if IS_WINDOWS:
+                layout.addWidget(item, index // 2, index % 2)
+            else:
+                layout.addWidget(item)
+        if IS_WINDOWS:
+            layout.setColumnStretch(2, 1)
+        else:
+            layout.addStretch()
         panel.setLayout(layout)
         self._sync_scale_palette_buttons()
         return panel
