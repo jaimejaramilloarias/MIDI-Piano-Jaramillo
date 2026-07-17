@@ -306,13 +306,15 @@ def main_smoke(output_dir: Path) -> int:
         for width, height in ((800, 600), (1280, 760)):
             piano_window.resize(width, height)
             process(app)
-            checks[f"study_guitar_keeps_size_{width}x{height}"] = (
-                [piano_window.width(), piano_window.height()] == [width, height]
-            )
+            settled_size = [piano_window.width(), piano_window.height()]
             capture(
                 piano_window,
                 output_dir / f"study-guitar-{width}x{height}.png",
                 app,
+            )
+            process(app)
+            checks[f"study_guitar_keeps_size_{width}x{height}"] = (
+                [piano_window.width(), piano_window.height()] == settled_size
             )
         controls._set_display_panel_section(0)
         controls._set_instrument_view("piano", persist=False, show_status=False)
