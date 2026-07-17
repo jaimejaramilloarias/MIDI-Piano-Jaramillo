@@ -2,6 +2,7 @@ import copy
 import json
 import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -13,6 +14,7 @@ from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QApplication, QDialog, QWidget
 
 import main
+from midi_study import StudyNote
 from main import CHORD_PATTERNS, ChordWindow, ControlWindow, FretboardWidget, PianoWindow, StaffWindow
 
 
@@ -37,11 +39,13 @@ class TestMenuRuntime(unittest.TestCase):
         cls.temp_dir = tempfile.TemporaryDirectory(prefix="midi-piano-menu-tests-")
         cls.original_config_path = ControlWindow.CONFIG_PATH
         cls.original_appearance_path = ControlWindow.APPEARANCE_CONFIG_PATH
+        cls.original_study_library_path = ControlWindow.STUDY_LIBRARY_PATH
         cls.original_patterns = copy.deepcopy(CHORD_PATTERNS)
 
         root = Path(cls.temp_dir.name)
         ControlWindow.CONFIG_PATH = root / "preferences.json"
         ControlWindow.APPEARANCE_CONFIG_PATH = root / "appearance.json"
+        ControlWindow.STUDY_LIBRARY_PATH = root / "study-library"
         ControlWindow.CONFIG_PATH.write_text(
             json.dumps(
                 {
@@ -77,6 +81,7 @@ class TestMenuRuntime(unittest.TestCase):
         CHORD_PATTERNS[:] = cls.original_patterns
         ControlWindow.CONFIG_PATH = cls.original_config_path
         ControlWindow.APPEARANCE_CONFIG_PATH = cls.original_appearance_path
+        ControlWindow.STUDY_LIBRARY_PATH = cls.original_study_library_path
         cls.temp_dir.cleanup()
 
     def test_all_top_menus_are_present_without_staff_menu(self) -> None:
@@ -189,6 +194,135 @@ class TestMenuRuntime(unittest.TestCase):
         self.controls.octaves_spin.setValue(4)
         self.app.processEvents()
         self.assertEqual((window.width(), window.height()), (800, 600))
+
+    def test_study_section_keeps_compact_layout_and_both_instruments(self) -> None:
+        controls = self.controls
+        window = controls.piano_window
+        window.resize(800, 600)
+        self.app.processEvents()
+        self.assertEqual((window.width(), window.height()), (800, 600))
+        controls._set_display_panel_section(2)
+        self.app.processEvents()
+        self.assertEqual((window.width(), window.height()), (800, 600))
+        controls.study_notes = [
+            StudyNote(60, 0, 400, 96, 0),
+            StudyNote(64, 20, 380, 92, 0),
+            StudyNote(67, 35, 365, 88, 0),
+        ]
+        controls.study_selected_channels = {0}
+        controls._study_rebuild_steps()
+        controls._study_set_mode("guided")
+        self.app.processEvents()
+
+        self.assertEqual(controls.display_panel_section_stack.count(), 3)
+        self.assertEqual(controls.display_panel_section_stack.currentIndex(), 2)
+        self.assertEqual((window.width(), window.height()), (800, 600))
+        self.assertEqual(controls.study_expected_notes, {60, 64, 67})
+        self.assertEqual(controls.chord_window.display_widget.main_label.text(), "C")
+        self.assertEqual(controls.piano.interval_labels.get(64), "3M")
+        self.assertEqual(controls.piano.interval_labels.get(67), "5j")
+        page = controls.display_panel_section_stack.currentWidget()
+        for child in page.findChildren(QWidget):
+            if not child.isVisible():
+                continue
+            self.assertLessEqual(child.geometry().right(), page.rect().right() + 1)
+            self.assertLessEqual(child.geometry().bottom(), page.rect().bottom() + 1)
+
+        controls._set_instrument_view("guitar", persist=False, show_status=False)
+        self.app.processEvents()
+        self.assertIs(window.instrument_stack.currentWidget(), controls.fretboard_widget)
+        self.assertEqual(set(controls.fretboard_widget.display_chord_notes), {60, 64, 67})
+        self.assertEqual(controls.fretboard_widget.display_interval_labels.get(64), "3M")
+        self.assertEqual(controls.fretboard_widget.display_interval_labels.get(67), "5j")
+
+        controls._set_instrument_view("piano", persist=False, show_status=False)
+        controls._set_display_panel_section(0)
+
+    def test_study_recording_captures_midi_and_sustain_duration(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        port = FakeMidiPort()
+        controls.midi_in = port
+        controls.midi_inputs = [port]
+        controls._study_toggle_recording()
+
+        port.messages.extend(
+            [
+                main.mido.Message("note_on", note=60, velocity=90, channel=0),
+                main.mido.Message(
+                    "control_change", control=64, value=127, channel=0
+                ),
+                main.mido.Message("note_off", note=60, velocity=0, channel=0),
+            ]
+        )
+        controls.poll_midi()
+        self.assertTrue(controls._study_recording_open)
+        time.sleep(0.05)
+        port.messages.append(
+            main.mido.Message("control_change", control=64, value=0, channel=0)
+        )
+        controls.poll_midi()
+        controls._study_finish_recording()
+
+        self.assertEqual(len(controls.study_notes), 1)
+        self.assertEqual(controls.study_notes[0].note, 60)
+        self.assertGreaterEqual(controls.study_notes[0].duration_ms, 45)
+        controls._close_midi_inputs()
+        controls._set_display_panel_section(0)
+
+    def test_study_guided_mode_handles_wrong_notes_and_advances(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls.study_notes = [
+            StudyNote(60, 0, 300),
+            StudyNote(64, 10, 300),
+            StudyNote(67, 20, 300),
+            StudyNote(72, 600, 300),
+        ]
+        controls.study_selected_channels = {0}
+        controls._study_rebuild_steps()
+        controls._study_set_mode("guided")
+        controls._study_start_playback()
+
+        controls._study_input_note_on(61, 90, "test:wrong", 0)
+        self.assertEqual(controls.study_wrong_notes, {61})
+        controls._study_input_note_off("test:wrong")
+        self.assertFalse(controls.study_wrong_notes)
+
+        for note in (60, 64, 67):
+            controls._study_input_note_on(note, 90, f"test:{note}", 0)
+        self.assertEqual(controls.study_active_step_index, 1)
+        for note in (60, 64, 67):
+            controls._study_input_note_off(f"test:{note}")
+        controls._study_input_note_on(72, 90, "test:72", 0)
+        self.assertEqual(controls.study_transport, "idle")
+        self.assertIn("completado", controls.study_status_label.text().lower())
+        controls._study_input_note_off("test:72")
+        controls._set_display_panel_section(0)
+
+    def test_study_playback_uses_shared_visual_recognition(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls.study_notes = [StudyNote(60, 0, 45, 96, 0)]
+        controls.study_selected_channels = {0}
+        controls._study_rebuild_steps()
+        controls._study_set_mode("original")
+
+        with patch.object(controls.study_synth, "note_on", return_value=True), patch.object(
+            controls.study_synth, "note_off"
+        ):
+            controls._study_start_playback()
+            controls.study_playback_timer.stop()
+            controls._study_playback_started_at = time.monotonic() * 1000.0 - 10
+            controls._study_poll_playback()
+            self.assertIn(60, controls.piano.auxiliary_pressed_notes)
+            self.assertEqual(controls.chord_window.display_widget.main_label.text(), "C4")
+
+            controls._study_playback_started_at = time.monotonic() * 1000.0 - 100
+            controls._study_poll_playback()
+            self.assertFalse(controls.piano.auxiliary_pressed_notes)
+            self.assertEqual(controls.study_transport, "idle")
+        controls._set_display_panel_section(0)
 
     def test_confirmation_dialog_respects_cancel_and_accept(self) -> None:
         def finish_dialog(result: QDialog.DialogCode) -> None:

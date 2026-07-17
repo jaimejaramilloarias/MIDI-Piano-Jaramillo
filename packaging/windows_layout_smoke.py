@@ -19,6 +19,7 @@ from PyQt6.QtGui import QColor, QFontInfo, QFontMetrics, QPainter, QPixmap  # no
 from PyQt6.QtWidgets import QApplication, QLabel, QMenu, QWidget  # noqa: E402
 
 import main  # noqa: E402
+from midi_study import StudyNote  # noqa: E402
 from main import (  # noqa: E402
     ChordWindow,
     ControlWindow,
@@ -111,6 +112,19 @@ def label_fits(label: QLabel) -> bool:
     )
 
 
+def visible_children_fit(parent: QWidget) -> bool:
+    bounds = parent.rect()
+    for child in parent.findChildren(QWidget):
+        if not child.isVisible():
+            continue
+        geometry = child.geometry()
+        if geometry.right() > bounds.right() + 1:
+            return False
+        if geometry.bottom() > bounds.bottom() + 1:
+            return False
+    return True
+
+
 def render_menu(menu: QMenu, path: Path, app: QApplication) -> QPixmap:
     hint = menu.sizeHint()
     menu.resize(max(menu.minimumWidth(), hint.width()), max(40, hint.height()))
@@ -136,6 +150,7 @@ def main_smoke(output_dir: Path) -> int:
 
     ControlWindow.CONFIG_PATH = output_dir / "preferences.json"
     ControlWindow.APPEARANCE_CONFIG_PATH = output_dir / "appearance.json"
+    ControlWindow.STUDY_LIBRARY_PATH = output_dir / "study-library"
 
     piano_window = PianoWindow()
     chord_window = ChordWindow()
@@ -161,6 +176,8 @@ def main_smoke(output_dir: Path) -> int:
             "alternate_chord": display.alt_label.font(),
             "panel_button": controls.display_panel_section_buttons[0].font(),
             "chord_combo": controls.display_panel_chord_combo.font(),
+            "study_name": controls.study_name_edit.font(),
+            "study_mode": controls.study_mode_buttons[0][1].font(),
         }
         resolved_fonts = {
             name: QFontInfo(font).family() for name, font in font_widgets.items()
@@ -230,6 +247,75 @@ def main_smoke(output_dir: Path) -> int:
             <= responsive_sizes["1280x760"]["main"]
         )
         checks["alternate_chords_are_one_line"] = "\n" not in display.alt_label.text()
+
+        controls._set_display_panel_section(2)
+        controls.study_notes = [
+            StudyNote(60, 0, 400, 96, 0),
+            StudyNote(64, 20, 380, 92, 0),
+            StudyNote(67, 35, 365, 88, 0),
+            StudyNote(72, 620, 300, 90, 0),
+        ]
+        controls.study_selected_channels = {0}
+        controls._study_rebuild_steps()
+        controls._study_set_mode("guided")
+        study_geometry: dict[str, object] = {}
+        for width, height in ((800, 600), (1280, 760)):
+            piano_window.resize(width, height)
+            process(app)
+            page = controls.display_panel_section_stack.currentWidget()
+            before = [piano_window.width(), piano_window.height()]
+            controls.study_speed_slider.setValue(12)
+            controls.study_tolerance_slider.setValue(75)
+            process(app)
+            after = [piano_window.width(), piano_window.height()]
+            study_geometry[f"{width}x{height}"] = {
+                "window": after,
+                "page": [page.width(), page.height()],
+                "chord_display": [display.width(), display.height()],
+                "instrument": [
+                    piano_window.instrument_stack.width(),
+                    piano_window.instrument_stack.height(),
+                ],
+            }
+            checks[f"study_window_does_not_resize_{width}x{height}"] = before == after
+            checks[f"study_controls_fit_{width}x{height}"] = visible_children_fit(page)
+            checks[f"study_chord_is_visible_{width}x{height}"] = (
+                bool(display.main_label.text().strip())
+                and display.height() >= 48
+                and label_fits(display.main_label)
+            )
+            capture(
+                piano_window,
+                output_dir / f"study-piano-{width}x{height}.png",
+                app,
+            )
+        report["study_geometry"] = study_geometry
+        checks["study_expected_notes_reach_piano"] = set(
+            controls.piano.display_chord_notes
+        ) == {60, 64, 67}
+        before_instrument_switch = [piano_window.width(), piano_window.height()]
+        controls._set_instrument_view("guitar", persist=False, show_status=False)
+        process(app)
+        checks["study_instrument_switch_does_not_resize"] = (
+            before_instrument_switch
+            == [piano_window.width(), piano_window.height()]
+        )
+        checks["study_expected_notes_reach_fretboard"] = set(
+            controls.fretboard_widget.display_chord_notes
+        ) == {60, 64, 67}
+        for width, height in ((800, 600), (1280, 760)):
+            piano_window.resize(width, height)
+            process(app)
+            checks[f"study_guitar_keeps_size_{width}x{height}"] = (
+                [piano_window.width(), piano_window.height()] == [width, height]
+            )
+            capture(
+                piano_window,
+                output_dir / f"study-guitar-{width}x{height}.png",
+                app,
+            )
+        controls._set_display_panel_section(0)
+        controls._set_instrument_view("piano", persist=False, show_status=False)
 
         piano = piano_window.piano
         white_size = piano._interval_label_font_size(42.0, 220.0, False)
@@ -322,6 +408,7 @@ def main_smoke(output_dir: Path) -> int:
         )
         return 0 if report["passed"] else 1
     finally:
+        controls._study_shutdown()
         controls.timer.stop()
         controls.capture_timer.stop()
         controls._close_midi_inputs()

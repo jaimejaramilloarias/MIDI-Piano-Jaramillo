@@ -86,7 +86,7 @@ class TestPreloadedChordIntervalLabels(unittest.TestCase):
 
         self.assertIn("chord_interval_labels: Dict[int, str] = {}", overlay_source)
         self.assertIn("self.display_chord_interval_labels = chord_interval_labels", overlay_source)
-        self.assertIn("if not self.active_notes and not self.sustained_notes:", overlay_source)
+        self.assertIn("if not self._effective_visual_notes():", overlay_source)
         self.assertIn("self.piano.set_interval_labels(dict(self.display_chord_interval_labels))", overlay_source)
         self.assertIn("self.piano.set_interval_labels(dict(self.display_chord_interval_labels))", interval_source)
 

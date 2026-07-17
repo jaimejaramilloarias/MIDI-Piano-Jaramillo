@@ -24,7 +24,9 @@ Descripcion
 MIDI Piano Jaramillo es una aplicacion de practica y visualizacion armonica para MIDI.
 Incluye vistas de piano y diapason de guitarra, reconocimiento de acordes en vivo, cifrado
 principal y alternativo, escalas y acordes pregrabados, etiquetas funcionales de intervalos,
-alertas de 9m segun el contexto armonico y controles de octavas y registro.
+alertas de 9m segun el contexto armonico y controles de octavas y registro. La seccion Estudio
+permite grabar, importar, guardar y exportar ejercicios MIDI, reproducirlos con velocidad
+regulable y practicarlos por pasos o en modo guiado desde la vista de piano o guitarra.
 
 Nota sobre seguridad
 --------------------

@@ -1,18 +1,37 @@
-MIDI Piano Jaramillo - v13
+MIDI Piano Jaramillo
+====================
 
-- Ventanas:
-  - Teclado flotante sin marco
-  - Acordes flotante sin marco (texto principal + alternativos)
-  - Controles
+Aplicación de visualización, análisis armónico y práctica MIDI para piano y guitarra.
 
-- Las tres ventanas:
-  - No se pueden minimizar (mientras la app esté abierta).
+Funciones principales
+---------------------
+- Entrada MIDI en vivo con pedal de sustain.
+- Vistas intercambiables de teclado y diapasón.
+- Reconocimiento de acordes con cifrado principal y cifrados alternativos.
+- Etiquetas de intervalos contextuales y alertas armónicas.
+- Biblioteca de acordes y escalas pregrabados.
+- Distribución de acordes y patrones de escala en el diapasón.
+- Configuración de colores, etiquetas, registro, octavas y comportamiento visual.
+- Diccionario editable y MIDI learn para guardar nuevos cifrados.
 
-- Controles:
-  - MIDI In
-  - Nota inicial (A0 o Cx)
-  - Octavas
-  - Color base de notas (selector de color del sistema)
-  - Fuente y tamaño de acordes (en ventana de controles)
-  - Teclado siempre al frente
-  - Guardar preferencias (incluye color y fuente de acordes)
+Estudio MIDI
+------------
+- Grabación de interpretaciones MIDI con velocidad, canal, duración y sustain.
+- Importación de archivos MIDI tipo 0 y 1.
+- Exportación de ejercicios en formato MIDI.
+- Biblioteca local para guardar, abrir, copiar y eliminar ejercicios.
+- Selección de canales y exclusión opcional del canal de percusión al importar.
+- Reproducción con ritmo original y velocidad regulable entre 0.5x y 2.0x.
+- Modo Pasos, que iguala la duración de cada evento o acorde.
+- Modo Guiado, que espera las notas correctas y señala errores visualmente.
+- Agrupación configurable de notas simultáneas mediante una ventana de acorde.
+- Navegación y audición individual de pasos.
+- Entrada desde MIDI, teclado del computador o clic sobre el piano.
+- Reproducción local con sonido y visualización simultánea en piano o guitarra.
+- Reconocimiento de intervalos y acordes durante la reproducción y la práctica.
+
+Datos locales
+-------------
+- Preferencias: perfil local del usuario.
+- Ejercicios: ~/.midi_piano_exercises
+- No requiere conexión a internet.
