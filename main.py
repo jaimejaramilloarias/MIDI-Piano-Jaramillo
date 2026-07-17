@@ -4192,6 +4192,7 @@ class ControlWindow(ResponsiveWidthWidget):
         self._study_playback_counts: Dict[int, int] = {}
         self._study_virtual_notes: Set[int] = set()
         self._study_audio_error_shown = False
+        self._study_shutdown_done = False
         self.study_synth = LocalPianoSynth()
         self.study_playback_timer = QTimer(self)
         self.study_playback_timer.setTimerType(Qt.TimerType.PreciseTimer)
@@ -7032,8 +7033,15 @@ class ControlWindow(ResponsiveWidthWidget):
         self._refresh_staff_for_current_notes()
 
     def _study_shutdown(self) -> None:
+        if self._study_shutdown_done:
+            return
+        self._study_shutdown_done = True
         self._study_stop_all(keep_status=True)
         self.study_synth.close()
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
+        self._study_shutdown()
+        super().closeEvent(event)
 
     def _setup_display_menus(self):
         self.chord_menu = PersistentMenu("Acordes", self.menu_bar)
