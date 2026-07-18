@@ -410,14 +410,20 @@ def main_smoke(output_dir: Path) -> int:
         )
         return 0 if report["passed"] else 1
     finally:
-        controls._study_shutdown()
-        controls.timer.stop()
-        controls.capture_timer.stop()
-        controls._close_midi_inputs()
-        controls.close()
-        piano_window.close()
-        chord_window.close()
-        staff_window.close()
+        for cleanup in (
+            controls._study_shutdown,
+            controls.timer.stop,
+            controls.capture_timer.stop,
+            controls._close_midi_inputs,
+            controls.close,
+            piano_window.close,
+            chord_window.close,
+            staff_window.close,
+        ):
+            try:
+                cleanup()
+            except Exception as exc:
+                print(f"Windows smoke cleanup warning: {exc}", file=sys.stderr)
         process(app)
 
 
