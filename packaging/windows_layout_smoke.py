@@ -431,4 +431,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output", type=Path, required=True)
     arguments = parser.parse_args()
-    raise SystemExit(main_smoke(arguments.output.resolve()))
+    exit_code = main_smoke(arguments.output.resolve())
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(exit_code)
