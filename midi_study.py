@@ -4,10 +4,12 @@ import json
 import math
 import tempfile
 import uuid
+import zipfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Sequence, Set, Tuple
+import xml.etree.ElementTree as ET
 
 import mido
 
@@ -16,6 +18,9 @@ MIN_NOTE_DURATION_MS = 45.0
 DEFAULT_CHORD_TOLERANCE_MS = 70
 MIN_SPEED_FACTOR = 0.5
 MAX_SPEED_FACTOR = 2.0
+MIDI_IMPORT_EXTENSIONS = {".mid", ".midi", ".smf"}
+MUSICXML_IMPORT_EXTENSIONS = {".musicxml", ".xml", ".mxl"}
+STUDY_IMPORT_EXTENSIONS = MIDI_IMPORT_EXTENSIONS | MUSICXML_IMPORT_EXTENSIONS
 
 
 @dataclass(frozen=True)
@@ -25,6 +30,9 @@ class StudyNote:
     duration_ms: float
     velocity: int = 100
     channel: int = 0
+    staff: Optional[int] = None
+    voice: str = ""
+    fingering: str = ""
 
     def __post_init__(self) -> None:
         if not 0 <= int(self.note) <= 127:
@@ -48,6 +56,7 @@ class StudyStep:
     notes: Tuple[int, ...]
     start_ms: float
     end_ms: float
+    note_events: Tuple[StudyNote, ...] = ()
 
     @property
     def duration_ms(self) -> float:
@@ -100,6 +109,9 @@ def normalize_notes(notes: Sequence[StudyNote]) -> List[StudyNote]:
             duration_ms=float(note.duration_ms),
             velocity=int(note.velocity),
             channel=int(note.channel),
+            staff=int(note.staff) if note.staff is not None else None,
+            voice=str(note.voice or ""),
+            fingering=str(note.fingering or ""),
         )
         for note in notes
     ]
@@ -123,6 +135,31 @@ def filter_notes_by_channels(
     return normalize_notes([note for note in notes if int(note.channel) in selected])
 
 
+def transpose_notes(notes: Sequence[StudyNote], semitones: int) -> List[StudyNote]:
+    transposition = int(semitones)
+    if transposition == 0:
+        return normalize_notes(notes)
+
+    transposed: List[StudyNote] = []
+    for note in normalize_notes(notes):
+        note_number = int(note.note) + transposition
+        if not 0 <= note_number <= 127:
+            continue
+        transposed.append(
+            StudyNote(
+                note=note_number,
+                start_ms=float(note.start_ms),
+                duration_ms=float(note.duration_ms),
+                velocity=int(note.velocity),
+                channel=int(note.channel),
+                staff=int(note.staff) if note.staff is not None else None,
+                voice=str(note.voice or ""),
+                fingering=str(note.fingering or ""),
+            )
+        )
+    return normalize_notes(transposed)
+
+
 def group_notes_into_steps(
     notes: Sequence[StudyNote], tolerance_ms: int = DEFAULT_CHORD_TOLERANCE_MS
 ) -> List[StudyStep]:
@@ -137,18 +174,35 @@ def group_notes_into_steps(
     step_start = float(ordered[0].start_ms)
     step_end = float(ordered[0].end_ms)
     step_notes: Set[int] = {int(ordered[0].note)}
+    step_events: List[StudyNote] = [ordered[0]]
 
     for note in ordered[1:]:
         if float(note.start_ms) - step_start <= tolerance:
             step_notes.add(int(note.note))
+            step_events.append(note)
             step_end = max(step_end, float(note.end_ms))
             continue
-        steps.append(StudyStep(tuple(sorted(step_notes)), step_start, step_end))
+        steps.append(
+            StudyStep(
+                tuple(sorted(step_notes)),
+                step_start,
+                step_end,
+                tuple(sorted(step_events, key=lambda event: (event.note, event.channel))),
+            )
+        )
         step_start = float(note.start_ms)
         step_end = float(note.end_ms)
         step_notes = {int(note.note)}
+        step_events = [note]
 
-    steps.append(StudyStep(tuple(sorted(step_notes)), step_start, step_end))
+    steps.append(
+        StudyStep(
+            tuple(sorted(step_notes)),
+            step_start,
+            step_end,
+            tuple(sorted(step_events, key=lambda event: (event.note, event.channel))),
+        )
+    )
     return steps
 
 
@@ -204,28 +258,6 @@ def build_original_timeline(
     return [event for _time, _priority, event in events]
 
 
-def build_step_timeline(
-    steps: Sequence[StudyStep], speed_factor: float = 1.0
-) -> List[PlaybackEvent]:
-    speed = _validate_speed(speed_factor)
-    step_span = 900.0 / speed
-    hold_ms = min(680.0, step_span * 0.72)
-    events: List[Tuple[float, int, PlaybackEvent]] = []
-    for step_index, step in enumerate(steps):
-        start = step_index * step_span
-        for note in step.notes:
-            events.append((start, 1, PlaybackEvent("note_on", start, note, 98, 0)))
-            events.append(
-                (
-                    start + hold_ms,
-                    0,
-                    PlaybackEvent("note_off", start + hold_ms, note, 0, 0),
-                )
-            )
-    events.sort(key=lambda item: (item[0], item[1], item[2].note))
-    return [event for _time, _priority, event in events]
-
-
 def _append_warning(warnings: List[str], text: str) -> None:
     if len(warnings) < 100:
         warnings.append(text)
@@ -278,14 +310,14 @@ def read_midi_file(path: Path | str) -> ImportedMidi:
         if not queue:
             active.pop(key, None)
         notes.append(
-            StudyNote(
-                note=note_number,
-                start_ms=start_ms,
-                duration_ms=max(0.0, elapsed_seconds * 1000.0 - start_ms),
-                velocity=velocity,
-                channel=channel,
+                StudyNote(
+                    note=note_number,
+                    start_ms=start_ms,
+                    duration_ms=max(0.0, elapsed_seconds * 1000.0 - start_ms),
+                    velocity=velocity,
+                    channel=channel,
+                )
             )
-        )
 
     final_ms = elapsed_seconds * 1000.0
     for (channel, note_number), queue in active.items():
@@ -311,6 +343,252 @@ def read_midi_file(path: Path | str) -> ImportedMidi:
         channels=tuple(channels_for_notes(normalized)),
         warnings=tuple(warnings),
     )
+
+
+def _xml_local_name(tag: str) -> str:
+    return str(tag).split("}", 1)[-1]
+
+
+def _xml_namespace(root: ET.Element) -> str:
+    tag = str(root.tag)
+    if tag.startswith("{"):
+        return tag.split("}", 1)[0] + "}"
+    return ""
+
+
+def _xml_text(element: Optional[ET.Element], child: Optional[str] = None) -> str:
+    if element is None:
+        return ""
+    namespace = _xml_namespace(element)
+    target = element.find(f"{namespace}{child}") if child else element
+    if target is None or target.text is None:
+        return ""
+    return target.text.strip()
+
+
+def _musicxml_root(path: Path | str) -> ET.Element:
+    source = Path(path)
+    if source.suffix.lower() != ".mxl":
+        return ET.parse(source).getroot()
+
+    with zipfile.ZipFile(source) as archive:
+        target_name = ""
+        try:
+            container = ET.fromstring(archive.read("META-INF/container.xml"))
+            namespace = _xml_namespace(container)
+            rootfile = container.find(f".//{namespace}rootfile")
+            if rootfile is not None:
+                target_name = str(rootfile.attrib.get("full-path") or "")
+        except Exception:
+            target_name = ""
+        if not target_name:
+            for name in archive.namelist():
+                lower = name.lower()
+                if lower.endswith((".musicxml", ".xml")) and not lower.startswith("meta-inf/"):
+                    target_name = name
+                    break
+        if not target_name:
+            raise ValueError("El archivo .mxl no contiene una partitura MusicXML.")
+        return ET.fromstring(archive.read(target_name))
+
+
+def _musicxml_first_bpm(root: ET.Element) -> int:
+    namespace = _xml_namespace(root)
+    for sound in root.findall(f".//{namespace}sound"):
+        raw = sound.attrib.get("tempo")
+        if raw:
+            try:
+                return max(30, min(260, int(round(float(raw)))))
+            except ValueError:
+                pass
+    for per_minute in root.findall(f".//{namespace}per-minute"):
+        raw = (per_minute.text or "").strip()
+        if raw:
+            try:
+                return max(30, min(260, int(round(float(raw)))))
+            except ValueError:
+                pass
+    return 120
+
+
+def _musicxml_midi_from_pitch(pitch: ET.Element) -> Optional[int]:
+    namespace = _xml_namespace(pitch)
+    step = _xml_text(pitch, "step")
+    octave = _xml_text(pitch, "octave")
+    if step not in _PITCH_CLASS_FROM_STEP or not octave:
+        return None
+    alter_text = _xml_text(pitch, "alter")
+    try:
+        alter = int(round(float(alter_text or 0)))
+        midi_note = (int(octave) + 1) * 12 + _PITCH_CLASS_FROM_STEP[step] + alter
+    except ValueError:
+        return None
+    if not 0 <= midi_note <= 127:
+        return None
+    return midi_note
+
+
+_PITCH_CLASS_FROM_STEP = {
+    "C": 0,
+    "D": 2,
+    "E": 4,
+    "F": 5,
+    "G": 7,
+    "A": 9,
+    "B": 11,
+}
+
+
+def _musicxml_staff_value(note: ET.Element) -> Optional[int]:
+    raw = _xml_text(note, "staff")
+    if not raw:
+        return None
+    try:
+        value = int(float(raw))
+    except ValueError:
+        return None
+    return value if value > 0 else None
+
+
+def _musicxml_fingering(note: ET.Element) -> str:
+    namespace = _xml_namespace(note)
+    for fingering in note.findall(f".//{namespace}fingering"):
+        value = (fingering.text or "").strip()
+        if value:
+            return value[:12]
+    return ""
+
+
+def read_musicxml_file(path: Path | str) -> ImportedMidi:
+    root = _musicxml_root(path)
+    if _xml_local_name(root.tag) != "score-partwise":
+        raise ValueError("Solo se admite MusicXML partwise.")
+
+    namespace = _xml_namespace(root)
+    bpm = _musicxml_first_bpm(root)
+    beat_ms = 60000.0 / float(bpm)
+    notes: List[StudyNote] = []
+    warnings: List[str] = []
+
+    for part_index, part in enumerate(root.findall(f"{namespace}part")):
+        divisions = 1.0
+        measure_offset_quarters = 0.0
+        for measure in part.findall(f"{namespace}measure"):
+            cursor_quarters = 0.0
+            previous_note_start = 0.0
+            measure_end_quarters = 0.0
+
+            for child in list(measure):
+                name = _xml_local_name(child.tag)
+                if name == "attributes":
+                    divisions_text = _xml_text(child, "divisions")
+                    if divisions_text:
+                        try:
+                            parsed_divisions = float(divisions_text)
+                            if parsed_divisions > 0:
+                                divisions = parsed_divisions
+                        except ValueError:
+                            _append_warning(warnings, "Divisions inválido en MusicXML.")
+                    continue
+
+                if name == "backup":
+                    duration_text = _xml_text(child, "duration")
+                    try:
+                        cursor_quarters = max(
+                            0.0,
+                            cursor_quarters - float(duration_text or 0) / divisions,
+                        )
+                    except ValueError:
+                        _append_warning(warnings, "Backup inválido en MusicXML.")
+                    continue
+
+                if name == "forward":
+                    duration_text = _xml_text(child, "duration")
+                    try:
+                        cursor_quarters += float(duration_text or 0) / divisions
+                        measure_end_quarters = max(measure_end_quarters, cursor_quarters)
+                    except ValueError:
+                        _append_warning(warnings, "Forward inválido en MusicXML.")
+                    continue
+
+                if name != "note":
+                    continue
+                if child.find(f"{namespace}rest") is not None:
+                    duration_text = _xml_text(child, "duration")
+                    try:
+                        duration_quarters = float(duration_text or 0) / divisions
+                    except ValueError:
+                        duration_quarters = 0.0
+                    if child.find(f"{namespace}chord") is None:
+                        cursor_quarters += duration_quarters
+                        measure_end_quarters = max(measure_end_quarters, cursor_quarters)
+                    continue
+
+                pitch = child.find(f"{namespace}pitch")
+                midi_note = _musicxml_midi_from_pitch(pitch) if pitch is not None else None
+                duration_text = _xml_text(child, "duration")
+                try:
+                    duration_quarters = float(duration_text or 0) / divisions
+                except ValueError:
+                    duration_quarters = 0.0
+                is_chord_tone = child.find(f"{namespace}chord") is not None
+                start_quarters = previous_note_start if is_chord_tone else cursor_quarters
+
+                if midi_note is None:
+                    _append_warning(warnings, "Nota MusicXML sin altura MIDI válida.")
+                else:
+                    staff = _musicxml_staff_value(child)
+                    channel = (
+                        max(0, min(15, staff - 1))
+                        if staff is not None
+                        else max(0, min(15, part_index))
+                    )
+                    notes.append(
+                        StudyNote(
+                            note=midi_note,
+                            start_ms=(measure_offset_quarters + start_quarters) * beat_ms,
+                            duration_ms=max(
+                                MIN_NOTE_DURATION_MS,
+                                duration_quarters * beat_ms,
+                            ),
+                            velocity=96,
+                            channel=channel,
+                            staff=staff,
+                            voice=_xml_text(child, "voice"),
+                            fingering=_musicxml_fingering(child),
+                        )
+                    )
+
+                measure_end_quarters = max(
+                    measure_end_quarters,
+                    start_quarters + max(0.0, duration_quarters),
+                )
+                if not is_chord_tone:
+                    previous_note_start = start_quarters
+                    cursor_quarters += duration_quarters
+                    measure_end_quarters = max(measure_end_quarters, cursor_quarters)
+
+            measure_offset_quarters += max(measure_end_quarters, cursor_quarters)
+
+    normalized = tuple(normalize_notes(notes))
+    if not normalized:
+        raise ValueError("El MusicXML no contiene notas reproducibles.")
+    return ImportedMidi(
+        notes=normalized,
+        bpm=bpm,
+        channels=tuple(channels_for_notes(normalized)),
+        warnings=tuple(warnings),
+    )
+
+
+def read_study_file(path: Path | str) -> ImportedMidi:
+    source = Path(path)
+    suffix = source.suffix.lower()
+    if suffix in MIDI_IMPORT_EXTENSIONS:
+        return read_midi_file(source)
+    if suffix in MUSICXML_IMPORT_EXTENSIONS:
+        return read_musicxml_file(source)
+    raise ValueError("Formato no compatible. Usa MIDI, MusicXML o MXL.")
 
 
 def write_midi_file(
@@ -391,6 +669,9 @@ class StudyLibrary:
     def _midi_path(self, exercise_id: str) -> Path:
         return self.root / f"{exercise_id}.mid"
 
+    def _notes_path(self, exercise_id: str) -> Path:
+        return self.root / f"{exercise_id}.notes.json"
+
     def list_exercises(self) -> List[ExerciseMetadata]:
         exercises: List[ExerciseMetadata] = []
         for path in self.root.glob("*.json"):
@@ -410,6 +691,37 @@ class StudyLibrary:
             self._metadata_path(exercise_id).read_text(encoding="utf-8")
         )
         metadata = ExerciseMetadata(**payload)
+        notes_path = self._notes_path(exercise_id)
+        if notes_path.is_file():
+            try:
+                raw_notes = json.loads(notes_path.read_text(encoding="utf-8"))
+                notes = [
+                    StudyNote(
+                        note=int(item["note"]),
+                        start_ms=float(item["start_ms"]),
+                        duration_ms=float(item["duration_ms"]),
+                        velocity=int(item.get("velocity", 100)),
+                        channel=int(item.get("channel", 0)),
+                        staff=(
+                            int(item["staff"])
+                            if item.get("staff") is not None
+                            else None
+                        ),
+                        voice=str(item.get("voice") or ""),
+                        fingering=str(item.get("fingering") or ""),
+                    )
+                    for item in raw_notes
+                    if isinstance(item, dict)
+                ]
+                normalized = tuple(normalize_notes(notes))
+                return metadata, ImportedMidi(
+                    notes=normalized,
+                    bpm=int(metadata.bpm),
+                    channels=tuple(channels_for_notes(normalized)),
+                    warnings=(),
+                )
+            except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
+                pass
         return metadata, read_midi_file(self._midi_path(exercise_id))
 
     def save_exercise(
@@ -439,17 +751,27 @@ class StudyLibrary:
             temporary_root = Path(temporary_directory)
             temporary_midi = temporary_root / "exercise.mid"
             temporary_json = temporary_root / "exercise.json"
+            temporary_notes = temporary_root / "exercise.notes.json"
             write_midi_file(
                 temporary_midi,
                 normalized,
                 metadata.bpm,
                 metadata.name,
             )
+            temporary_notes.write_text(
+                json.dumps(
+                    [asdict(note) for note in normalized],
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
             temporary_json.write_text(
                 json.dumps(asdict(metadata), ensure_ascii=False, indent=2),
                 encoding="utf-8",
             )
             temporary_midi.replace(self._midi_path(identifier))
+            temporary_notes.replace(self._notes_path(identifier))
             temporary_json.replace(self._metadata_path(identifier))
         return metadata
 
@@ -457,6 +779,7 @@ class StudyLibrary:
         for path in (
             self._metadata_path(exercise_id),
             self._midi_path(exercise_id),
+            self._notes_path(exercise_id),
         ):
             try:
                 path.unlink()

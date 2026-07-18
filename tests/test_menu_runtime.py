@@ -9,13 +9,37 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
-from PyQt6.QtCore import QTimer
-from PyQt6.QtGui import QColor
+from PyQt6.QtCore import QEvent, QTimer, Qt
+from PyQt6.QtGui import QColor, QKeyEvent
 from PyQt6.QtWidgets import QApplication, QDialog, QWidget
 
 import main
-from midi_study import StudyNote
+from midi_study import StudyNote, write_midi_file
 from main import CHORD_PATTERNS, ChordWindow, ControlWindow, FretboardWidget, PianoWindow, StaffWindow
+
+
+MUSICXML_UI_SAMPLE = """<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list><score-part id="P1"><part-name>Piano</part-name></score-part></part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>4</divisions><staves>2</staves></attributes>
+      <direction><sound tempo="120"/></direction>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><staff>1</staff>
+        <notations><technical><fingering>1</fingering></technical></notations>
+      </note>
+      <backup><duration>4</duration></backup>
+      <note>
+        <pitch><step>C</step><octave>3</octave></pitch>
+        <duration>4</duration><voice>2</voice><staff>2</staff>
+        <notations><technical><fingering>5</fingering></technical></notations>
+      </note>
+    </measure>
+  </part>
+</score-partwise>
+"""
 
 
 class FakeMidiPort:
@@ -27,6 +51,18 @@ class FakeMidiPort:
         messages = list(self.messages)
         self.messages.clear()
         return messages
+
+    def close(self) -> None:
+        self.close_count += 1
+
+
+class FakeMidiOutput:
+    def __init__(self) -> None:
+        self.messages = []
+        self.close_count = 0
+
+    def send(self, message) -> None:
+        self.messages.append(message.copy())
 
     def close(self) -> None:
         self.close_count += 1
@@ -60,7 +96,9 @@ class TestMenuRuntime(unittest.TestCase):
         )
 
         cls.midi_patch = patch.object(main.mido, "get_input_names", return_value=[])
+        cls.midi_output_names_patch = patch.object(main.mido, "get_output_names", return_value=[])
         cls.midi_patch.start()
+        cls.midi_output_names_patch.start()
         cls.piano = PianoWindow()
         cls.chords = ChordWindow()
         cls.staff = StaffWindow()
@@ -78,6 +116,7 @@ class TestMenuRuntime(unittest.TestCase):
         cls.chords.close()
         cls.staff.close()
         cls.midi_patch.stop()
+        cls.midi_output_names_patch.stop()
         CHORD_PATTERNS[:] = cls.original_patterns
         ControlWindow.CONFIG_PATH = cls.original_config_path
         ControlWindow.APPEARANCE_CONFIG_PATH = cls.original_appearance_path
@@ -102,6 +141,43 @@ class TestMenuRuntime(unittest.TestCase):
         self.assertIn("color: #1d1d1f", control_style)
         self.assertGreaterEqual(self.controls.chord_menu.minimumWidth(), 666)
         self.assertGreaterEqual(self.controls.scale_menu.minimumWidth(), 626)
+
+    def test_study_shortcuts_are_bound_to_transport_and_sequence(self) -> None:
+        shortcuts = self.controls._shortcut_definitions()
+        self.assertEqual(shortcuts["study_play_stop"][1], "Space")
+        self.assertEqual(shortcuts["study_prev_step"][1], "Left")
+        self.assertEqual(shortcuts["study_next_step"][1], "Right")
+
+    def test_study_arrows_navigate_sequence_even_when_name_has_focus(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls.study_notes = [
+            StudyNote(60, 0, 160, 96, 0),
+            StudyNote(64, 620, 160, 96, 0),
+        ]
+        controls.study_selected_channels = {0}
+        controls._study_rebuild_steps()
+        controls._study_set_mode("original")
+        controls.study_name_edit.setFocus()
+        self.app.processEvents()
+
+        event = QKeyEvent(
+            QEvent.Type.KeyPress,
+            Qt.Key.Key_Right,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        self.assertTrue(controls.eventFilter(controls.study_name_edit, event))
+        self.assertEqual(controls.study_active_step_index, 1)
+        self.assertEqual(controls.study_expected_notes, {64})
+
+        release_event = QKeyEvent(
+            QEvent.Type.KeyRelease,
+            Qt.Key.Key_Right,
+            Qt.KeyboardModifier.NoModifier,
+        )
+        self.assertTrue(controls.eventFilter(controls.study_name_edit, release_event))
+        controls._study_stop_playback(keep_status=True)
+        controls._set_display_panel_section(0)
 
     def test_two_midi_inputs_can_hold_the_same_note_independently(self) -> None:
         self.controls._clear_live_midi_state()
@@ -208,6 +284,7 @@ class TestMenuRuntime(unittest.TestCase):
             StudyNote(60, 0, 400, 96, 0),
             StudyNote(64, 20, 380, 92, 0),
             StudyNote(67, 35, 365, 88, 0),
+            StudyNote(72, 620, 260, 90, 0),
         ]
         controls.study_selected_channels = {0}
         controls._study_rebuild_steps()
@@ -218,6 +295,14 @@ class TestMenuRuntime(unittest.TestCase):
         self.assertEqual(controls.display_panel_section_stack.currentIndex(), 2)
         self.assertEqual((window.width(), window.height()), (800, 600))
         self.assertEqual(controls.study_expected_notes, {60, 64, 67})
+        self.assertEqual(controls.study_transport, "guided")
+        self.assertFalse(controls.study_play_button.isVisible())
+        self.assertEqual(
+            [mode for mode, _button in controls.study_mode_buttons],
+            ["original", "guided"],
+        )
+        self.assertFalse(hasattr(controls, "study_load_button"))
+        self.assertFalse(hasattr(controls, "study_channels_button"))
         self.assertEqual(controls.chord_window.display_widget.main_label.text(), "C")
         self.assertEqual(controls.piano.interval_labels.get(64), "3M")
         self.assertEqual(controls.piano.interval_labels.get(67), "5j")
@@ -282,7 +367,7 @@ class TestMenuRuntime(unittest.TestCase):
         controls.study_selected_channels = {0}
         controls._study_rebuild_steps()
         controls._study_set_mode("guided")
-        controls._study_start_playback()
+        self.assertEqual(controls.study_transport, "guided")
 
         controls._study_input_note_on(61, 90, "test:wrong", 0)
         self.assertEqual(controls.study_wrong_notes, {61})
@@ -300,6 +385,98 @@ class TestMenuRuntime(unittest.TestCase):
         controls._study_input_note_off("test:72")
         controls._set_display_panel_section(0)
 
+    def test_study_student_input_uses_subtle_gray_instead_of_orange(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls._study_set_mode("original")
+
+        controls._study_input_note_on(60, 90, "midi:1:0:60", 0)
+        controls.piano.set_pressed(60, True)
+
+        color = controls.piano._pressed_color_for(60, False)
+        self.assertIn(60, controls.piano.study_student_notes)
+        self.assertNotEqual(
+            (color.red(), color.green(), color.blue()),
+            (240, 154, 0),
+        )
+        self.assertLess(color.alpha(), 160)
+        self.assertLess(controls.piano._study_student_overlay_color(False).alpha(), 80)
+
+        controls._study_input_note_off("midi:1:0:60")
+        controls.piano.set_pressed(60, False)
+        controls._set_display_panel_section(0)
+
+    def test_study_import_folder_uses_midi_file_names(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        with tempfile.TemporaryDirectory(prefix="midi-folder-import-") as folder:
+            folder_path = Path(folder)
+            first = folder_path / "Arpegio mayor.mid"
+            second = folder_path / "Dominante alterado.midi"
+            third = folder_path / "Lectura con digitacion.musicxml"
+            write_midi_file(first, [StudyNote(60, 0, 180, 96, 0)], 100, "Ignorar")
+            write_midi_file(second, [StudyNote(67, 0, 180, 96, 0)], 100, "Ignorar")
+            third.write_text(MUSICXML_UI_SAMPLE, encoding="utf-8")
+
+            with patch.object(main, "_get_popup_existing_directory", return_value=folder):
+                controls._study_import_midi_folder()
+
+        exercise_names = {exercise.name for exercise in controls.study_library.list_exercises()}
+        self.assertIn("Arpegio mayor", exercise_names)
+        self.assertIn("Dominante alterado", exercise_names)
+        self.assertIn("Lectura con digitacion", exercise_names)
+        self.assertEqual(controls.study_name_edit.text(), "Arpegio mayor")
+        target_index = -1
+        for index in range(controls.study_library_combo.count()):
+            if controls.study_library_combo.itemText(index).startswith("Dominante alterado"):
+                target_index = index
+                break
+        self.assertGreaterEqual(target_index, 0)
+        controls.study_library_combo.setCurrentIndex(target_index)
+        controls.study_library_combo.activated.emit(target_index)
+        self.assertEqual(controls.study_name_edit.text(), "Dominante alterado")
+        controls._set_display_panel_section(0)
+
+    def test_study_single_import_accepts_musicxml_and_uses_staff_fingerings(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        with tempfile.TemporaryDirectory(prefix="musicxml-import-") as folder:
+            path = Path(folder) / "Prueba XML.musicxml"
+            path.write_text(MUSICXML_UI_SAMPLE, encoding="utf-8")
+            with patch.object(main, "_get_popup_open_file_name", return_value=(str(path), "")):
+                controls._study_import_midi()
+
+        self.assertEqual(controls.study_name_edit.text(), "Prueba XML")
+        self.assertEqual({note.note for note in controls.study_notes}, {48, 60})
+        self.assertEqual({note.staff for note in controls.study_notes}, {1, 2})
+        self.assertEqual({note.fingering for note in controls.study_notes}, {"1", "5"})
+
+        controls._study_set_mode("guided")
+        self.assertEqual(controls.study_expected_notes, {48, 60})
+        self.assertEqual(controls.piano.interval_labels.get(60), "1")
+        self.assertEqual(controls.piano.interval_labels.get(48), "5")
+        self.assertEqual(controls.piano.display_chord_notes[60].blue(), 255)
+        self.assertEqual(controls.piano.display_chord_notes[48].green(), 199)
+        controls._set_display_panel_section(0)
+
+    def test_study_transposition_rebuilds_visible_steps_and_overlays(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls.study_notes = [
+            StudyNote(60, 0, 300, 96, 0),
+            StudyNote(64, 20, 300, 96, 0),
+            StudyNote(67, 620, 300, 96, 0),
+        ]
+        controls.study_selected_channels = {0}
+        controls._study_rebuild_steps()
+        controls.study_transpose_spin.setValue(2)
+        controls._study_set_mode("guided")
+
+        self.assertEqual(controls.study_steps[0].notes, (62, 66))
+        self.assertEqual(controls.study_expected_notes, {62, 66})
+        self.assertEqual(set(controls.piano.display_chord_notes), {62, 66})
+        controls._set_display_panel_section(0)
+
     def test_study_playback_uses_shared_visual_recognition(self) -> None:
         controls = self.controls
         controls._set_display_panel_section(2)
@@ -307,21 +484,56 @@ class TestMenuRuntime(unittest.TestCase):
         controls.study_selected_channels = {0}
         controls._study_rebuild_steps()
         controls._study_set_mode("original")
+        output = FakeMidiOutput()
+        controls.midi_outputs = [output]
 
-        with patch.object(controls.study_synth, "note_on", return_value=True), patch.object(
-            controls.study_synth, "note_off"
-        ):
-            controls._study_start_playback()
-            controls.study_playback_timer.stop()
-            controls._study_playback_started_at = time.monotonic() * 1000.0 - 10
-            controls._study_poll_playback()
-            self.assertIn(60, controls.piano.auxiliary_pressed_notes)
-            self.assertEqual(controls.chord_window.display_widget.main_label.text(), "C4")
+        controls._study_start_playback()
+        controls.study_playback_timer.stop()
+        controls._study_playback_started_at = time.monotonic() * 1000.0 - 10
+        controls._study_poll_playback()
+        self.assertIn(60, controls.piano.auxiliary_pressed_notes)
+        self.assertEqual(controls.chord_window.display_widget.main_label.text(), "C4")
+        self.assertEqual([message.type for message in output.messages], ["note_on"])
 
-            controls._study_playback_started_at = time.monotonic() * 1000.0 - 100
-            controls._study_poll_playback()
-            self.assertFalse(controls.piano.auxiliary_pressed_notes)
-            self.assertEqual(controls.study_transport, "idle")
+        controls._study_playback_started_at = time.monotonic() * 1000.0 - 100
+        controls._study_poll_playback()
+        self.assertFalse(controls.piano.auxiliary_pressed_notes)
+        self.assertEqual(controls.study_transport, "idle")
+        self.assertEqual(
+            [message.type for message in output.messages],
+            ["note_on", "note_off"],
+        )
+        controls.midi_outputs = []
+        controls._set_display_panel_section(0)
+
+    def test_study_sequence_navigation_previews_step_with_original_velocity(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls.study_notes = [
+            StudyNote(60, 0, 160, 96, 0),
+            StudyNote(65, 620, 160, 73, 4),
+        ]
+        controls.study_selected_channels = {0, 4}
+        controls._study_rebuild_steps()
+        controls._study_set_mode("original")
+        output = FakeMidiOutput()
+        controls.midi_outputs = [output]
+
+        controls._study_move_step(1)
+        controls.study_playback_timer.stop()
+        controls._study_playback_started_at = time.monotonic() * 1000.0 - 30
+        controls._study_poll_playback()
+
+        self.assertEqual(controls.study_active_step_index, 1)
+        self.assertEqual(controls.study_expected_notes, {65})
+        self.assertEqual(set(controls.piano.display_chord_notes), {65})
+        self.assertEqual(len(output.messages), 1)
+        self.assertEqual(output.messages[0].type, "note_on")
+        self.assertEqual(output.messages[0].note, 65)
+        self.assertEqual(output.messages[0].velocity, 73)
+        self.assertEqual(output.messages[0].channel, 4)
+        controls._study_stop_playback(keep_status=True)
+        controls.midi_outputs = []
         controls._set_display_panel_section(0)
 
     def test_confirmation_dialog_respects_cancel_and_accept(self) -> None:

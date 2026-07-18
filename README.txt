@@ -17,17 +17,16 @@ Funciones principales
 Estudio MIDI
 ------------
 - Grabación de interpretaciones MIDI con velocidad, canal, duración y sustain.
-- Importación de archivos MIDI tipo 0 y 1.
+- Importación de archivos MIDI tipo 0/1 y partituras MusicXML/MXL.
+- Lectura de pentagramas, voces y digitaciones MusicXML cuando están disponibles.
 - Exportación de ejercicios en formato MIDI.
 - Biblioteca local para guardar, abrir, copiar y eliminar ejercicios.
-- Selección de canales y exclusión opcional del canal de percusión al importar.
 - Reproducción con ritmo original y velocidad regulable entre 0.5x y 2.0x.
-- Modo Pasos, que iguala la duración de cada evento o acorde.
 - Modo Guiado, que espera las notas correctas y señala errores visualmente.
 - Agrupación configurable de notas simultáneas mediante una ventana de acorde.
 - Navegación y audición individual de pasos.
 - Entrada desde MIDI, teclado del computador o clic sobre el piano.
-- Reproducción local con sonido y visualización simultánea en piano o guitarra.
+- Reproducción por salidas MIDI externas y visualización simultánea en piano o guitarra.
 - Reconocimiento de intervalos y acordes durante la reproducción y la práctica.
 
 Datos locales
