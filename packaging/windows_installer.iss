@@ -11,12 +11,12 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\MIDI Piano Jaramillo
 DefaultGroupName={#MyAppName}
 DisableProgramGroupPage=yes
-OutputDir=installer
+OutputDir=..\installer
 OutputBaseFilename=MIDI-Piano-Jaramillo-Windows-Setup
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-SetupIconFile=G7alt.ico
+SetupIconFile=..\G7alt.ico
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesAllowed=x64compatible
 PrivilegesRequired=lowest
@@ -28,7 +28,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 Name: "desktopicon"; Description: "Crear acceso directo en el escritorio"; GroupDescription: "Accesos directos:"; Flags: unchecked
 
 [Files]
-Source: "dist\MIDI Piano Jaramillo\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "..\dist\MIDI Piano Jaramillo\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
 
 [Icons]
 Name: "{autoprograms}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
