@@ -18,6 +18,8 @@ MIN_NOTE_DURATION_MS = 45.0
 DEFAULT_CHORD_TOLERANCE_MS = 70
 MIN_SPEED_FACTOR = 0.5
 MAX_SPEED_FACTOR = 2.0
+DEFAULT_STUDY_NOTE_VELOCITY = 67
+DEFAULT_MUSICXML_VELOCITY = DEFAULT_STUDY_NOTE_VELOCITY
 MIDI_IMPORT_EXTENSIONS = {".mid", ".midi", ".smf"}
 MUSICXML_IMPORT_EXTENSIONS = {".musicxml", ".xml", ".mxl"}
 STUDY_IMPORT_EXTENSIONS = MIDI_IMPORT_EXTENSIONS | MUSICXML_IMPORT_EXTENSIONS
@@ -28,7 +30,7 @@ class StudyNote:
     note: int
     start_ms: float
     duration_ms: float
-    velocity: int = 100
+    velocity: int = DEFAULT_STUDY_NOTE_VELOCITY
     channel: int = 0
     staff: Optional[int] = None
     voice: str = ""
@@ -57,6 +59,8 @@ class StudyStep:
     start_ms: float
     end_ms: float
     note_events: Tuple[StudyNote, ...] = ()
+    active_notes: Tuple[int, ...] = ()
+    active_note_events: Tuple[StudyNote, ...] = ()
 
     @property
     def duration_ms(self) -> float:
@@ -70,6 +74,7 @@ class PlaybackEvent:
     note: int
     velocity: int
     channel: int
+    staff: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -203,7 +208,38 @@ def group_notes_into_steps(
             tuple(sorted(step_events, key=lambda event: (event.note, event.channel))),
         )
     )
-    return steps
+
+    resolved_steps: List[StudyStep] = []
+    for step in steps:
+        active_events: List[StudyNote] = list(step.note_events)
+        step_event_ids = {id(event) for event in step.note_events}
+        for note in ordered:
+            if id(note) in step_event_ids:
+                continue
+            if (
+                float(note.start_ms) < float(step.start_ms) - 1e-6
+                and float(note.end_ms) > float(step.start_ms) + 1e-6
+            ):
+                active_events.append(note)
+        active_events.sort(
+            key=lambda event: (
+                int(event.note),
+                int(event.channel),
+                float(event.start_ms),
+            )
+        )
+        active_notes = tuple(sorted({int(event.note) for event in active_events}))
+        resolved_steps.append(
+            StudyStep(
+                notes=step.notes,
+                start_ms=step.start_ms,
+                end_ms=step.end_ms,
+                note_events=step.note_events,
+                active_notes=active_notes or step.notes,
+                active_note_events=tuple(active_events),
+            )
+        )
+    return resolved_steps
 
 
 def evaluate_guided_progress(
@@ -244,14 +280,28 @@ def build_original_timeline(
             (
                 start,
                 1,
-                PlaybackEvent("note_on", start, note.note, note.velocity, note.channel),
+                PlaybackEvent(
+                    "note_on",
+                    start,
+                    note.note,
+                    note.velocity,
+                    note.channel,
+                    note.staff,
+                ),
             )
         )
         events.append(
             (
                 start + duration,
                 0,
-                PlaybackEvent("note_off", start + duration, note.note, 0, note.channel),
+                PlaybackEvent(
+                    "note_off",
+                    start + duration,
+                    note.note,
+                    0,
+                    note.channel,
+                    note.staff,
+                ),
             )
         )
     events.sort(key=lambda item: (item[0], item[1], item[2].note, item[2].channel))
@@ -438,6 +488,40 @@ _PITCH_CLASS_FROM_STEP = {
     "B": 11,
 }
 
+_MUSICXML_DYNAMIC_VELOCITIES = {
+    "pppp": 24,
+    "ppp": 36,
+    "pp": 48,
+    "p": 64,
+    "mp": 80,
+    "mf": 96,
+    "f": 112,
+    "ff": 120,
+    "fff": 124,
+    "ffff": 127,
+    "sf": 116,
+    "sffz": 124,
+    "sfz": 120,
+    "rfz": 120,
+    "fp": 76,
+}
+
+
+def _clamp_midi_velocity(value: float | int) -> int:
+    return max(1, min(127, int(round(float(value)))))
+
+
+def _musicxml_numeric_velocity(raw: object) -> Optional[int]:
+    if raw is None:
+        return None
+    text = str(raw).strip()
+    if not text:
+        return None
+    try:
+        return _clamp_midi_velocity(float(text))
+    except ValueError:
+        return None
+
 
 def _musicxml_staff_value(note: ET.Element) -> Optional[int]:
     raw = _xml_text(note, "staff")
@@ -459,6 +543,68 @@ def _musicxml_fingering(note: ET.Element) -> str:
     return ""
 
 
+def _musicxml_tie_types(note: ET.Element) -> Set[str]:
+    namespace = _xml_namespace(note)
+    tie_types: Set[str] = set()
+    for tie in note.findall(f"{namespace}tie"):
+        value = str(tie.attrib.get("type") or "").strip().lower()
+        if value:
+            tie_types.add(value)
+    for tied in note.findall(f".//{namespace}tied"):
+        value = str(tied.attrib.get("type") or "").strip().lower()
+        if value:
+            tie_types.add(value)
+    return tie_types
+
+
+def _musicxml_direction_velocity(direction: ET.Element) -> Optional[int]:
+    namespace = _xml_namespace(direction)
+    for sound in direction.findall(f"{namespace}sound"):
+        velocity = _musicxml_numeric_velocity(sound.attrib.get("dynamics"))
+        if velocity is not None:
+            return velocity
+    for dynamics in direction.findall(f".//{namespace}dynamics"):
+        for child in list(dynamics):
+            velocity = _MUSICXML_DYNAMIC_VELOCITIES.get(
+                _xml_local_name(child.tag).lower()
+            )
+            if velocity is not None:
+                return velocity
+    return None
+
+
+def _musicxml_note_velocity(note: ET.Element, fallback: int) -> int:
+    for key in ("dynamics", "velocity"):
+        velocity = _musicxml_numeric_velocity(note.attrib.get(key))
+        if velocity is not None:
+            return velocity
+    return _clamp_midi_velocity(fallback)
+
+
+def _musicxml_find_pending_tie_key(
+    pending_ties: Dict[Tuple[int, Optional[int], str, int], Dict[str, object]],
+    tie_key: Tuple[int, Optional[int], str, int],
+) -> Optional[Tuple[int, Optional[int], str, int]]:
+    if tie_key in pending_ties:
+        return tie_key
+    part_index, staff, voice, midi_note = tie_key
+    matches = []
+    for candidate in pending_ties:
+        candidate_part, candidate_staff, candidate_voice, candidate_midi = candidate
+        if candidate_part != part_index or candidate_midi != midi_note:
+            continue
+        if (
+            staff is not None
+            and candidate_staff is not None
+            and candidate_staff != staff
+        ):
+            continue
+        if voice and candidate_voice and candidate_voice != voice:
+            continue
+        matches.append(candidate)
+    return matches[0] if len(matches) == 1 else None
+
+
 def read_musicxml_file(path: Path | str) -> ImportedMidi:
     root = _musicxml_root(path)
     if _xml_local_name(root.tag) != "score-partwise":
@@ -473,6 +619,13 @@ def read_musicxml_file(path: Path | str) -> ImportedMidi:
     for part_index, part in enumerate(root.findall(f"{namespace}part")):
         divisions = 1.0
         measure_offset_quarters = 0.0
+        current_velocity_by_staff: Dict[Optional[int], int] = {
+            None: DEFAULT_MUSICXML_VELOCITY
+        }
+        pending_ties: Dict[
+            Tuple[int, Optional[int], str, int],
+            Dict[str, object],
+        ] = {}
         for measure in part.findall(f"{namespace}measure"):
             cursor_quarters = 0.0
             previous_note_start = 0.0
@@ -511,6 +664,12 @@ def read_musicxml_file(path: Path | str) -> ImportedMidi:
                         _append_warning(warnings, "Forward inválido en MusicXML.")
                     continue
 
+                if name == "direction":
+                    velocity = _musicxml_direction_velocity(child)
+                    if velocity is not None:
+                        current_velocity_by_staff[_musicxml_staff_value(child)] = velocity
+                    continue
+
                 if name != "note":
                     continue
                 if child.find(f"{namespace}rest") is not None:
@@ -543,21 +702,133 @@ def read_musicxml_file(path: Path | str) -> ImportedMidi:
                         if staff is not None
                         else max(0, min(15, part_index))
                     )
-                    notes.append(
-                        StudyNote(
-                            note=midi_note,
-                            start_ms=(measure_offset_quarters + start_quarters) * beat_ms,
-                            duration_ms=max(
-                                MIN_NOTE_DURATION_MS,
-                                duration_quarters * beat_ms,
+                    voice = _xml_text(child, "voice")
+                    fingering = _musicxml_fingering(child)
+                    note_velocity = _musicxml_note_velocity(
+                        child,
+                        current_velocity_by_staff.get(
+                            staff,
+                            current_velocity_by_staff.get(
+                                None,
+                                DEFAULT_MUSICXML_VELOCITY,
                             ),
-                            velocity=96,
-                            channel=channel,
-                            staff=staff,
-                            voice=_xml_text(child, "voice"),
-                            fingering=_musicxml_fingering(child),
-                        )
+                        ),
                     )
+                    start_ms = (measure_offset_quarters + start_quarters) * beat_ms
+                    end_ms = start_ms + max(0.0, duration_quarters * beat_ms)
+                    tie_types = _musicxml_tie_types(child)
+                    has_tie_start = "start" in tie_types or "continue" in tie_types
+                    has_tie_stop = "stop" in tie_types or "continue" in tie_types
+                    tie_key = (part_index, staff, voice, midi_note)
+                    pending_key = _musicxml_find_pending_tie_key(pending_ties, tie_key)
+                    pending = pending_ties.get(pending_key) if pending_key else None
+
+                    if has_tie_stop and pending is not None:
+                        pending["end_ms"] = max(float(pending["end_ms"]), end_ms)
+                        if not str(pending.get("fingering") or "").strip() and fingering:
+                            pending["fingering"] = fingering
+                        if not has_tie_start:
+                            duration_ms = max(
+                                MIN_NOTE_DURATION_MS,
+                                float(pending["end_ms"]) - float(pending["start_ms"]),
+                            )
+                            notes.append(
+                                StudyNote(
+                                    note=midi_note,
+                                    start_ms=float(pending["start_ms"]),
+                                    duration_ms=duration_ms,
+                                    velocity=int(pending["velocity"]),
+                                    channel=int(pending["channel"]),
+                                    staff=(
+                                        int(pending["staff"])
+                                        if pending.get("staff") is not None
+                                        else staff
+                                    ),
+                                    voice=str(pending.get("voice") or voice),
+                                    fingering=str(pending.get("fingering") or ""),
+                                )
+                            )
+                            pending_ties.pop(pending_key, None)
+                    elif has_tie_stop and pending is None and not has_tie_start:
+                        _append_warning(
+                            warnings,
+                            "Ligadura MusicXML sin inicio; se importó como nota independiente.",
+                        )
+                        notes.append(
+                            StudyNote(
+                                note=midi_note,
+                                start_ms=start_ms,
+                                duration_ms=max(
+                                    MIN_NOTE_DURATION_MS,
+                                    duration_quarters * beat_ms,
+                                ),
+                                velocity=note_velocity,
+                                channel=channel,
+                                staff=staff,
+                                voice=voice,
+                                fingering=fingering,
+                            )
+                        )
+                    elif has_tie_start:
+                        if pending is None:
+                            pending_ties[tie_key] = {
+                                "start_ms": start_ms,
+                                "end_ms": end_ms,
+                                "velocity": note_velocity,
+                                "channel": channel,
+                                "staff": staff,
+                                "voice": voice,
+                                "fingering": fingering,
+                            }
+                        else:
+                            pending["end_ms"] = max(float(pending["end_ms"]), end_ms)
+                            if (
+                                not str(pending.get("fingering") or "").strip()
+                                and fingering
+                            ):
+                                pending["fingering"] = fingering
+                    else:
+                        if pending is not None:
+                            _append_warning(
+                                warnings,
+                                "Ligadura MusicXML sin cierre; se importó hasta su última duración escrita.",
+                            )
+                            notes.append(
+                                StudyNote(
+                                    note=midi_note,
+                                    start_ms=float(pending["start_ms"]),
+                                    duration_ms=max(
+                                        MIN_NOTE_DURATION_MS,
+                                        float(pending["end_ms"])
+                                        - float(pending["start_ms"]),
+                                    ),
+                                    velocity=int(pending["velocity"]),
+                                    channel=int(pending["channel"]),
+                                    staff=(
+                                        int(pending["staff"])
+                                        if pending.get("staff") is not None
+                                        else None
+                                    ),
+                                    voice=str(pending.get("voice") or ""),
+                                    fingering=str(pending.get("fingering") or ""),
+                                )
+                            )
+                            pending_ties.pop(pending_key, None)
+                        notes.append(
+                            StudyNote(
+                                note=midi_note,
+                                start_ms=start_ms,
+                                duration_ms=max(
+                                    MIN_NOTE_DURATION_MS,
+                                    duration_quarters * beat_ms,
+                                ),
+                                velocity=note_velocity,
+                                channel=channel,
+                                staff=staff,
+                                voice=voice,
+                                fingering=fingering,
+                            )
+                        )
 
                 measure_end_quarters = max(
                     measure_end_quarters,
@@ -569,6 +840,32 @@ def read_musicxml_file(path: Path | str) -> ImportedMidi:
                     measure_end_quarters = max(measure_end_quarters, cursor_quarters)
 
             measure_offset_quarters += max(measure_end_quarters, cursor_quarters)
+
+        for tie_key, pending in pending_ties.items():
+            _part_index, staff, voice, midi_note = tie_key
+            _append_warning(
+                warnings,
+                "Ligadura MusicXML sin cierre; se importó hasta su última duración escrita.",
+            )
+            notes.append(
+                StudyNote(
+                    note=midi_note,
+                    start_ms=float(pending["start_ms"]),
+                    duration_ms=max(
+                        MIN_NOTE_DURATION_MS,
+                        float(pending["end_ms"]) - float(pending["start_ms"]),
+                    ),
+                    velocity=int(pending["velocity"]),
+                    channel=int(pending["channel"]),
+                    staff=(
+                        int(pending["staff"])
+                        if pending.get("staff") is not None
+                        else staff
+                    ),
+                    voice=str(pending.get("voice") or voice),
+                    fingering=str(pending.get("fingering") or ""),
+                )
+            )
 
     normalized = tuple(normalize_notes(notes))
     if not normalized:
@@ -700,7 +997,9 @@ class StudyLibrary:
                         note=int(item["note"]),
                         start_ms=float(item["start_ms"]),
                         duration_ms=float(item["duration_ms"]),
-                        velocity=int(item.get("velocity", 100)),
+                        velocity=int(
+                            item.get("velocity", DEFAULT_STUDY_NOTE_VELOCITY)
+                        ),
                         channel=int(item.get("channel", 0)),
                         staff=(
                             int(item["staff"])
@@ -781,6 +1080,17 @@ class StudyLibrary:
             self._midi_path(exercise_id),
             self._notes_path(exercise_id),
         ):
+            try:
+                path.unlink()
+            except FileNotFoundError:
+                continue
+
+    def clear(self) -> None:
+        for path in self.root.iterdir():
+            if not path.is_file():
+                continue
+            if path.suffix.lower() not in {".json", ".mid"}:
+                continue
             try:
                 path.unlink()
             except FileNotFoundError:

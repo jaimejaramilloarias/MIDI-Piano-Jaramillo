@@ -14,7 +14,7 @@ from PyQt6.QtGui import QColor, QKeyEvent
 from PyQt6.QtWidgets import QApplication, QDialog, QWidget
 
 import main
-from midi_study import StudyNote, write_midi_file
+from midi_study import StudyLibrary, StudyNote, write_midi_file
 from main import CHORD_PATTERNS, ChordWindow, ControlWindow, FretboardWidget, PianoWindow, StaffWindow
 
 
@@ -385,6 +385,29 @@ class TestMenuRuntime(unittest.TestCase):
         controls._study_input_note_off("test:72")
         controls._set_display_panel_section(0)
 
+    def test_study_guided_ignores_notes_held_from_previous_step(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls.study_notes = [
+            StudyNote(60, 0, 900),
+            StudyNote(67, 600, 300),
+        ]
+        controls.study_selected_channels = {0}
+        controls._study_rebuild_steps()
+        controls._study_set_mode("guided")
+
+        controls._study_input_note_on(60, 90, "test:60", 0)
+        self.assertEqual(controls.study_active_step_index, 1)
+        self.assertFalse(controls.study_wrong_notes)
+
+        controls._study_input_note_on(67, 90, "test:67", 0)
+        self.assertEqual(controls.study_transport, "idle")
+        self.assertFalse(controls.study_wrong_notes)
+
+        for note in (60, 67):
+            controls._study_input_note_off(f"test:{note}")
+        controls._set_display_panel_section(0)
+
     def test_study_student_input_uses_subtle_gray_instead_of_orange(self) -> None:
         controls = self.controls
         controls._set_display_panel_section(2)
@@ -436,6 +459,75 @@ class TestMenuRuntime(unittest.TestCase):
         controls.study_library_combo.activated.emit(target_index)
         self.assertEqual(controls.study_name_edit.text(), "Dominante alterado")
         controls._set_display_panel_section(0)
+
+    def test_bundled_study_exercises_refresh_existing_names(self) -> None:
+        controls = self.controls
+        original_library = controls.study_library
+        original_bundle_path = controls.BUNDLED_STUDY_EXERCISES_PATH
+        try:
+            with tempfile.TemporaryDirectory(prefix="bundled-study-refresh-") as folder:
+                root = Path(folder)
+                bundle = root / "bundle"
+                bundle.mkdir()
+                (bundle / "Bundled.musicxml").write_text(
+                    MUSICXML_UI_SAMPLE,
+                    encoding="utf-8",
+                )
+                library = StudyLibrary(root / "library")
+                stale = library.save_exercise(
+                    "Bundled",
+                    [StudyNote(72, 0, 45, 96, 0)],
+                    120,
+                )
+                controls.study_library = library
+                controls.BUNDLED_STUDY_EXERCISES_PATH = bundle
+
+                controls._seed_bundled_study_exercises()
+                metadata, imported = library.load_exercise(stale.exercise_id)
+
+                self.assertEqual(metadata.exercise_id, stale.exercise_id)
+                self.assertEqual(metadata.note_count, 2)
+                self.assertEqual({note.note for note in imported.notes}, {48, 60})
+                self.assertEqual(len(library.list_exercises()), 1)
+        finally:
+            controls.study_library = original_library
+            controls.BUNDLED_STUDY_EXERCISES_PATH = original_bundle_path
+
+    def test_study_clear_button_empties_the_whole_library(self) -> None:
+        controls = self.controls
+        original_library = controls.study_library
+        try:
+            with tempfile.TemporaryDirectory(prefix="study-clear-library-") as folder:
+                library = StudyLibrary(Path(folder))
+                first = library.save_exercise(
+                    "Primero",
+                    [StudyNote(60, 0, 120, 96, 0)],
+                    120,
+                )
+                second = library.save_exercise(
+                    "Segundo",
+                    [StudyNote(64, 0, 120, 96, 0)],
+                    120,
+                )
+                controls.study_library = library
+                controls.study_exercise_id = first.exercise_id
+                controls.study_created_at = first.created_at
+                controls.study_notes = [StudyNote(60, 0, 120, 96, 0)]
+                controls._study_rebuild_steps()
+                controls._study_refresh_library_ui()
+
+                with patch.object(controls, "_confirm_action", return_value=True):
+                    controls._study_clear_library()
+
+                self.assertFalse(library.list_exercises())
+                self.assertEqual(controls.study_name_edit.text(), "Nueva grabación")
+                self.assertFalse(controls.study_notes)
+                self.assertIsNone(controls.study_exercise_id)
+                self.assertIn("limpia", controls.study_status_label.text().lower())
+                self.assertNotEqual(first.exercise_id, second.exercise_id)
+        finally:
+            controls.study_library = original_library
+            controls._study_refresh_library_ui()
 
     def test_study_single_import_accepts_musicxml_and_uses_staff_fingerings(self) -> None:
         controls = self.controls
@@ -504,6 +596,86 @@ class TestMenuRuntime(unittest.TestCase):
             ["note_on", "note_off"],
         )
         controls.midi_outputs = []
+        controls._set_display_panel_section(0)
+
+    def test_study_original_playback_uses_staff_colors_and_source_velocity(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls.study_notes = [
+            StudyNote(60, 0, 160, 41, 0, staff=1),
+            StudyNote(48, 0, 160, 99, 1, staff=2),
+        ]
+        controls.study_selected_channels = {0, 1}
+        controls._study_rebuild_steps()
+        controls._study_set_mode("original")
+        output = FakeMidiOutput()
+        controls.midi_outputs = [output]
+
+        controls._study_start_playback()
+        controls.study_playback_timer.stop()
+        controls._study_playback_started_at = time.monotonic() * 1000.0 - 10
+        controls._study_poll_playback()
+
+        self.assertFalse(controls.piano.study_student_notes)
+        self.assertFalse(controls.piano.study_wrong_notes)
+        self.assertEqual(controls.piano.auxiliary_note_colors[60].blue(), 255)
+        self.assertEqual(controls.piano.auxiliary_note_colors[48].green(), 199)
+        self.assertEqual(controls.fretboard_widget.active_note_colors[60].blue(), 255)
+        velocities = {message.note: message.velocity for message in output.messages}
+        self.assertEqual(velocities, {48: 99, 60: 41})
+
+        controls._study_playback_started_at = time.monotonic() * 1000.0 - 250
+        controls._study_poll_playback()
+        self.assertFalse(controls.piano.auxiliary_pressed_notes)
+        controls.midi_outputs = []
+        controls._set_display_panel_section(0)
+
+    def test_study_sustain_defers_note_off_without_visual_fill(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls._study_set_mode("original")
+        port = FakeMidiPort()
+        controls.midi_inputs = [port]
+
+        port.messages.extend(
+            [
+                main.mido.Message("control_change", control=64, value=127, channel=0),
+                main.mido.Message("note_on", note=60, velocity=90, channel=0),
+            ]
+        )
+        controls.poll_midi()
+        self.assertIn(60, {note for note, _channel in controls._study_input_sources.values()})
+        self.assertIn(60, controls.piano.study_student_notes)
+
+        port.messages.append(main.mido.Message("note_off", note=60, velocity=0, channel=0))
+        controls.poll_midi()
+        self.assertFalse(controls.piano.sustained_notes)
+        self.assertNotIn(60, controls.piano.study_student_notes)
+        self.assertTrue(controls._study_input_sources)
+
+        port.messages.append(main.mido.Message("control_change", control=64, value=0, channel=0))
+        controls.poll_midi()
+        self.assertFalse(controls._study_input_sources)
+        controls.midi_inputs = []
+        controls._set_display_panel_section(0)
+
+    def test_study_overlay_only_shows_active_step(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls.study_notes = [
+            StudyNote(60, 0, 900, 96, 0),
+            StudyNote(64, 620, 160, 96, 0),
+            StudyNote(67, 1200, 160, 96, 0),
+        ]
+        controls.study_selected_channels = {0}
+        controls._study_rebuild_steps()
+        controls._study_set_mode("guided")
+
+        self.assertEqual(set(controls.piano.display_chord_notes), {60})
+        controls._study_move_step(1)
+        self.assertEqual(set(controls.piano.display_chord_notes), {60, 64})
+        self.assertNotIn(67, set(controls.piano.display_chord_notes))
+        controls._study_stop_playback(keep_status=True)
         controls._set_display_panel_section(0)
 
     def test_study_sequence_navigation_previews_step_with_original_velocity(self) -> None:

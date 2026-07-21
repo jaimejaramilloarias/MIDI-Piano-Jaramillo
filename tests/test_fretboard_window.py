@@ -456,6 +456,7 @@ class TestFretboardWindow(unittest.TestCase):
         self.assertFalse(hasattr(ControlWindow, "_setup_staff_menu"))
         self.assertNotIn("staff_widget", combined_source)
         self.assertNotIn("staff_window.show()", main_source)
+        self.assertNotIn("chord_window.show()", main_source)
 
 
 if __name__ == "__main__":

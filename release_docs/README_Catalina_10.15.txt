@@ -3,7 +3,7 @@ MIDI Piano Jaramillo para macOS Catalina 10.15
 
 Contenido
 ---------
-- MIDI Piano Jaramillo.dmg: instalador para Mac Intel.
+- MIDI-Piano-Jaramillo-macOS-Catalina-10.15-Intel.dmg: instalador para Mac Intel.
 - README_Catalina_10.15.txt: este documento.
 
 Compatibilidad
@@ -23,11 +23,12 @@ Si macOS muestra una advertencia de seguridad, haz clic derecho sobre la app y e
 Descripcion
 -----------
 MIDI Piano Jaramillo es una aplicacion de practica y visualizacion armonica para MIDI.
-Incluye vistas de piano y diapason de guitarra, reconocimiento de acordes en vivo, cifrado
-principal y alternativo, escalas y acordes pregrabados, etiquetas funcionales de intervalos,
-alertas de 9m segun el contexto armonico y controles de octavas y registro. La seccion Estudio
-permite grabar, importar, guardar y exportar ejercicios MIDI, reproducirlos con velocidad
-regulable y practicarlos por pasos o en modo guiado desde la vista de piano o guitarra.
+Incluye vistas de piano y diapason de guitarra, reconocimiento de acordes en vivo,
+cifrado principal y alternativo, escalas y acordes pregrabados, etiquetas funcionales
+de intervalos, alertas de 9m segun el contexto armonico y controles de octavas y registro.
+La seccion Estudio permite grabar, importar, guardar y exportar ejercicios MIDI, MusicXML
+o MXL, reproducirlos con su ritmo original o practicarlos en modo guiado desde la vista de
+piano o guitarra.
 
 Notas
 -----

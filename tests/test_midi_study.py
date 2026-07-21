@@ -102,6 +102,18 @@ class MidiStudyEngineTests(unittest.TestCase):
         self.assertEqual(steps[0].start_ms, 100)
         self.assertEqual(steps[0].end_ms, 505)
 
+    def test_steps_include_sustained_notes_without_turning_them_into_attacks(self):
+        notes = [
+            StudyNote(60, 0, 1000, 96, 0),
+            StudyNote(64, 500, 250, 90, 0),
+            StudyNote(67, 1200, 200, 88, 0),
+        ]
+        steps = group_notes_into_steps(notes, tolerance_ms=20)
+
+        self.assertEqual([step.notes for step in steps], [(60,), (64,), (67,)])
+        self.assertEqual(steps[1].active_notes, (60, 64))
+        self.assertEqual([event.note for event in steps[1].active_note_events], [60, 64])
+
     def test_guided_progress_credits_released_correct_notes(self):
         progress = evaluate_guided_progress({60, 64}, {64}, {60, 64})
         self.assertTrue(progress.is_complete)
@@ -113,10 +125,17 @@ class MidiStudyEngineTests(unittest.TestCase):
         self.assertEqual(wrong.wrong_notes, (66,))
 
     def test_builds_original_timeline_with_source_timing(self):
-        original = build_original_timeline(self.notes, speed_factor=2.0)
+        notes = [
+            StudyNote(60, 100, 400, 96, 0, staff=1),
+            StudyNote(64, 145, 360, 90, 0, staff=2),
+            StudyNote(67, 520, 250, 88, 1),
+        ]
+        original = build_original_timeline(notes, speed_factor=2.0)
         self.assertEqual(original[0].event_type, "note_on")
         self.assertEqual(original[0].at_ms, 0)
         self.assertEqual(original[-1].event_type, "note_off")
+        self.assertEqual(original[0].velocity, 96)
+        self.assertEqual(original[0].staff, 1)
         second_note_on = next(
             event
             for event in original
@@ -124,6 +143,139 @@ class MidiStudyEngineTests(unittest.TestCase):
         )
         self.assertEqual(second_note_on.velocity, 88)
         self.assertEqual(second_note_on.channel, 1)
+
+    def test_reads_musicxml_duration_ties_as_single_note(self):
+        sample = """<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1"><part-name>Piano</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      <direction><sound tempo="120"/></direction>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><staff>1</staff>
+        <tie type="start"/>
+        <notations><tied type="start"/><technical><fingering>1</fingering></technical></notations>
+      </note>
+    </measure>
+    <measure number="2">
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration>
+        <tie type="stop"/>
+        <notations><tied type="stop"/></notations>
+      </note>
+      <note>
+        <pitch><step>D</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><staff>1</staff>
+      </note>
+    </measure>
+  </part>
+</score-partwise>
+"""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "ligadura.musicxml"
+            path.write_text(sample, encoding="utf-8")
+            imported = read_musicxml_file(path)
+
+        self.assertEqual([(note.note, round(note.start_ms)) for note in imported.notes], [(60, 0), (62, 1000)])
+        self.assertAlmostEqual(imported.notes[0].duration_ms, 1000, delta=1)
+        self.assertEqual(imported.notes[0].fingering, "1")
+        self.assertEqual([note.velocity for note in imported.notes], [67, 67])
+
+    def test_reads_musicxml_dynamics_as_note_velocity(self):
+        sample = """<?xml version="1.0" encoding="UTF-8"?>
+<score-partwise version="4.0">
+  <part-list>
+    <score-part id="P1"><part-name>Piano</part-name></score-part>
+  </part-list>
+  <part id="P1">
+    <measure number="1">
+      <attributes><divisions>4</divisions></attributes>
+      <direction><sound tempo="120"/></direction>
+      <direction>
+        <direction-type><dynamics><p/></dynamics></direction-type>
+        <staff>1</staff>
+      </direction>
+      <note>
+        <pitch><step>C</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><staff>1</staff>
+      </note>
+      <direction>
+        <direction-type><dynamics><f/></dynamics></direction-type>
+        <staff>1</staff>
+      </direction>
+      <note>
+        <pitch><step>D</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><staff>1</staff>
+      </note>
+      <direction>
+        <sound dynamics="72"/>
+      </direction>
+      <note dynamics="43">
+        <pitch><step>E</step><octave>4</octave></pitch>
+        <duration>4</duration><voice>1</voice><staff>1</staff>
+      </note>
+    </measure>
+  </part>
+</score-partwise>
+"""
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "dinamicas.musicxml"
+            path.write_text(sample, encoding="utf-8")
+            imported = read_musicxml_file(path)
+
+        self.assertEqual(
+            [(note.note, note.velocity) for note in imported.notes],
+            [(60, 64), (62, 112), (64, 43)],
+        )
+        timeline = build_original_timeline(imported.notes)
+        self.assertEqual(
+            [
+                (event.note, event.velocity)
+                for event in timeline
+                if event.event_type == "note_on"
+            ],
+            [(60, 64), (62, 112), (64, 43)],
+        )
+
+    def test_bundled_study_exercises_import_from_assets(self):
+        root = Path(__file__).resolve().parents[1] / "assets" / "study-exercises"
+        expected = {
+            "All the things you are.musicxml",
+            "Chopin nocturne Op9 n2.mid",
+            "Esfinges.musicxml",
+            "II-V-I mayor y menor.musicxml",
+            "My Funny Valentine.musicxml",
+            "Sofisticated Lady.musicxml",
+        }
+        self.assertEqual({path.name for path in root.iterdir()}, expected)
+
+        files_with_duration_ties = set()
+        for path in sorted(root.iterdir()):
+            imported = read_study_file(path)
+            self.assertGreater(len(imported.notes), 0, path.name)
+            if path.suffix.lower() == ".musicxml" and "<tie" in path.read_text(encoding="utf-8", errors="ignore"):
+                steps = group_notes_into_steps(imported.notes)
+                has_sustained_overlay = any(
+                    set(step.active_notes) > set(step.notes)
+                    for step in steps
+                )
+                self.assertTrue(has_sustained_overlay, path.name)
+                files_with_duration_ties.add(path.name)
+
+        self.assertEqual(
+            files_with_duration_ties,
+            {
+                "All the things you are.musicxml",
+                "Esfinges.musicxml",
+                "My Funny Valentine.musicxml",
+                "Sofisticated Lady.musicxml",
+            },
+        )
 
     def test_filters_channels_and_removes_leading_silence(self):
         filtered = filter_notes_by_channels(self.notes, {1})

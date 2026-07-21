@@ -62,12 +62,27 @@ jobs:
           }
           Stop-Process -Id $process.Id -Force
 
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Build Windows installer
+        shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { $iscc = "${env:ProgramFiles}\Inno Setup 6\ISCC.exe" }
+          if (-not (Test-Path $iscc)) { throw "No se encontro ISCC.exe." }
+          & $iscc "packaging\windows_installer.iss"
+          if (-not (Test-Path "installer\MIDI-Piano-Jaramillo-Windows-Setup.exe")) {
+            throw "No se genero el instalador Windows."
+          }
+
       - name: Package ZIP
         shell: pwsh
         run: |
           $stage = "MIDI-Piano-Jaramillo-Windows"
           New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item -Recurse "dist\MIDI Piano Jaramillo" "$stage\MIDI Piano Jaramillo"
+          Copy-Item "installer\MIDI-Piano-Jaramillo-Windows-Setup.exe" "$stage\MIDI-Piano-Jaramillo-Windows-Setup.exe"
           Copy-Item "release_docs\README_windows.txt" "$stage\README_windows.txt"
           Compress-Archive -Path "$stage\*" -DestinationPath "MIDI-Piano-Jaramillo-Windows.zip" -Force
 
