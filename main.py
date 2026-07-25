@@ -5,7 +5,7 @@ import time
 import hashlib
 from itertools import product
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Callable, Dict, List, Optional, Set, Tuple
 
 from PyQt6.QtCore import Qt, QTimer, QRect, QRectF, QPoint, QPointF, QSize, QEvent, QSettings, QObject, QT_VERSION_STR
 from PyQt6.QtGui import (
@@ -19,6 +19,7 @@ from PyQt6.QtGui import (
     QFontMetricsF,
     QPainter,
     QPen,
+    QPolygonF,
     QPixmap,
     QKeySequence,
     QShortcut,
@@ -105,6 +106,45 @@ DEFAULT_OCTAVES = 5      # C2–C7
 DEFAULT_VIEW_MODE = "single"
 IS_WINDOWS = sys.platform.startswith("win")
 IS_MAC = sys.platform == "darwin"
+
+IPAD_SKIN_PALETTES = {
+    "classic": {
+        "name": "Clásico",
+        "canvas": "#090A0C",
+        "sidebar": "#0E0F11",
+        "surface": "#16171B",
+        "raised": "#1D1F24",
+        "hero": "#050608",
+        "accent": "#FFA314",
+    },
+    "lemon": {
+        "name": "Limón",
+        "canvas": "#101109",
+        "sidebar": "#17190C",
+        "surface": "#222513",
+        "raised": "#30351A",
+        "hero": "#090A05",
+        "accent": "#DFFF3F",
+    },
+    "graphite": {
+        "name": "Grafito",
+        "canvas": "#111315",
+        "sidebar": "#181B1E",
+        "surface": "#23272A",
+        "raised": "#30363A",
+        "hero": "#0A0C0D",
+        "accent": "#6E91A8",
+    },
+    "midnight": {
+        "name": "Nocturno",
+        "canvas": "#090611",
+        "sidebar": "#100B1D",
+        "surface": "#191129",
+        "raised": "#291C40",
+        "hero": "#050308",
+        "accent": "#A855F7",
+    },
+}
 
 
 def _qt_version_tuple() -> Tuple[int, int, int]:
@@ -214,6 +254,216 @@ class ResponsiveWidthWidget(QWidget):
         hint = super().minimumSizeHint()
         hint.setWidth(0)
         return hint
+
+
+class NavigationRailButton(QPushButton):
+    """Compact iPad-style navigation item with a platform-independent icon."""
+
+    def __init__(self, label: str, icon_key: str):
+        super().__init__(label)
+        self.label = str(label)
+        self.icon_key = str(icon_key)
+        self.setObjectName("NavRailButton")
+        self.setCheckable(True)
+        self.setFixedSize(78, 64)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        rect = QRectF(self.rect()).adjusted(1, 1, -1, -1)
+        checked = self.isChecked()
+        accent = QColor(str(self.property("navAccent") or "#FFA314"))
+        canvas = QColor(str(self.property("navCanvas") or "#090A0C"))
+        raised = QColor(str(self.property("navRaised") or "#1D1F24"))
+        if checked:
+            painter.setBrush(accent)
+        elif self.underMouse():
+            painter.setBrush(raised)
+        else:
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.drawRoundedRect(rect, 11, 11)
+
+        foreground = canvas if checked else QColor(255, 255, 255, 190)
+        painter.setPen(QPen(foreground, 1.8))
+        self._draw_icon(painter, QRectF(26, 5, 26, 25))
+        painter.setFont(ui_font(11, QFont.Weight.DemiBold))
+        painter.drawText(
+            QRectF(2, 35, self.width() - 4, 26),
+            Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter,
+            self.label,
+        )
+
+    def _draw_icon(self, painter: QPainter, rect: QRectF) -> None:
+        cx = rect.center().x()
+        cy = rect.center().y()
+        if self.icon_key == "live":
+            painter.drawRoundedRect(rect.adjusted(1, 3, -1, -3), 2, 2)
+            step = rect.width() / 5
+            for index in range(1, 5):
+                x = rect.left() + index * step
+                painter.drawLine(QPointF(x, rect.top() + 3), QPointF(x, rect.bottom() - 3))
+            painter.setBrush(painter.pen().color())
+            for index in (1, 3):
+                x = rect.left() + index * step - 1.5
+                painter.drawRoundedRect(QRectF(x, rect.top() + 3, 3, 8), 1, 1)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+        elif self.icon_key == "chords":
+            painter.setBrush(painter.pen().color())
+            for row in range(3):
+                for column in range(3):
+                    painter.drawEllipse(
+                        QPointF(rect.left() + 5 + column * 6, rect.top() + 4 + row * 6),
+                        1.7,
+                        1.7,
+                    )
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+        elif self.icon_key == "scales":
+            points = [
+                QPointF(rect.left() + 1, cy),
+                QPointF(rect.left() + 5, cy),
+                QPointF(rect.left() + 8, rect.top() + 4),
+                QPointF(rect.left() + 11, rect.bottom() - 3),
+                QPointF(rect.left() + 14, rect.top() + 2),
+                QPointF(rect.left() + 17, cy),
+                QPointF(rect.right() - 1, cy),
+            ]
+            for start, end in zip(points, points[1:]):
+                painter.drawLine(start, end)
+        elif self.icon_key == "study":
+            for index, width in enumerate((16, 12, 8)):
+                y = rect.top() + 4 + index * 6
+                painter.drawLine(QPointF(cx - width / 2, y), QPointF(cx + width / 2, y))
+                painter.drawEllipse(QPointF(cx - width / 2 - 2, y), 1.5, 1.5)
+        elif self.icon_key == "dictionary":
+            painter.drawRoundedRect(rect.adjusted(4, 1, -4, -1), 2, 2)
+            painter.drawLine(
+                QPointF(rect.left() + 8, rect.top() + 1),
+                QPointF(rect.left() + 8, rect.bottom() - 1),
+            )
+            for index in range(3):
+                y = rect.top() + 5 + index * 5
+                painter.drawLine(QPointF(rect.left() + 11, y), QPointF(rect.right() - 6, y))
+        elif self.icon_key == "settings":
+            for index, knob in enumerate((0.65, 0.35, 0.58)):
+                y = rect.top() + 4 + index * 6
+                painter.drawLine(QPointF(rect.left() + 2, y), QPointF(rect.right() - 2, y))
+                x = rect.left() + rect.width() * knob
+                painter.setBrush(painter.pen().color())
+                painter.drawEllipse(QPointF(x, y), 2.2, 2.2)
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+        else:
+            painter.drawEllipse(QPointF(cx, rect.top() + 6), 4, 4)
+            painter.drawArc(QRectF(cx - 8, rect.top() + 11, 16, 10), 0, 180 * 16)
+
+
+class BrandIconWidget(QWidget):
+    """Resolution-independent navigation logo."""
+
+    def __init__(self, image_path: Path):
+        super().__init__()
+        del image_path
+        self.setFixedSize(52, 52)
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        target = QRectF(self.rect()).adjusted(2, 2, -2, -2)
+        painter.setPen(QPen(QColor("#F4F4F5"), 3.0))
+        painter.setBrush(QColor("#050608"))
+        painter.drawRoundedRect(target, 11, 11)
+        logo_font = QFont("Georgia")
+        if not QFontDatabase.families() or "Georgia" not in QFontDatabase.families():
+            logo_font = QFont("Times New Roman")
+        logo_font.setPixelSize(16)
+        logo_font.setWeight(QFont.Weight.DemiBold)
+        painter.setFont(logo_font)
+        painter.setPen(QColor("#FFA314"))
+        painter.drawText(
+            target.adjusted(1, 1, -1, -1),
+            Qt.AlignmentFlag.AlignCenter,
+            "G7alt",
+        )
+
+
+class HeaderIconButton(QPushButton):
+    """Header control with a clear, font-independent symbol."""
+
+    def __init__(self, icon_key: str, tooltip: str):
+        super().__init__("")
+        self.icon_key = str(icon_key)
+        self.setObjectName("HeaderIconButton")
+        self.setFixedSize(42, 38)
+        self.setToolTip(tooltip)
+        self.setAccessibleName(tooltip)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+
+    def paintEvent(self, event) -> None:
+        super().paintEvent(event)
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        color = (
+            QColor("#090A0C")
+            if self.isChecked() or self.underMouse()
+            else QColor("#F4F4F5")
+        )
+        pen = QPen(color, 1.8)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        rect = QRectF(11, 9, 20, 20)
+
+        if self.icon_key in ("sidebar-left", "sidebar-right"):
+            painter.drawRoundedRect(rect, 2.5, 2.5)
+            divider_x = rect.left() + 6 if self.icon_key == "sidebar-left" else rect.right() - 6
+            painter.drawLine(
+                QPointF(divider_x, rect.top()),
+                QPointF(divider_x, rect.bottom()),
+            )
+            painter.setBrush(QBrush(color))
+            if self.icon_key == "sidebar-left":
+                painter.drawRoundedRect(
+                    QRectF(rect.left() + 2, rect.top() + 3, 2.5, rect.height() - 6),
+                    1,
+                    1,
+                )
+            else:
+                painter.drawRoundedRect(
+                    QRectF(rect.right() - 4.5, rect.top() + 3, 2.5, rect.height() - 6),
+                    1,
+                    1,
+                )
+        elif self.icon_key == "fullscreen":
+            length = 6.0
+            for x, y, sx, sy in (
+                (rect.left(), rect.top(), 1, 1),
+                (rect.right(), rect.top(), -1, 1),
+                (rect.left(), rect.bottom(), 1, -1),
+                (rect.right(), rect.bottom(), -1, -1),
+            ):
+                painter.drawLine(QPointF(x, y), QPointF(x + sx * length, y))
+                painter.drawLine(QPointF(x, y), QPointF(x, y + sy * length))
+        elif self.icon_key in ("previous", "next", "play"):
+            direction = -1 if self.icon_key == "previous" else 1
+            center_x = rect.center().x() + (1 if direction > 0 else -1)
+            points = [
+                QPointF(center_x - direction * 5, rect.top() + 3),
+                QPointF(center_x + direction * 6, rect.center().y()),
+                QPointF(center_x - direction * 5, rect.bottom() - 3),
+            ]
+            painter.setBrush(QBrush(color))
+            painter.drawPolygon(QPolygonF(points))
+            if self.icon_key in ("previous", "next"):
+                bar_x = center_x - direction * 8
+                painter.drawLine(
+                    QPointF(bar_x, rect.top() + 3),
+                    QPointF(bar_x, rect.bottom() - 3),
+                )
+        elif self.icon_key == "stop":
+            painter.setBrush(QBrush(color))
+            painter.drawRoundedRect(rect.adjusted(4, 4, -4, -4), 2, 2)
 
 
 class MenuComboBox(QComboBox):
@@ -1062,6 +1312,8 @@ class PianoWidget(QWidget):
         self.live_warning_notes: Set[int] = set()
         self.study_wrong_notes: Set[int] = set()
         self.study_student_notes: Set[int] = set()
+        self.study_held_notes: Set[int] = set()
+        self.study_student_opacity = 0.05
         self.live_warning_color = QColor(230, 70, 70, 180)
         self.sustain_opacity: float = 0.4  # 0.0–1.0
         self.interval_labels: Dict[int, str] = {}
@@ -1191,6 +1443,18 @@ class PianoWidget(QWidget):
         }
         self.update()
 
+    def set_study_student_opacity(self, opacity: float) -> None:
+        self.study_student_opacity = max(0.0, min(1.0, float(opacity)))
+        self.update()
+
+    def set_study_held_notes(self, notes: Set[int]) -> None:
+        self.study_held_notes = {
+            int(note)
+            for note in notes
+            if MIN_NOTE <= int(note) <= MAX_NOTE
+        }
+        self.update()
+
     def set_study_input_enabled(self, enabled: bool) -> None:
         self.study_input_enabled = bool(enabled)
         if not self.study_input_enabled and self._study_pointer_note is not None:
@@ -1226,6 +1490,11 @@ class PianoWidget(QWidget):
         self.show_keyboard_labels = bool(visible)
         self.update()
         self.update()
+
+    def _should_draw_interval_labels(self) -> bool:
+        return bool(self.interval_labels) and (
+            self.show_keyboard_labels or self.study_input_enabled
+        )
 
     def set_display_chord_notes(self, notes: Dict[int, QColor]):
         self.display_chord_notes = dict(notes)
@@ -1302,7 +1571,8 @@ class PianoWidget(QWidget):
         if note in self.study_wrong_notes:
             return QColor(230, 70, 70)
         if self._is_study_student_note(note):
-            return QColor(150, 156, 166, 96 if is_black_key else 76)
+            alpha = int(round(255.0 * self.study_student_opacity))
+            return QColor(150, 156, 166, alpha)
         if note in self.auxiliary_note_colors:
             return QColor(self.auxiliary_note_colors[note])
         if note in self.live_warning_notes:
@@ -1320,9 +1590,63 @@ class PianoWidget(QWidget):
         )
 
     def _study_student_overlay_color(self, is_black_key: bool) -> QColor:
+        alpha = int(round(255.0 * self.study_student_opacity))
         if is_black_key:
-            return QColor(225, 229, 235, 48)
-        return QColor(72, 82, 96, 32)
+            return QColor(225, 229, 235, alpha)
+        return QColor(72, 82, 96, alpha)
+
+    def _draw_study_hold_indicator(
+        self,
+        painter: QPainter,
+        key_rect: QRectF,
+    ) -> None:
+        available_width = max(4.0, key_rect.width() - 2.0)
+        marker_width = min(
+            available_width,
+            max(8.0, min(28.0, key_rect.width() * 0.72)),
+        )
+        marker_height = min(
+            max(4.0, key_rect.height() * 0.16),
+            max(7.0, min(16.0, marker_width * 0.56)),
+        )
+        top_margin = max(3.0, min(7.0, key_rect.height() * 0.04))
+        marker_rect = QRectF(
+            key_rect.center().x() - marker_width / 2.0,
+            key_rect.top() + top_margin,
+            marker_width,
+            marker_height,
+        )
+
+        painter.save()
+        painter.setPen(QPen(QColor(255, 255, 255, 58), 0.7))
+        painter.setBrush(QBrush(QColor(0, 0, 0, 184)))
+        painter.drawRoundedRect(
+            marker_rect,
+            marker_height / 2.0,
+            marker_height / 2.0,
+        )
+
+        arrow_pen = QPen(
+            QColor(Qt.GlobalColor.white),
+            max(1.0, min(2.0, marker_height * 0.13)),
+        )
+        arrow_pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        arrow_pen.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(arrow_pen)
+        y = marker_rect.center().y()
+        start_x = marker_rect.left() + marker_width * 0.25
+        tip_x = marker_rect.right() - marker_width * 0.22
+        head = max(1.5, marker_height * 0.22)
+        painter.drawLine(QPointF(start_x, y), QPointF(tip_x, y))
+        painter.drawLine(
+            QPointF(tip_x, y),
+            QPointF(tip_x - head, y - head),
+        )
+        painter.drawLine(
+            QPointF(tip_x, y),
+            QPointF(tip_x - head, y + head),
+        )
+        painter.restore()
 
     def _sustain_color_for(self, note: int, is_black_key: bool) -> QColor:
         """Color para notas sostenidas por pedal, algo más claro (mezclado con blanco)."""
@@ -1740,7 +2064,7 @@ class PianoWidget(QWidget):
                     painter.drawEllipse(center, radius, radius)
 
         # Etiquetas de intervalos para notas activas
-        if self.show_keyboard_labels and self.interval_labels:
+        if self._should_draw_interval_labels():
             settings = self.interval_label_settings or {}
             label_font = QFont(settings.get("font_family") or UI_FONT_FAMILY)
             label_font.setPointSize(self._interval_label_font_size(key_width, key_height, False))
@@ -1783,6 +2107,20 @@ class PianoWidget(QWidget):
                 self._draw_interval_frame(painter, label_zone)
                 painter.setPen(QPen(text_color))
                 painter.drawText(label_zone, Qt.AlignmentFlag.AlignHCenter | Qt.AlignmentFlag.AlignVCenter, label)
+
+        # En Guiado, una flecha indica las notas activas que continúan desde
+        # el paso anterior y no requieren un nuevo ataque.
+        for n in sorted(self.study_held_notes):
+            if n < self.start_note or n > self.end_note:
+                continue
+            idx = note_to_white_index[n]
+            if is_white(n):
+                x = x_offset + idx * key_width
+                key_rect = QRectF(x, y_offset, key_width, key_height)
+            else:
+                x = x_offset + idx * key_width + key_width - black_width / 2
+                key_rect = QRectF(x, y_offset, black_width, black_height)
+            self._draw_study_hold_indicator(painter, key_rect)
 
         self._draw_display_scale_label(painter)
 
@@ -2038,7 +2376,13 @@ class PianoWindow(QMainWindow):
             return
         self._combined_background = QColor(color)
         if self._combined_container is not None:
-            self._combined_container.setStyleSheet(f"background: {color.name()};")
+            current = self._combined_container.styleSheet()
+            rule = (
+                "QWidget#ModernWorkspaceRoot {"
+                f" background-color: {color.name()};"
+                " }"
+            )
+            self._combined_container.setStyleSheet(f"{current}\n{rule}")
 
     def show_combined_view(
         self,
@@ -2046,6 +2390,10 @@ class PianoWindow(QMainWindow):
         display_panel: Optional[QWidget],
         keyboard_nav_panel: Optional[QWidget] = None,
         fretboard_widget: Optional[QWidget] = None,
+        navigation_panel: Optional[QWidget] = None,
+        workspace_builder: Optional[
+            Callable[[QWidget, QStackedWidget, Optional[QWidget], Optional[QWidget]], QWidget]
+        ] = None,
     ) -> None:
         if fretboard_widget is not None:
             self.set_fretboard_widget(fretboard_widget)
@@ -2053,6 +2401,10 @@ class PianoWindow(QMainWindow):
             self.takeCentralWidget()
         self._release_instrument_stack()
         if self._combined_container is not None:
+            for widget in (display_panel, keyboard_nav_panel, navigation_panel):
+                if widget is not None:
+                    widget.setParent(None)
+            chord_widget.setParent(None)
             self._combined_container.setParent(None)
             self._combined_container.deleteLater()
             self._combined_container = None
@@ -2063,20 +2415,15 @@ class PianoWindow(QMainWindow):
                 current.setParent(None)
 
         container = QWidget()
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        container.setObjectName("ModernWorkspaceRoot")
+        root_layout = QHBoxLayout()
+        root_layout.setContentsMargins(0, 0, 0, 0)
+        root_layout.setSpacing(0)
 
-        if display_panel is not None:
-            layout.addWidget(display_panel)
-
-        top_layout = QHBoxLayout()
-        top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(0)
-
-        chord_widget.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-
-        top_layout.addWidget(chord_widget, stretch=1)
+        if navigation_panel is not None:
+            navigation_panel.setParent(container)
+            navigation_panel.setFixedWidth(90)
+            root_layout.addWidget(navigation_panel)
 
         self.piano.setMinimumHeight(180)
         if self.fretboard is not None:
@@ -2086,11 +2433,41 @@ class PianoWindow(QMainWindow):
         self.instrument_stack.addWidget(self.piano)
         if self.fretboard is not None:
             self.instrument_stack.addWidget(self.fretboard)
-        layout.addLayout(top_layout, stretch=2)
-        layout.addWidget(self.instrument_stack, stretch=3)
-        if keyboard_nav_panel is not None:
-            layout.addWidget(keyboard_nav_panel)
-        container.setLayout(layout)
+
+        if callable(workspace_builder):
+            workspace = workspace_builder(
+                chord_widget,
+                self.instrument_stack,
+                display_panel,
+                keyboard_nav_panel,
+            )
+        else:
+            workspace = QWidget(container)
+            workspace.setObjectName("ModernWorkspace")
+            workspace_layout = QVBoxLayout()
+            workspace_layout.setContentsMargins(14, 14, 14, 14)
+            workspace_layout.setSpacing(14)
+
+            stage = QWidget(workspace)
+            stage.setObjectName("MainStage")
+            stage_layout = QVBoxLayout()
+            stage_layout.setContentsMargins(14, 14, 14, 14)
+            stage_layout.setSpacing(0)
+            chord_widget.setSizePolicy(
+                QSizePolicy.Policy.Expanding,
+                QSizePolicy.Policy.Expanding,
+            )
+            stage_layout.addWidget(chord_widget)
+            stage.setLayout(stage_layout)
+            workspace_layout.addWidget(stage, stretch=5)
+            workspace_layout.addWidget(self.instrument_stack, stretch=3)
+            if keyboard_nav_panel is not None:
+                workspace_layout.addWidget(keyboard_nav_panel)
+            workspace.setLayout(workspace_layout)
+
+        workspace.setParent(container)
+        root_layout.addWidget(workspace, stretch=1)
+        container.setLayout(root_layout)
         self.setCentralWidget(container)
         self._combined_container = container
         self._install_drag_support(container)
@@ -2099,6 +2476,7 @@ class PianoWindow(QMainWindow):
 
         self.setWindowTitle("MIDI Piano — Vista única")
         self._apply_frameless(False)
+        self.setMinimumSize(760, 520)
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton and callable(self.on_double_click):
@@ -2384,9 +2762,12 @@ class FretboardWidget(QWidget):
         self.display_scale_notes: Dict[int, QColor] = {}
         self.active_note_colors: Dict[int, QColor] = {}
         self.display_interval_labels: Dict[int, str] = {}
+        self.study_fingering_labels: Dict[int, str] = {}
+        self.study_labels_only = False
         self.study_wrong_notes: Set[int] = set()
         self.display_root_pc: Optional[int] = None
         self.display_root_label = ""
+        self.marker_size_factor = 1.0
         self.embedded_mode = False
         self.current_position = self.MIN_POSITION
         self.display_assignment: List[Tuple[int, int, int, float, float, bool]] = []
@@ -2401,6 +2782,10 @@ class FretboardWidget(QWidget):
 
     def set_embedded_mode(self, enabled: bool) -> None:
         self.embedded_mode = bool(enabled)
+        self.update()
+
+    def set_marker_size_factor(self, factor: float) -> None:
+        self.marker_size_factor = max(0.6, min(1.6, float(factor)))
         self.update()
 
     @classmethod
@@ -2979,6 +3364,18 @@ class FretboardWidget(QWidget):
         self._refresh_assignment()
         self.update()
 
+    def set_study_fingering_labels(self, labels: Dict[int, str]) -> None:
+        self.study_fingering_labels = {
+            int(note): str(label).strip()
+            for note, label in (labels or {}).items()
+            if str(label).strip()
+        }
+        self.update()
+
+    def set_study_labels_only(self, enabled: bool) -> None:
+        self.study_labels_only = bool(enabled)
+        self.update()
+
     def _visual_notes(self) -> Set[int]:
         return (
             set(self.notes)
@@ -3054,6 +3451,11 @@ class FretboardWidget(QWidget):
         return self._display_accidentals(DETECT_NOTE_NAMES[pitch_class])
 
     def _marker_label(self, note: int) -> str:
+        fingering = self.study_fingering_labels.get(note)
+        if fingering:
+            return self._display_accidentals(fingering)
+        if self.study_labels_only:
+            return ""
         if note in self.notes:
             return self._note_label(note)
         interval_label = self.display_interval_labels.get(note)
@@ -3128,11 +3530,27 @@ class FretboardWidget(QWidget):
         return font
 
     def _embedded_map_point(self, x: float, y: float) -> QPointF:
-        x_scale = max(1.0, float(self.width())) / self.IMAGE_WIDTH
-        y_scale = max(1.0, float(self.height())) / self.EMBEDDED_SOURCE_HEIGHT
+        target = self._embedded_target_rect()
+        scale = target.width() / self.IMAGE_WIDTH
         return QPointF(
-            float(x) * x_scale,
-            (float(y) - self.EMBEDDED_SOURCE_TOP) * y_scale,
+            target.left() + float(x) * scale,
+            target.top() + (float(y) - self.EMBEDDED_SOURCE_TOP) * scale,
+        )
+
+    def _embedded_target_rect(self) -> QRectF:
+        available_width = max(1.0, float(self.width()))
+        available_height = max(1.0, float(self.height()))
+        scale = min(
+            available_width / self.IMAGE_WIDTH,
+            available_height / self.EMBEDDED_SOURCE_HEIGHT,
+        )
+        drawn_width = self.IMAGE_WIDTH * scale
+        drawn_height = self.EMBEDDED_SOURCE_HEIGHT * scale
+        return QRectF(
+            (available_width - drawn_width) / 2.0,
+            (available_height - drawn_height) / 2.0,
+            drawn_width,
+            drawn_height,
         )
 
     def _embedded_map_rect(self, rect: QRectF) -> QRectF:
@@ -3149,14 +3567,14 @@ class FretboardWidget(QWidget):
             abs(second - first)
             for first, second in zip(string_positions, string_positions[1:])
         )
-        return max(6.0, minimum_spacing / 2.0)
+        return max(6.0, minimum_spacing / 2.0) * self.marker_size_factor
 
     @staticmethod
     def _marker_radius_for_note(_note: int, string_radius: float) -> float:
         return float(string_radius)
 
     def _paint_embedded_fretboard(self, painter: QPainter) -> None:
-        target_rect = QRectF(self.rect())
+        target_rect = self._embedded_target_rect()
         source_rect = QRectF(
             0.0,
             self.EMBEDDED_SOURCE_TOP,
@@ -4176,6 +4594,7 @@ class ControlWindow(ResponsiveWidthWidget):
         self.active_notes: Set[int] = set()
         self.sustained_notes: Set[int] = set()
         self._held_note_sources: Dict[int, Set[Tuple[int, int]]] = {}
+        self._sustained_note_sources: Dict[int, Set[Tuple[int, int]]] = {}
         self._sustain_sources: Set[Tuple[int, int]] = set()
         self.note_activation_order: List[int] = []
         self.sustain_on: bool = False
@@ -4192,6 +4611,12 @@ class ControlWindow(ResponsiveWidthWidget):
         self.chord_text_color = QColor(Qt.GlobalColor.white)
         self.chord_bg_color = QColor(0, 0, 0)
         self.single_window_bg_color = QColor(0, 0, 0)
+        self.app_skin_key = "classic"
+        self.ipad_instrument_scale_percent = 100
+        self.study_student_opacity_percent = 5
+        self.piano.set_study_student_opacity(0.05)
+        self.ipad_focus_mode_enabled = False
+        self.live_midi_thru_enabled = False
         self.interval_label_settings = self._default_interval_label_settings()
         self.custom_chord_spellings: Dict[Tuple[int, ...], Dict[int, str]] = {}
         self.custom_chord_quality_spellings: Dict[str, Dict[int, Dict[str, object]]] = {}
@@ -4260,6 +4685,7 @@ class ControlWindow(ResponsiveWidthWidget):
         self.study_wrong_notes: Set[int] = set()
         self.study_guided_attacked: Set[int] = set()
         self._study_guided_carryover_sources: Set[str] = set()
+        self._study_guided_carryover_notes: Set[int] = set()
         self.study_xml_staff_colors = {
             1: QColor(0, 122, 255, 150),
             2: QColor(52, 199, 89, 150),
@@ -4278,12 +4704,27 @@ class ControlWindow(ResponsiveWidthWidget):
         self._study_playback_started_at = 0.0
         self._study_playback_run = 0
         self._study_playback_voices: Dict[Tuple[int, int], List[str]] = {}
+        self._study_playback_fingering_voices: Dict[
+            Tuple[int, int], List[str]
+        ] = {}
         self._study_playback_counts: Dict[int, int] = {}
         self._study_playback_color_voices: Dict[int, List[QColor]] = {}
         self._study_playback_note_colors: Dict[int, QColor] = {}
         self._study_virtual_notes: Set[int] = set()
         self._study_midi_output_error_shown = False
         self._study_shutdown_done = False
+        self.midi_in = None
+        self.midi_inputs: List[object] = []
+        self.midi_outputs: List[object] = []
+        self.midi_input_names_available: List[str] = []
+        self.midi_input_names_connected: List[str] = []
+        self.midi_output_names_available: List[str] = []
+        self.midi_output_names_connected: List[str] = []
+        self.midi_input_errors: Dict[str, str] = {}
+        self.midi_output_errors: Dict[str, str] = {}
+        self._midi_route_mode: Optional[str] = None
+        self._midi_route_transition = False
+        self._all_inputs_value = "__all_midi_inputs__"
         self.study_playback_timer = QTimer(self)
         self.study_playback_timer.setTimerType(Qt.TimerType.PreciseTimer)
         self.study_playback_timer.setInterval(5)
@@ -4300,7 +4741,18 @@ class ControlWindow(ResponsiveWidthWidget):
 
         # Widgets
         self.input_combo = MenuComboBox()
-        self.refresh_button = QPushButton("Actualizar dispositivos")
+        self.refresh_button = QPushButton("Actualizar MIDI IN/OUT")
+        self.input_status_label = QLabel("MIDI IN: sin conexión")
+        self.input_status_label.setWordWrap(True)
+        self.input_status_label.setObjectName("MidiDeviceStatus")
+        self.output_status_label = QLabel("MIDI OUT: sin conexión")
+        self.output_status_label.setWordWrap(True)
+        self.output_status_label.setObjectName("MidiDeviceStatus")
+        self.midi_policy_label = QLabel(
+            "OUT se usa solo al reproducir ejercicios en Ritmo original."
+        )
+        self.midi_policy_label.setWordWrap(True)
+        self.midi_policy_label.setObjectName("SecondaryText")
 
         self.start_combo = MenuComboBox()
         self.octaves_spin = QSpinBox()
@@ -4377,6 +4829,9 @@ class ControlWindow(ResponsiveWidthWidget):
         row1.addWidget(self.input_combo)
         row1.addWidget(self.refresh_button)
         midi_layout.addLayout(row1)
+        midi_layout.addWidget(self.input_status_label)
+        midi_layout.addWidget(self.output_status_label)
+        midi_layout.addWidget(self.midi_policy_label)
 
         # Fila 2: rango por octavas
         row2 = QHBoxLayout()
@@ -4464,6 +4919,7 @@ class ControlWindow(ResponsiveWidthWidget):
 
         self._setup_window_menu()
         self.display_panel_widget = self._build_display_panel()
+        self.single_navigation_rail = self._build_single_window_navigation_rail()
         self.keyboard_nav_panel = self._build_keyboard_navigation_panel()
         self._set_instrument_view("piano", persist=False, show_status=False)
 
@@ -4499,13 +4955,8 @@ class ControlWindow(ResponsiveWidthWidget):
         self.setLayout(top_layout)
 
         # MIDI
-        self.midi_in = None
-        self.midi_inputs: List[object] = []
-        self.midi_outputs: List[object] = []
-        self._all_inputs_value = "__all_midi_inputs__"
-
         # Conexiones (con validación de handlers para evitar fallos por métodos faltantes)
-        self._connect_signal_handler(self.refresh_button.clicked, "refresh_inputs", self.refresh_button, "Actualizar entradas MIDI")
+        self._connect_signal_handler(self.refresh_button.clicked, "refresh_inputs", self.refresh_button, "Actualizar MIDI IN/OUT")
         self._connect_signal_handler(self.input_combo.currentIndexChanged, "change_input", self.input_combo, "Entrada MIDI")
         self._connect_signal_handler(self.start_combo.currentIndexChanged, "range_changed", self.start_combo, "Nota inicial")
         self._connect_signal_handler(self.octaves_spin.valueChanged, "range_changed", self.octaves_spin, "Número de octavas")
@@ -4662,7 +5113,7 @@ class ControlWindow(ResponsiveWidthWidget):
         self._last_status_message = str(text)
         self._status_message_timer.start(max(250, int(timeout_ms)))
         self._update_status_strip()
-        if self.piano_window.isVisible():
+        if self.piano_window.isVisible() and self.view_mode != "single":
             self._show_status_toast(str(text))
         window = self.window()
         status_bar = None
@@ -5015,18 +5466,21 @@ class ControlWindow(ResponsiveWidthWidget):
             self.set_view_mode("single", persist=False)
             self.display_panel_widget.hide()
             self.keyboard_nav_panel.hide()
+            self.single_navigation_rail.hide()
             self.menu_bar.hide()
             self.piano_window.showFullScreen()
             self._show_status_message("Modo presentación activado.")
             return
 
-        self.menu_bar.show()
         self.display_panel_widget.show()
+        self.single_navigation_rail.show()
         self.keyboard_nav_panel.setVisible(self.instrument_view == "piano")
         if self._presentation_previous_mode == "separate":
             self.set_view_mode("separate", persist=False)
-        elif not self._presentation_previous_fullscreen:
-            self.piano_window.showNormal()
+        else:
+            self.menu_bar.hide()
+            if not self._presentation_previous_fullscreen:
+                self.piano_window.showNormal()
         self._show_status_message("Modo presentación desactivado.")
 
     def _window_is_visible(self, window: QMainWindow) -> bool:
@@ -5139,6 +5593,10 @@ class ControlWindow(ResponsiveWidthWidget):
             return
 
         if mode == "single":
+            self.menu_bar.hide()
+            toast = getattr(self, "_status_toast", None)
+            if isinstance(toast, QLabel):
+                toast.hide()
             chord_widget = self._take_window_widget(self.chord_window) or self.chord_window.display_widget
             self.piano_window.piano.set_force_full_width(True)
             self.piano_window.show_combined_view(
@@ -5146,6 +5604,8 @@ class ControlWindow(ResponsiveWidthWidget):
                 self.display_panel_widget,
                 self.keyboard_nav_panel,
                 self.fretboard_widget,
+                self.single_navigation_rail,
+                self._build_ipad_workspace,
             )
             self.piano_window.set_combined_background_color(self.single_window_bg_color)
             self.piano_window.set_instrument_view(self.instrument_view)
@@ -5155,11 +5615,13 @@ class ControlWindow(ResponsiveWidthWidget):
             self.chord_window.hide()
             self._bring_to_front(self.piano_window)
         else:
+            self.menu_bar.show()
             self.piano_window.piano.set_force_full_width(False)
             self._restore_window_widget(self.chord_window, self.chord_window.display_widget)
             self.piano_window._remove_drag_support(self.chord_window.display_widget)
             self.display_panel_widget.setParent(None)
             self.keyboard_nav_panel.setParent(None)
+            self.single_navigation_rail.setParent(None)
             self.piano_window.show_keyboard_only()
             self.piano_window.set_instrument_view(self.instrument_view)
             self.staff_window.hide()
@@ -5180,6 +5642,58 @@ class ControlWindow(ResponsiveWidthWidget):
         if mode != "single":
             self._fit_keyboard_window_to_available_width()
         self._update_window_actions()
+        if persist:
+            self._write_preferences(False)
+
+    def _current_skin_palette(self) -> Dict[str, str]:
+        return dict(
+            IPAD_SKIN_PALETTES.get(
+                str(getattr(self, "app_skin_key", "classic")),
+                IPAD_SKIN_PALETTES["classic"],
+            )
+        )
+
+    def _theme_workspace_style(self, stylesheet: str) -> str:
+        palette = self._current_skin_palette()
+        replacements = {
+            "#090A0C": palette["canvas"],
+            "#0E0F11": palette["sidebar"],
+            "#16171B": palette["surface"],
+            "#1D1F24": palette["raised"],
+            "#050608": palette["hero"],
+            "#FFA314": palette["accent"],
+        }
+        themed = str(stylesheet)
+        for source, target in replacements.items():
+            themed = themed.replace(source, target)
+        return themed
+
+    def _update_navigation_palette(self) -> None:
+        palette = self._current_skin_palette()
+        for button in getattr(self, "single_nav_buttons", {}).values():
+            if not isinstance(button, NavigationRailButton):
+                continue
+            button.setProperty("navAccent", palette["accent"])
+            button.setProperty("navCanvas", palette["canvas"])
+            button.setProperty("navRaised", palette["raised"])
+            button.update()
+
+    def _apply_app_skin(
+        self,
+        skin_key: str,
+        *,
+        persist: bool = True,
+        refresh_styles: bool = True,
+    ) -> None:
+        normalized = str(skin_key or "").strip().lower()
+        if normalized not in IPAD_SKIN_PALETTES:
+            normalized = "classic"
+        self.app_skin_key = normalized
+        self._update_navigation_palette()
+        self._sync_ipad_skin_buttons()
+        self._refresh_ipad_study_step_strip()
+        if refresh_styles and self.view_mode == "single":
+            self._apply_single_view_styles(True)
         if persist:
             self._write_preferences(False)
 
@@ -5258,7 +5772,8 @@ class ControlWindow(ResponsiveWidthWidget):
                 "}"
                 "QWidget#DisplayPanel {"
                 "  background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #201a14, stop:0.55 #12100d, stop:1 #050505);"
-                "  border-bottom: 1px solid rgba(255, 255, 255, 40);"
+                "  border: 1px solid rgba(255, 255, 255, 42);"
+                "  border-radius: 12px;"
                 "}"
                 "QStackedWidget#DisplayPanelStack {"
                 "  background-color: transparent;"
@@ -5403,6 +5918,48 @@ class ControlWindow(ResponsiveWidthWidget):
                 "  padding: 4px 7px;"
                 "}"
             )
+            workspace_style = (
+                "QWidget#ModernWorkspaceRoot { background-color: #050505; }"
+                "QWidget#ModernWorkspace {"
+                "  background-color: qlineargradient(x1:0, y1:0, x2:1, y2:1,"
+                "  stop:0 #17130f, stop:0.55 #0b0a08, stop:1 #000000);"
+                "}"
+                "QWidget#NavigationRail {"
+                "  background-color: #11100f;"
+                "  border-right: 1px solid #2f2b26;"
+                "}"
+                "QLabel#NavBrand {"
+                "  color: #1d1d1f;"
+                "  background-color: #f09a00;"
+                "  border-radius: 14px;"
+                "  font-size: 14px;"
+                "  font-weight: 800;"
+                "}"
+                "QPushButton#NavRailButton {"
+                "  color: #d8d2c9;"
+                "  background-color: #201d19;"
+                "  border: 1px solid #37322c;"
+                "  border-radius: 8px;"
+                "  padding: 4px 3px;"
+                "  font-size: 11px;"
+                "  font-weight: 700;"
+                "}"
+                "QPushButton#NavRailButton:hover {"
+                "  color: #ffffff;"
+                "  background-color: #46331b;"
+                "  border-color: #f09a00;"
+                "}"
+                "QPushButton#NavRailButton:checked {"
+                "  color: #1d1d1f;"
+                "  background-color: #f09a00;"
+                "  border-color: #f09a00;"
+                "}"
+                "QWidget#MainStage {"
+                "  background-color: rgba(255, 255, 255, 18);"
+                "  border: 1px solid rgba(255, 255, 255, 42);"
+                "  border-radius: 12px;"
+                "}"
+            )
             menu_panel_style = (
                 "QWidget {"
                 "  font-family: 'Avenir Next', 'Helvetica Neue', Arial, sans-serif;"
@@ -5477,10 +6034,285 @@ class ControlWindow(ResponsiveWidthWidget):
                 "  padding: 4px 7px;"
                 "}"
             )
+            workspace_style = (
+                "QWidget {"
+                f"  font-family: {UI_FONT_STACK};"
+                "  color: #F4F4F5;"
+                "  letter-spacing: 0;"
+                "}"
+                "QWidget#ModernWorkspaceRoot, QWidget#ModernWorkspace,"
+                "QWidget#IPadPage, QStackedWidget#IPadWorkspaceStack {"
+                "  background-color: #090A0C;"
+                "}"
+                "QWidget#NavigationRail {"
+                "  background-color: #0E0F11;"
+                "  border-right: 1px solid rgba(255, 255, 255, 23);"
+                "}"
+                "QLabel#NavBrand {"
+                "  color: #FFA314;"
+                "  background-color: #050608;"
+                "  border: 3px solid #F4F4F5;"
+                "  border-radius: 10px;"
+                "  font-size: 10px;"
+                "  font-weight: 800;"
+                "}"
+                "QPushButton#NavRailButton {"
+                "  color: rgba(255, 255, 255, 160);"
+                "  background-color: transparent;"
+                "  border: none;"
+                "  border-radius: 11px;"
+                "  padding: 3px 1px;"
+                "  min-height: 48px;"
+                "  max-height: 48px;"
+                "  font-size: 8px;"
+                "  font-weight: 650;"
+                "}"
+                "QPushButton#NavRailButton:hover {"
+                "  color: #FFFFFF;"
+                "  background-color: #1D1F24;"
+                "}"
+                "QPushButton#NavRailButton:checked {"
+                "  color: #090A0C;"
+                "  background-color: #FFA314;"
+                "}"
+                "QWidget#IPadHeader { background: transparent; min-height: 56px; }"
+                "QLabel#EyebrowLabel {"
+                "  color: #FFA314;"
+                "  font-size: 9px;"
+                "  font-weight: 800;"
+                "}"
+                "QLabel#ScreenTitle {"
+                "  color: #F4F4F5;"
+                "  font-size: 17px;"
+                "  font-weight: 650;"
+                "}"
+                "QPushButton#HeaderIconButton {"
+                "  color: #F4F4F5;"
+                "  background-color: #1D1F24;"
+                "  border: none;"
+                "  border-radius: 11px;"
+                "  font-size: 16px;"
+                "  font-weight: 700;"
+                "}"
+                "QPushButton#HeaderIconButton:hover {"
+                "  color: #090A0C;"
+                "  background-color: #FFA314;"
+                "}"
+                "QPushButton#MidiStatusPill {"
+                "  color: #40D697;"
+                "  background-color: rgba(64, 214, 151, 28);"
+                "  border: none;"
+                "  border-radius: 17px;"
+                "  padding: 7px 13px;"
+                "  font-size: 12px;"
+                "  font-weight: 700;"
+                "}"
+                "QWidget#InstrumentSelector {"
+                "  background-color: #1D1F24;"
+                "  border-radius: 12px;"
+                "}"
+                "QPushButton#InstrumentSegmentButton {"
+                "  color: #F4F4F5;"
+                "  background: transparent;"
+                "  border: none;"
+                "  border-radius: 9px;"
+                "  padding: 5px 10px;"
+                "  font-size: 12px;"
+                "  font-weight: 700;"
+                "}"
+                "QPushButton#InstrumentSegmentButton:checked {"
+                "  color: #090A0C;"
+                "  background-color: #FFA314;"
+                "}"
+                "QWidget#VisualCard, QWidget#StudySummaryCard,"
+                "QWidget#SearchCard, QWidget#CreditsCard, QWidget#SettingsCard {"
+                "  background-color: #16171B;"
+                "  border: 1px solid rgba(255, 255, 255, 23);"
+                "  border-radius: 17px;"
+                "}"
+                "QWidget#HeroSurface {"
+                "  background-color: #050608;"
+                "  border: 1px solid rgba(255, 255, 255, 25);"
+                "  border-radius: 15px;"
+                "}"
+                "QWidget#ChordWidgetHost, QWidget#InstrumentHost,"
+                "QWidget#InlineSelectorRow {"
+                "  background: transparent;"
+                "  border: none;"
+                "}"
+                "QLabel#HeroCaption {"
+                "  color: rgba(255, 255, 255, 155);"
+                "  font-size: 8px;"
+                "  font-weight: 800;"
+                "}"
+                "QWidget#InspectorHost { background: transparent; }"
+                "QWidget#DisplayPanel {"
+                "  background-color: #16171B;"
+                "  border: 1px solid rgba(255, 255, 255, 23);"
+                "  border-radius: 17px;"
+                "}"
+                "QWidget#PanelPage, QStackedWidget#DisplayPanelStack,"
+                "QScrollArea#PanelPageScroll,"
+                "QScrollArea#PanelPageScroll > QWidget > QWidget {"
+                "  background: transparent;"
+                "  border: none;"
+                "}"
+                "QLabel#PanelTitle {"
+                "  color: #F4F4F5;"
+                "  font-size: 17px;"
+                "  font-weight: 700;"
+                "}"
+                "QLabel#InspectorIcon { color: #FFA314; font-size: 17px; }"
+                "QLabel#SecondaryText, QLabel#StudySummary {"
+                "  color: rgba(255, 255, 255, 150);"
+                "  font-size: 11px;"
+                "}"
+                "QLabel#CardTitle { color: #F4F4F5; font-size: 14px; font-weight: 700; }"
+                "QLabel#AccentPill {"
+                "  color: #090A0C;"
+                "  background-color: #FFA314;"
+                "  border-radius: 14px;"
+                "  padding: 7px 11px;"
+                "  font-size: 11px;"
+                "  font-weight: 700;"
+                "}"
+                "QScrollArea#StudyStepStrip {"
+                "  background-color: #16171B;"
+                "  border: 1px solid rgba(255, 255, 255, 23);"
+                "  border-radius: 14px;"
+                "}"
+                "QScrollArea#StudyStepStrip > QWidget > QWidget {"
+                "  background: transparent;"
+                "}"
+                "QPushButton, QToolButton, QComboBox, QSpinBox, QLineEdit {"
+                "  color: #F4F4F5;"
+                "  background-color: #1D1F24;"
+                "  border: none;"
+                "  border-radius: 10px;"
+                "  padding: 6px 10px;"
+                "  min-height: 24px;"
+                "}"
+                "QPushButton:hover, QToolButton:hover, QComboBox:hover,"
+                "QSpinBox:hover, QLineEdit:hover {"
+                "  background-color: #292C32;"
+                "}"
+                "QPushButton#AccentButton, QPushButton#PrimaryButton {"
+                "  color: #090A0C;"
+                "  background-color: #FFA314;"
+                "  font-weight: 700;"
+                "}"
+                "QToolButton#FlatAccentButton {"
+                "  color: #FFA314;"
+                "  background: transparent;"
+                "  font-weight: 700;"
+                "}"
+                "QPushButton#RecordButton {"
+                "  color: #FFFFFF;"
+                "  background-color: #FF575C;"
+                "  font-weight: 700;"
+                "}"
+                "QPushButton#StopButton { background-color: rgba(255, 87, 92, 65); }"
+                "QCheckBox { color: #F4F4F5; spacing: 7px; }"
+                "QCheckBox::indicator {"
+                "  width: 18px; height: 18px; border-radius: 9px;"
+                "  background-color: #555961; border: none;"
+                "}"
+                "QCheckBox::indicator:checked { background-color: #FFA314; }"
+                "QComboBox QAbstractItemView {"
+                "  color: #F4F4F5;"
+                "  background-color: #1D1F24;"
+                "  selection-color: #090A0C;"
+                "  selection-background-color: #FFA314;"
+                "  border: 1px solid rgba(255, 255, 255, 30);"
+                "}"
+                "QSlider::groove:horizontal {"
+                "  height: 4px;"
+                "  background-color: #383B42;"
+                "  border-radius: 2px;"
+                "}"
+                "QSlider::sub-page:horizontal {"
+                "  background-color: #FFA314;"
+                "  border-radius: 2px;"
+                "}"
+                "QSlider::handle:horizontal {"
+                "  width: 15px;"
+                "  margin: -6px 0;"
+                "  background-color: #F4F4F5;"
+                "  border-radius: 8px;"
+                "}"
+                "QWidget#KeyboardNavigationPanel { background: transparent; }"
+                "QWidget#SearchCard QLineEdit { background: transparent; padding: 0; }"
+                "QScrollArea#DictionaryScroll, QScrollArea#SettingsScroll,"
+                "QScrollArea#DictionaryScroll > QWidget > QWidget,"
+                "QScrollArea#SettingsScroll > QWidget > QWidget {"
+                "  background: transparent;"
+                "  border: none;"
+                "}"
+                "QScrollBar:vertical {"
+                "  background: transparent;"
+                "  width: 8px;"
+                "  margin: 2px;"
+                "}"
+                "QScrollBar::handle:vertical {"
+                "  background: rgba(255, 255, 255, 70);"
+                "  border-radius: 4px;"
+                "  min-height: 28px;"
+                "}"
+                "QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {"
+                "  height: 0px;"
+                "}"
+                "QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {"
+                "  background: transparent;"
+                "}"
+                "QWidget#DictionaryRows {"
+                "  background-color: #16171B;"
+                "  border: 1px solid rgba(255, 255, 255, 23);"
+                "  border-radius: 17px;"
+                "}"
+                "QWidget#DictionaryRow {"
+                "  background: transparent;"
+                "  border-bottom: 1px solid rgba(255, 255, 255, 28);"
+                "}"
+                "QLabel#DictionarySymbol { color: #F4F4F5; font-size: 15px; font-weight: 750; }"
+                "QLabel#DictionaryIntervals {"
+                "  color: rgba(255, 255, 255, 185);"
+                "  font-size: 14px;"
+                "  font-weight: 550;"
+                "}"
+                "QLabel#LearnedBadge {"
+                "  color: #A980FF;"
+                "  background-color: rgba(169, 128, 255, 35);"
+                "  border-radius: 10px;"
+                "  padding: 4px 8px;"
+                "}"
+                "QLabel#SettingsCardTitle { color: #FFA314; font-size: 14px; font-weight: 750; }"
+                "QWidget#CardDivider { background-color: rgba(255, 255, 255, 30); }"
+                "QLabel#SuccessText { color: #40D697; font-weight: 650; }"
+                "QLabel#CreditsLogo {"
+                "  color: #FFA314;"
+                "  background-color: #050608;"
+                "  border: 10px solid #F4F4F5;"
+                "  border-radius: 30px;"
+                "  font-size: 32px;"
+                "  font-weight: 700;"
+                "}"
+                "QLabel#CreditsTitle { color: #F4F4F5; font-size: 32px; font-weight: 650; }"
+                "QToolTip {"
+                "  color: #F4F4F5;"
+                "  background-color: #1D1F24;"
+                "  border: 1px solid #FFA314;"
+                "  padding: 5px 8px;"
+                "}"
+            )
+            workspace_style = self._theme_workspace_style(workspace_style)
+            control_style = workspace_style
             menu_style = menu_style.replace(
                 "'Avenir Next', 'Helvetica Neue', Arial, sans-serif", UI_FONT_STACK
             )
             control_style = control_style.replace(
+                "'Avenir Next', 'Helvetica Neue', Arial, sans-serif", UI_FONT_STACK
+            )
+            workspace_style = workspace_style.replace(
                 "'Avenir Next', 'Helvetica Neue', Arial, sans-serif", UI_FONT_STACK
             )
             menu_panel_style = menu_panel_style.replace(
@@ -5490,13 +6322,24 @@ class ControlWindow(ResponsiveWidthWidget):
             self.setStyleSheet(menu_panel_style)
             self.display_panel_widget.setStyleSheet(control_style)
             self.keyboard_nav_panel.setStyleSheet(control_style)
+            self.single_navigation_rail.setStyleSheet(workspace_style)
+            combined_container = getattr(self.piano_window, "_combined_container", None)
+            if isinstance(combined_container, QWidget):
+                combined_container.setStyleSheet(workspace_style)
             for widget in self._menu_panel_widgets:
                 widget.setStyleSheet(menu_panel_style)
+            self._update_navigation_palette()
         else:
             self.menu_bar.setStyleSheet("")
             self.setStyleSheet("")
             self.display_panel_widget.setStyleSheet("")
             self.keyboard_nav_panel.setStyleSheet("")
+            self.single_navigation_rail.setStyleSheet("")
+            combined_container = getattr(self.piano_window, "_combined_container", None)
+            if isinstance(combined_container, QWidget):
+                combined_container.setStyleSheet(
+                    f"background: {self.single_window_bg_color.name()}; border: none;"
+                )
             for widget in self._menu_panel_widgets:
                 widget.setStyleSheet("")
 
@@ -5606,12 +6449,1511 @@ class ControlWindow(ResponsiveWidthWidget):
         container.setLayout(layout)
         return container
 
+    def _build_single_window_navigation_rail(self) -> QWidget:
+        panel = QWidget()
+        panel.setObjectName("NavigationRail")
+        panel.setFixedWidth(90)
+
+        layout = QVBoxLayout()
+        layout.setContentsMargins(6, 10, 6, 10)
+        layout.setSpacing(5)
+
+        brand = BrandIconWidget(
+            Path(__file__).resolve().parent / "assets" / "brand-icon.png"
+        )
+        brand.setObjectName("NavBrandImage")
+        layout.addWidget(brand, alignment=Qt.AlignmentFlag.AlignHCenter)
+        layout.addSpacing(6)
+
+        self.single_nav_buttons: Dict[str, QPushButton] = {}
+        nav_items = (
+            ("live", "Tocar", "live", self._open_live_workspace),
+            ("chords", "Acordes", "chords", self._open_chords_workspace),
+            ("scales", "Escalas", "scales", self._open_scales_workspace),
+            ("study", "Estudio", "study", self._open_study_workspace),
+            ("dictionary", "Diccionario", "dictionary", self._open_dictionary_workspace),
+            ("settings", "Ajustes", "settings", self._open_settings_workspace),
+            ("credits", "Créditos", "credits", self._open_credits_workspace),
+        )
+        for key, label, icon_key, callback in nav_items:
+            button = NavigationRailButton(label, icon_key)
+            button.setToolTip(label)
+            button.clicked.connect(
+                lambda _checked=False, handler=callback: handler()
+            )
+            self.single_nav_buttons[key] = button
+            layout.addWidget(button)
+
+        layout.addStretch()
+        panel.setLayout(layout)
+        self._update_navigation_palette()
+        self._set_single_navigation_mode("live")
+        return panel
+
+    def _set_single_navigation_mode(self, mode: str) -> None:
+        self._single_navigation_mode = str(mode)
+        for key, button in getattr(self, "single_nav_buttons", {}).items():
+            button.blockSignals(True)
+            button.setChecked(key == mode)
+            button.blockSignals(False)
+
+    def _open_live_workspace(self) -> None:
+        self.display_chord_checkbox.setChecked(False)
+        self.display_scale_checkbox.setChecked(False)
+        self._set_display_panel_section(0)
+        self._set_single_navigation_mode("live")
+        self._show_ipad_destination("live")
+        self._update_display_overlays()
+
+    def _open_chords_workspace(self) -> None:
+        self._set_display_panel_section(0)
+        self._set_single_navigation_mode("chords")
+        self.display_chord_checkbox.setChecked(True)
+        self.display_scale_checkbox.setChecked(False)
+        self._show_ipad_destination("chords")
+        self._update_display_overlays()
+
+    def _open_scales_workspace(self) -> None:
+        self._set_display_panel_section(1)
+        self._set_single_navigation_mode("scales")
+        self.display_scale_checkbox.setChecked(True)
+        self.display_chord_checkbox.setChecked(False)
+        self._show_ipad_destination("scales")
+        self._update_display_overlays()
+
+    def _open_study_workspace(self) -> None:
+        self._set_display_panel_section(2)
+        self._set_single_navigation_mode("study")
+        self._show_ipad_destination("study")
+
+    def _open_dictionary_workspace(self) -> None:
+        self._set_single_navigation_mode("dictionary")
+        self._show_ipad_destination("dictionary")
+        self._refresh_ipad_dictionary()
+
+    def _open_settings_workspace(self) -> None:
+        self._set_single_navigation_mode("settings")
+        self._show_ipad_destination("settings")
+        self._sync_ipad_settings_controls()
+
+    def _open_credits_workspace(self) -> None:
+        self._set_single_navigation_mode("credits")
+        self._show_ipad_destination("credits")
+
+    def _build_ipad_workspace(
+        self,
+        chord_widget: QWidget,
+        instrument_stack: QStackedWidget,
+        display_panel: Optional[QWidget],
+        keyboard_nav_panel: Optional[QWidget],
+    ) -> QWidget:
+        workspace = QWidget()
+        workspace.setObjectName("ModernWorkspace")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+
+        self._ipad_chord_widget = chord_widget
+        self._ipad_instrument_stack = instrument_stack
+        self._ipad_display_panel = display_panel
+        self._ipad_keyboard_nav = keyboard_nav_panel
+        self.instrument_view_buttons = []
+
+        self.ipad_workspace_stack = QStackedWidget(workspace)
+        self.ipad_workspace_stack.setObjectName("IPadWorkspaceStack")
+        self.ipad_workspace_pages = {
+            "play": self._build_ipad_play_page(),
+            "study": self._build_ipad_study_page(),
+            "dictionary": self._build_ipad_dictionary_page(),
+            "settings": self._build_ipad_settings_page(),
+            "credits": self._build_ipad_credits_page(),
+        }
+        for page in self.ipad_workspace_pages.values():
+            self.ipad_workspace_stack.addWidget(page)
+        layout.addWidget(self.ipad_workspace_stack)
+        workspace.setLayout(layout)
+
+        destination = getattr(self, "_single_navigation_mode", "live")
+        self._show_ipad_destination(destination)
+        self._sync_ipad_settings_controls()
+        return workspace
+
+    def _build_ipad_header(
+        self,
+        eyebrow: str,
+        title: str,
+        *,
+        play_header: bool = False,
+        study_header: bool = False,
+    ) -> QWidget:
+        header = QWidget()
+        header.setObjectName("IPadHeader")
+        layout = QHBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+
+        title_box = QVBoxLayout()
+        title_box.setSpacing(2)
+        eyebrow_label = QLabel(eyebrow)
+        eyebrow_label.setObjectName("EyebrowLabel")
+        title_label = QLabel(title)
+        title_label.setObjectName("ScreenTitle")
+        title_box.addWidget(eyebrow_label)
+        title_box.addWidget(title_label)
+        layout.addLayout(title_box)
+        layout.addStretch()
+
+        if play_header:
+            self.ipad_play_eyebrow_label = eyebrow_label
+            self.ipad_play_title_label = title_label
+            self.ipad_header_instrument_selector = self._build_ipad_instrument_selector()
+            self.ipad_header_instrument_selector.setFixedWidth(216)
+            layout.addWidget(self.ipad_header_instrument_selector)
+
+        if play_header or study_header:
+            sidebar_button = self._ipad_header_button(
+                "sidebar-left",
+                "Mostrar u ocultar navegación",
+            )
+            sidebar_button.clicked.connect(self._toggle_ipad_navigation)
+            layout.addWidget(sidebar_button)
+
+        if play_header or study_header:
+            inspector_button = self._ipad_header_button(
+                "sidebar-right",
+                "Mostrar u ocultar inspector",
+            )
+            inspector_button.clicked.connect(self._toggle_ipad_inspector)
+            layout.addWidget(inspector_button)
+            if play_header:
+                self.ipad_play_inspector_button = inspector_button
+
+        if play_header or study_header:
+            focus_button = self._ipad_header_button(
+                "fullscreen",
+                "Entrar o salir de pantalla completa",
+            )
+            focus_button.clicked.connect(self._toggle_single_fullscreen_from_double_click)
+            layout.addWidget(focus_button)
+
+        midi_button = QPushButton(self._ipad_midi_status_text())
+        midi_button.setObjectName("MidiStatusPill")
+        midi_button.setToolTip("Estado de MIDI IN y MIDI OUT")
+        midi_button.clicked.connect(lambda: self._show_controls_tab("MIDI"))
+        status_buttons = getattr(self, "ipad_midi_status_buttons", [])
+        status_buttons.append(midi_button)
+        self.ipad_midi_status_buttons = status_buttons
+        layout.addWidget(midi_button)
+        header.setLayout(layout)
+        return header
+
+    def _ipad_header_button(self, icon_key: str, tooltip: str) -> QPushButton:
+        return HeaderIconButton(icon_key, tooltip)
+
+    def _ipad_midi_status_text(self) -> str:
+        input_count = len(getattr(self, "midi_inputs", []))
+        output_count = len(getattr(self, "midi_outputs", []))
+        if self._desired_midi_route() == "output":
+            return f"●  IN off · {output_count} OUT"
+        return f"●  {input_count} IN · OUT off"
+
+    def _build_ipad_instrument_selector(self) -> QWidget:
+        selector = QWidget()
+        selector.setObjectName("InstrumentSelector")
+        layout = QHBoxLayout()
+        layout.setContentsMargins(3, 3, 3, 3)
+        layout.setSpacing(3)
+        for mode, text in (("piano", "Piano"), ("guitar", "Guitarra")):
+            button = self._build_instrument_view_button(text, mode)
+            button.setMinimumHeight(38)
+            self.instrument_view_buttons.append((mode, button))
+            layout.addWidget(button)
+        selector.setLayout(layout)
+        return selector
+
+    def _build_visual_card(self, parent: QWidget) -> Tuple[QWidget, QVBoxLayout]:
+        card = QWidget(parent)
+        card.setObjectName("VisualCard")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+
+        hero = QWidget(card)
+        hero.setObjectName("HeroSurface")
+        hero_layout = QVBoxLayout()
+        hero_layout.setContentsMargins(10, 8, 10, 10)
+        hero_layout.setSpacing(2)
+        caption = QLabel("●  CIFRADO EN VIVO")
+        caption.setObjectName("HeroCaption")
+        hero_layout.addWidget(caption)
+        chord_host = QWidget(hero)
+        chord_host.setObjectName("ChordWidgetHost")
+        chord_layout = QVBoxLayout()
+        chord_layout.setContentsMargins(0, 0, 0, 0)
+        chord_layout.setSpacing(0)
+        chord_host.setLayout(chord_layout)
+        hero_layout.addWidget(chord_host, stretch=1)
+        hero.setLayout(hero_layout)
+        layout.addWidget(hero, stretch=6)
+
+        card.setLayout(layout)
+        return card, chord_layout
+
+    def _build_ipad_play_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("IPadPage")
+        page_layout = QVBoxLayout()
+        page_layout.setContentsMargins(14, 12, 12, 10)
+        page_layout.setSpacing(10)
+        page_layout.addWidget(
+            self._build_ipad_header(
+                "MIDI piano/guitarra",
+                "Tocar en vivo",
+                play_header=True,
+            )
+        )
+
+        content = QWidget(page)
+        content_layout = QHBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(10)
+
+        left = QWidget(content)
+        left_layout = QVBoxLayout()
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(8)
+
+        card, self.ipad_play_chord_layout = self._build_visual_card(left)
+        card_layout = card.layout()
+        self.ipad_inline_instrument_selector = self._build_ipad_instrument_selector()
+        self.ipad_inline_instrument_selector.setFixedWidth(216)
+        selector_row = QWidget(card)
+        selector_row.setObjectName("InlineSelectorRow")
+        selector_layout = QHBoxLayout()
+        selector_layout.setContentsMargins(0, 0, 0, 0)
+        selector_layout.addWidget(self.ipad_inline_instrument_selector)
+        selector_layout.addStretch()
+        selector_row.setLayout(selector_layout)
+        card_layout.addWidget(selector_row)
+        self.ipad_play_instrument_host = QWidget(card)
+        self.ipad_play_instrument_host.setObjectName("InstrumentHost")
+        self.ipad_play_instrument_layout = QVBoxLayout()
+        self.ipad_play_instrument_layout.setContentsMargins(0, 0, 0, 0)
+        self.ipad_play_instrument_layout.setSpacing(0)
+        self.ipad_play_instrument_host.setLayout(self.ipad_play_instrument_layout)
+        card_layout.addWidget(self.ipad_play_instrument_host, stretch=3)
+        left_layout.addWidget(card, stretch=1)
+
+        self.ipad_play_nav_host = QWidget(left)
+        self.ipad_play_nav_layout = QVBoxLayout()
+        self.ipad_play_nav_layout.setContentsMargins(0, 0, 0, 0)
+        self.ipad_play_nav_layout.setSpacing(0)
+        self.ipad_play_nav_host.setLayout(self.ipad_play_nav_layout)
+        left_layout.addWidget(self.ipad_play_nav_host)
+        left.setLayout(left_layout)
+        content_layout.addWidget(left, stretch=7)
+
+        self.ipad_play_inspector_host = QWidget(content)
+        self.ipad_play_inspector_host.setObjectName("InspectorHost")
+        self.ipad_play_inspector_host.setMinimumWidth(244)
+        self.ipad_play_inspector_host.setMaximumWidth(330)
+        self.ipad_play_inspector_layout = QVBoxLayout()
+        self.ipad_play_inspector_layout.setContentsMargins(0, 0, 0, 0)
+        self.ipad_play_inspector_layout.setSpacing(0)
+        self.ipad_play_inspector_host.setLayout(self.ipad_play_inspector_layout)
+        content_layout.addWidget(self.ipad_play_inspector_host, stretch=3)
+
+        content.setLayout(content_layout)
+        page_layout.addWidget(content, stretch=1)
+        page.setLayout(page_layout)
+        return page
+
+    def _build_ipad_study_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("IPadPage")
+        page_layout = QVBoxLayout()
+        page_layout.setContentsMargins(14, 12, 12, 10)
+        page_layout.setSpacing(10)
+        page_layout.addWidget(
+            self._build_ipad_header(
+                "PRÁCTICA",
+                "Estudio MIDI",
+                study_header=True,
+            )
+        )
+
+        content = QWidget(page)
+        content_layout = QHBoxLayout()
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(10)
+
+        left = QWidget(content)
+        left_layout = QVBoxLayout()
+        left_layout.setContentsMargins(0, 0, 0, 0)
+        left_layout.setSpacing(9)
+
+        summary = QWidget(left)
+        summary.setObjectName("StudySummaryCard")
+        summary_layout = QHBoxLayout()
+        summary_layout.setContentsMargins(12, 9, 12, 9)
+        summary_text = QVBoxLayout()
+        summary_text.setSpacing(2)
+        self.ipad_study_name_label = QLabel("Sin ejercicio")
+        self.ipad_study_name_label.setObjectName("CardTitle")
+        self.ipad_study_summary_text = QLabel("0 notas · 0 pasos · 00:00")
+        self.ipad_study_summary_text.setObjectName("SecondaryText")
+        summary_text.addWidget(self.ipad_study_name_label)
+        summary_text.addWidget(self.ipad_study_summary_text)
+        summary_layout.addLayout(summary_text)
+        summary_layout.addStretch()
+        self.ipad_study_step_pill = QLabel("⚑  Paso 0 de 0")
+        self.ipad_study_step_pill.setObjectName("AccentPill")
+        summary_layout.addWidget(self.ipad_study_step_pill)
+        summary.setLayout(summary_layout)
+        left_layout.addWidget(summary)
+
+        self.ipad_study_step_strip = QScrollArea(left)
+        self.ipad_study_step_strip.setObjectName("StudyStepStrip")
+        self.ipad_study_step_strip.setWidgetResizable(True)
+        self.ipad_study_step_strip.setVerticalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.ipad_study_step_strip.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded
+        )
+        self.ipad_study_step_strip.setFixedHeight(64)
+        self.ipad_study_step_content = QWidget()
+        self.ipad_study_step_layout = QHBoxLayout()
+        self.ipad_study_step_layout.setContentsMargins(10, 7, 10, 7)
+        self.ipad_study_step_layout.setSpacing(9)
+        self.ipad_study_step_layout.setSizeConstraint(
+            QLayout.SizeConstraint.SetMinimumSize
+        )
+        self.ipad_study_step_content.setLayout(self.ipad_study_step_layout)
+        self.ipad_study_step_strip.setWidget(self.ipad_study_step_content)
+        left_layout.addWidget(self.ipad_study_step_strip)
+
+        card, self.ipad_study_chord_layout = self._build_visual_card(left)
+        card_layout = card.layout()
+
+        toolbar = QWidget(card)
+        toolbar_layout = QHBoxLayout()
+        toolbar_layout.setContentsMargins(0, 0, 0, 0)
+        toolbar_layout.setSpacing(8)
+        selector = self._build_ipad_instrument_selector()
+        selector.setFixedWidth(216)
+        toolbar_layout.addWidget(selector)
+        toolbar_layout.addStretch()
+        previous_button = self._ipad_header_button("previous", "Paso anterior")
+        previous_button.clicked.connect(lambda: self._study_move_step(-1))
+        play_button = self._ipad_header_button("play", "Reproducir o pausar")
+        play_button.clicked.connect(self._study_start_playback)
+        stop_button = self._ipad_header_button("stop", "Detener")
+        stop_button.setObjectName("StopButton")
+        stop_button.clicked.connect(self._study_stop_all)
+        next_button = self._ipad_header_button("next", "Paso siguiente")
+        next_button.clicked.connect(lambda: self._study_move_step(1))
+        for button in (previous_button, play_button, stop_button, next_button):
+            toolbar_layout.addWidget(button)
+        toolbar.setLayout(toolbar_layout)
+        card_layout.addWidget(toolbar)
+
+        self.ipad_study_nav_host = QWidget(card)
+        self.ipad_study_nav_layout = QVBoxLayout()
+        self.ipad_study_nav_layout.setContentsMargins(0, 0, 0, 0)
+        self.ipad_study_nav_host.setLayout(self.ipad_study_nav_layout)
+        card_layout.addWidget(self.ipad_study_nav_host)
+
+        self.ipad_study_instrument_host = QWidget(card)
+        self.ipad_study_instrument_host.setObjectName("InstrumentHost")
+        self.ipad_study_instrument_layout = QVBoxLayout()
+        self.ipad_study_instrument_layout.setContentsMargins(0, 0, 0, 0)
+        self.ipad_study_instrument_host.setLayout(self.ipad_study_instrument_layout)
+        card_layout.addWidget(self.ipad_study_instrument_host, stretch=3)
+        left_layout.addWidget(card, stretch=1)
+        left.setLayout(left_layout)
+        content_layout.addWidget(left, stretch=7)
+
+        self.ipad_study_inspector_host = QWidget(content)
+        self.ipad_study_inspector_host.setObjectName("InspectorHost")
+        self.ipad_study_inspector_host.setMinimumWidth(244)
+        self.ipad_study_inspector_host.setMaximumWidth(330)
+        self.ipad_study_inspector_layout = QVBoxLayout()
+        self.ipad_study_inspector_layout.setContentsMargins(0, 0, 0, 0)
+        self.ipad_study_inspector_host.setLayout(self.ipad_study_inspector_layout)
+        content_layout.addWidget(self.ipad_study_inspector_host, stretch=3)
+
+        content.setLayout(content_layout)
+        page_layout.addWidget(content, stretch=1)
+        page.setLayout(page_layout)
+        return page
+
+    def _build_ipad_dictionary_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("IPadPage")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(14, 12, 12, 12)
+        layout.setSpacing(10)
+
+        header = self._build_ipad_header("ARMONÍA", "Diccionario")
+        header_layout = header.layout()
+        learn_button = QPushButton("≋  MIDI Learn")
+        learn_button.setObjectName("AccentButton")
+        learn_button.clicked.connect(self.start_learning_mode)
+        header_layout.insertWidget(header_layout.count() - 1, learn_button)
+        layout.addWidget(header)
+
+        search_card = QWidget(page)
+        search_card.setObjectName("SearchCard")
+        search_layout = QHBoxLayout()
+        search_layout.setContentsMargins(12, 5, 8, 5)
+        search_layout.setSpacing(8)
+        search_layout.addWidget(QLabel("⌕"))
+        self.ipad_dictionary_search = QLineEdit()
+        self.ipad_dictionary_search.setPlaceholderText("Buscar cifrado o intervalos")
+        self.ipad_dictionary_search.setObjectName("DictionarySearch")
+        self.ipad_dictionary_search.textChanged.connect(
+            self._filter_ipad_dictionary
+        )
+        search_layout.addWidget(self.ipad_dictionary_search, stretch=1)
+        import_export = QToolButton()
+        import_export.setObjectName("FlatAccentButton")
+        import_export.setText("⇅  Importar / Exportar")
+        import_export.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        menu = QMenu(import_export)
+        load_action = menu.addAction("Cargar diccionario")
+        load_action.triggered.connect(self.load_chord_dictionary_from_dialog)
+        export_action = menu.addAction("Exportar diccionario completo")
+        export_action.triggered.connect(self.export_chord_dictionary)
+        import_export.setMenu(menu)
+        search_layout.addWidget(import_export)
+        search_card.setLayout(search_layout)
+        layout.addWidget(search_card)
+
+        self.ipad_dictionary_rows_container = QWidget()
+        self.ipad_dictionary_rows_container.setObjectName("DictionaryRows")
+        self.ipad_dictionary_rows_layout = QVBoxLayout()
+        self.ipad_dictionary_rows_layout.setContentsMargins(0, 0, 0, 0)
+        self.ipad_dictionary_rows_layout.setSpacing(0)
+        self.ipad_dictionary_rows_container.setLayout(
+            self.ipad_dictionary_rows_layout
+        )
+        scroll = QScrollArea(page)
+        scroll.setObjectName("DictionaryScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(self.ipad_dictionary_rows_container)
+        layout.addWidget(scroll, stretch=1)
+        page.setLayout(layout)
+        return page
+
+    def _refresh_ipad_dictionary(self) -> None:
+        rows_layout = getattr(self, "ipad_dictionary_rows_layout", None)
+        if not isinstance(rows_layout, QVBoxLayout):
+            return
+        while rows_layout.count():
+            item = rows_layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        self.ipad_dictionary_rows = []
+        for pattern in CHORD_PATTERNS:
+            name = str(pattern.get("nombre") or "")
+            required = [int(value) % 12 for value in pattern.get("obligatorias", [])]
+            present = set(required)
+            labels = [
+                interval_label_for_context(interval, present, name) or str(interval)
+                for interval in required
+            ]
+            row = QWidget(self.ipad_dictionary_rows_container)
+            row.setObjectName("DictionaryRow")
+            row.setProperty("searchText", f"C{name} {' '.join(labels)}".lower())
+            row_layout = QHBoxLayout()
+            row_layout.setContentsMargins(12, 8, 12, 8)
+            row_layout.setSpacing(14)
+            symbol = QLabel(f"C{name}")
+            symbol.setObjectName("DictionarySymbol")
+            symbol.setFixedWidth(120)
+            intervals = QLabel(" · ".join(labels))
+            intervals.setObjectName("DictionaryIntervals")
+            row_layout.addWidget(symbol)
+            row_layout.addWidget(intervals)
+            row_layout.addStretch()
+            if pattern.get("is_custom"):
+                badge = QLabel("Aprendido")
+                badge.setObjectName("LearnedBadge")
+                row_layout.addWidget(badge)
+            row.setLayout(row_layout)
+            rows_layout.addWidget(row)
+            self.ipad_dictionary_rows.append(row)
+        rows_layout.addStretch()
+        self._filter_ipad_dictionary(
+            getattr(self, "ipad_dictionary_search", QLineEdit()).text()
+        )
+
+    def _filter_ipad_dictionary(self, query: str) -> None:
+        normalized = str(query or "").strip().lower()
+        for row in getattr(self, "ipad_dictionary_rows", []):
+            row.setVisible(
+                not normalized
+                or normalized in str(row.property("searchText") or "")
+            )
+
+    def _ipad_settings_card(self, title: str) -> Tuple[QWidget, QVBoxLayout]:
+        card = QWidget()
+        card.setObjectName("SettingsCard")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(9)
+        label = QLabel(title)
+        label.setObjectName("SettingsCardTitle")
+        layout.addWidget(label)
+        divider = QWidget(card)
+        divider.setObjectName("CardDivider")
+        divider.setFixedHeight(1)
+        layout.addWidget(divider)
+        card.setLayout(layout)
+        return card, layout
+
+    def _build_ipad_settings_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("IPadPage")
+        page_layout = QVBoxLayout()
+        page_layout.setContentsMargins(14, 12, 12, 12)
+        page_layout.setSpacing(10)
+        page_layout.addWidget(self._build_ipad_header("PREFERENCIAS", "Ajustes"))
+
+        content = QWidget()
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setHorizontalSpacing(10)
+        grid.setVerticalSpacing(10)
+
+        midi_card, midi_layout = self._ipad_settings_card("⌁  MIDI")
+        self.ipad_settings_midi_inputs = QLabel("Entradas: sin conexión")
+        self.ipad_settings_midi_inputs.setWordWrap(True)
+        self.ipad_settings_midi_inputs.setObjectName("SecondaryText")
+        self.ipad_settings_midi_output = QLabel("Salida MIDI: sin conexión")
+        self.ipad_settings_midi_output.setWordWrap(True)
+        self.ipad_settings_midi_output.setObjectName("SecondaryText")
+        self.ipad_settings_midi_thru_checkbox = None
+        self.ipad_settings_midi_status = QLabel(
+            "La salida se usa solo al reproducir ejercicios"
+        )
+        self.ipad_settings_midi_status.setObjectName("SecondaryText")
+        midi_layout.addWidget(self.ipad_settings_midi_inputs)
+        midi_layout.addWidget(self.ipad_settings_midi_output)
+        midi_layout.addWidget(self.ipad_settings_midi_status)
+        open_midi = QPushButton("Abrir Centro MIDI")
+        open_midi.clicked.connect(lambda: self._show_controls_tab("MIDI"))
+        refresh_midi = QPushButton("Actualizar dispositivos")
+        refresh_midi.clicked.connect(self.refresh_inputs)
+        midi_layout.addWidget(open_midi)
+        midi_layout.addWidget(refresh_midi)
+        grid.addWidget(midi_card, 0, 0)
+
+        instrument_card, instrument_layout = self._ipad_settings_card(
+            "▥  Instrumento"
+        )
+        self.ipad_settings_start_combo = QComboBox()
+        for index in range(self.start_combo.count()):
+            self.ipad_settings_start_combo.addItem(
+                self.start_combo.itemText(index),
+                self.start_combo.itemData(index),
+            )
+        self.ipad_settings_start_combo.currentIndexChanged.connect(
+            self._ipad_settings_start_changed
+        )
+        self.ipad_settings_octaves_spin = QSpinBox()
+        self.ipad_settings_octaves_spin.setRange(1, 7)
+        self.ipad_settings_octaves_spin.valueChanged.connect(
+            self._ipad_settings_octaves_changed
+        )
+        self.ipad_settings_labels_checkbox = QCheckBox("Etiquetas del teclado")
+        self.ipad_settings_labels_checkbox.toggled.connect(
+            self._toggle_keyboard_labels
+        )
+        instrument_layout.addWidget(QLabel("Nota inicial"))
+        instrument_layout.addWidget(self.ipad_settings_start_combo)
+        instrument_layout.addWidget(QLabel("Octavas"))
+        instrument_layout.addWidget(self.ipad_settings_octaves_spin)
+        instrument_layout.addWidget(self.ipad_settings_labels_checkbox)
+        grid.addWidget(instrument_card, 0, 1)
+
+        appearance_card, appearance_layout = self._ipad_settings_card(
+            "◉  Apariencia"
+        )
+        appearance_layout.addWidget(QLabel("Skin de la app"))
+        self.ipad_settings_skin_combo = QComboBox()
+        for skin_key, palette in IPAD_SKIN_PALETTES.items():
+            self.ipad_settings_skin_combo.addItem(palette["name"], skin_key)
+        self.ipad_settings_skin_combo.currentIndexChanged.connect(
+            self._ipad_settings_skin_combo_changed
+        )
+        appearance_layout.addWidget(self.ipad_settings_skin_combo)
+        skin_row = QHBoxLayout()
+        skin_row.setSpacing(6)
+        self.ipad_skin_buttons: Dict[str, QPushButton] = {}
+        for skin_key, palette in IPAD_SKIN_PALETTES.items():
+            button = QPushButton(palette["name"])
+            button.setObjectName("ThemeChoiceButton")
+            button.setCheckable(True)
+            button.setMinimumHeight(54)
+            button.clicked.connect(
+                lambda _checked=False, key=skin_key: self._apply_app_skin(key)
+            )
+            self.ipad_skin_buttons[skin_key] = button
+            skin_row.addWidget(button)
+        appearance_layout.addLayout(skin_row)
+        skin_help = QLabel(
+            "La skin cambia fondos, paneles, superficies y acento. "
+            "El teclado conserva su apariencia original."
+        )
+        skin_help.setWordWrap(True)
+        skin_help.setObjectName("SecondaryText")
+        appearance_layout.addWidget(skin_help)
+        note_color = QPushButton("Color base de notas")
+        note_color.clicked.connect(self.choose_color)
+        chord_color = QPushButton("Color del cifrado")
+        chord_color.clicked.connect(self.choose_chord_color)
+        chord_size_row = QHBoxLayout()
+        chord_size_row.addWidget(QLabel("Tamaño del cifrado"))
+        self.ipad_settings_chord_size_spin = QSpinBox()
+        self.ipad_settings_chord_size_spin.setRange(10, 160)
+        self.ipad_settings_chord_size_spin.valueChanged.connect(
+            self._ipad_settings_chord_size_changed
+        )
+        chord_size_row.addStretch()
+        chord_size_row.addWidget(self.ipad_settings_chord_size_spin)
+        appearance_layout.addWidget(note_color)
+        appearance_layout.addWidget(chord_color)
+        appearance_layout.addLayout(chord_size_row)
+        grid.addWidget(appearance_card, 0, 2)
+
+        size_card, size_layout = self._ipad_settings_card("▣  Tamaños")
+        instrument_scale_row = QHBoxLayout()
+        instrument_scale_row.addWidget(QLabel("Escala del instrumento"))
+        self.ipad_settings_instrument_scale_value = QLabel("100%")
+        self.ipad_settings_instrument_scale_value.setObjectName("SecondaryText")
+        instrument_scale_row.addStretch()
+        instrument_scale_row.addWidget(self.ipad_settings_instrument_scale_value)
+        self.ipad_settings_instrument_scale_slider = QSlider(
+            Qt.Orientation.Horizontal
+        )
+        self.ipad_settings_instrument_scale_slider.setRange(80, 120)
+        self.ipad_settings_instrument_scale_slider.valueChanged.connect(
+            self._ipad_settings_instrument_scale_changed
+        )
+        label_scale_row = QHBoxLayout()
+        label_scale_row.addWidget(QLabel("Tamaño de etiquetas"))
+        self.ipad_settings_label_scale_value = QLabel("100%")
+        self.ipad_settings_label_scale_value.setObjectName("SecondaryText")
+        label_scale_row.addStretch()
+        label_scale_row.addWidget(self.ipad_settings_label_scale_value)
+        self.ipad_settings_label_scale_slider = QSlider(Qt.Orientation.Horizontal)
+        self.ipad_settings_label_scale_slider.setRange(75, 200)
+        self.ipad_settings_label_scale_slider.valueChanged.connect(
+            self._ipad_settings_label_scale_changed
+        )
+        circle_row = QHBoxLayout()
+        circle_row.addWidget(QLabel("Marcadores del diapasón"))
+        self.ipad_settings_circle_value = QLabel("100%")
+        self.ipad_settings_circle_value.setObjectName("SecondaryText")
+        circle_row.addStretch()
+        circle_row.addWidget(self.ipad_settings_circle_value)
+        self.ipad_settings_circle_slider = QSlider(Qt.Orientation.Horizontal)
+        self.ipad_settings_circle_slider.setRange(60, 200)
+        self.ipad_settings_circle_slider.valueChanged.connect(
+            self._ipad_settings_circle_size_changed
+        )
+        size_layout.addLayout(instrument_scale_row)
+        size_layout.addWidget(self.ipad_settings_instrument_scale_slider)
+        size_layout.addLayout(label_scale_row)
+        size_layout.addWidget(self.ipad_settings_label_scale_slider)
+        size_layout.addLayout(circle_row)
+        size_layout.addWidget(self.ipad_settings_circle_slider)
+        grid.addWidget(size_card, 1, 0)
+
+        interval_card, interval_layout = self._ipad_settings_card("⑧  Intervalos")
+        interval_layout.addWidget(QLabel("Posición en teclas blancas"))
+        self.ipad_settings_white_position_combo = QComboBox()
+        self.ipad_settings_white_position_combo.addItem("Inferior", "bottom25")
+        self.ipad_settings_white_position_combo.addItem("Centro", "center")
+        self.ipad_settings_white_position_combo.currentIndexChanged.connect(
+            lambda _index: self._ipad_settings_interval_position_changed(False)
+        )
+        interval_layout.addWidget(self.ipad_settings_white_position_combo)
+        interval_layout.addWidget(QLabel("Posición en teclas negras"))
+        self.ipad_settings_black_position_combo = QComboBox()
+        self.ipad_settings_black_position_combo.addItem("Inferior", "bottom25")
+        self.ipad_settings_black_position_combo.addItem("Centro", "center")
+        self.ipad_settings_black_position_combo.currentIndexChanged.connect(
+            lambda _index: self._ipad_settings_interval_position_changed(True)
+        )
+        interval_layout.addWidget(self.ipad_settings_black_position_combo)
+        opacity_row = QHBoxLayout()
+        opacity_row.addWidget(QLabel("Opacidad del marco"))
+        self.ipad_settings_frame_opacity_value = QLabel("88%")
+        self.ipad_settings_frame_opacity_value.setObjectName("SecondaryText")
+        opacity_row.addStretch()
+        opacity_row.addWidget(self.ipad_settings_frame_opacity_value)
+        self.ipad_settings_frame_opacity_slider = QSlider(
+            Qt.Orientation.Horizontal
+        )
+        self.ipad_settings_frame_opacity_slider.setRange(20, 100)
+        self.ipad_settings_frame_opacity_slider.valueChanged.connect(
+            self._ipad_settings_frame_opacity_changed
+        )
+        interval_layout.addLayout(opacity_row)
+        interval_layout.addWidget(self.ipad_settings_frame_opacity_slider)
+        grid.addWidget(interval_card, 1, 1)
+
+        scales_card, scales_layout = self._ipad_settings_card("⠿  Escalas")
+        reset_scale_roles = QPushButton("Restaurar categorías de color")
+        reset_scale_roles.clicked.connect(self._reset_scale_role_overrides)
+        scales_layout.addWidget(reset_scale_roles)
+        scales_card.setSizePolicy(
+            QSizePolicy.Policy.Preferred,
+            QSizePolicy.Policy.Maximum,
+        )
+        grid.addWidget(
+            scales_card,
+            1,
+            2,
+            alignment=Qt.AlignmentFlag.AlignTop,
+        )
+
+        experience_card, experience_layout = self._ipad_settings_card(
+            "▯  Experiencia"
+        )
+        self.ipad_settings_presentation_checkbox = QCheckBox("Modo presentación")
+        self.ipad_settings_presentation_checkbox.toggled.connect(
+            self._toggle_presentation_mode
+        )
+        shortcuts = QPushButton("Atajos de teclado")
+        shortcuts.clicked.connect(self._open_shortcuts_dialog)
+        self.ipad_settings_focus_checkbox = QCheckBox(
+            "Modo de enfoque: ocultar navegación"
+        )
+        self.ipad_settings_focus_checkbox.toggled.connect(
+            self._ipad_settings_focus_changed
+        )
+        experience_layout.addWidget(self.ipad_settings_presentation_checkbox)
+        experience_layout.addWidget(shortcuts)
+        experience_layout.addWidget(self.ipad_settings_focus_checkbox)
+        grid.addWidget(experience_card, 2, 0)
+
+        config_card, config_layout = self._ipad_settings_card("▱  Configuración")
+        saved = QLabel("✓  Los cambios se guardan automáticamente")
+        saved.setObjectName("SuccessText")
+        reset_visual = QPushButton("Restaurar valores visuales")
+        reset_visual.clicked.connect(self._reset_ipad_visual_preferences)
+        advanced = QPushButton("Opciones avanzadas")
+        advanced.clicked.connect(lambda: self._show_controls_tab("Apariencia"))
+        save_default = QPushButton("Guardar apariencia como predeterminada")
+        save_default.clicked.connect(self.save_default_appearance)
+        config_layout.addWidget(saved)
+        config_layout.addWidget(reset_visual)
+        config_layout.addWidget(advanced)
+        config_layout.addWidget(save_default)
+        grid.addWidget(config_card, 2, 1)
+
+        study_card, study_layout = self._ipad_settings_card("▷  Estudio")
+        student_opacity_row = QHBoxLayout()
+        student_opacity_row.addWidget(QLabel("Opacidad de notas tocadas"))
+        self.ipad_settings_student_opacity_value = QLabel("5%")
+        self.ipad_settings_student_opacity_value.setObjectName("SecondaryText")
+        student_opacity_row.addStretch()
+        student_opacity_row.addWidget(self.ipad_settings_student_opacity_value)
+        self.ipad_settings_student_opacity_slider = QSlider(
+            Qt.Orientation.Horizontal
+        )
+        self.ipad_settings_student_opacity_slider.setRange(0, 100)
+        self.ipad_settings_student_opacity_slider.valueChanged.connect(
+            self._ipad_settings_student_opacity_changed
+        )
+        study_layout.addLayout(student_opacity_row)
+        study_layout.addWidget(self.ipad_settings_student_opacity_slider)
+        grid.addWidget(study_card, 2, 2)
+
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
+        content.setLayout(grid)
+
+        scroll = QScrollArea(page)
+        scroll.setObjectName("SettingsScroll")
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setWidget(content)
+        page_layout.addWidget(scroll, stretch=1)
+        page.setLayout(page_layout)
+        return page
+
+    def _build_ipad_credits_page(self) -> QWidget:
+        page = QWidget()
+        page.setObjectName("IPadPage")
+        layout = QVBoxLayout()
+        layout.setContentsMargins(14, 12, 12, 12)
+        layout.setSpacing(12)
+        layout.addWidget(self._build_ipad_header("ACERCA DE", "Créditos"))
+
+        hero = QWidget(page)
+        hero.setObjectName("CreditsCard")
+        hero_layout = QHBoxLayout()
+        hero_layout.setContentsMargins(24, 24, 24, 24)
+        hero_layout.setSpacing(22)
+        logo = QLabel("G7alt")
+        logo.setObjectName("CreditsLogo")
+        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        logo.setFixedSize(148, 148)
+        hero_layout.addWidget(logo)
+        text = QVBoxLayout()
+        text.setSpacing(8)
+        name = QLabel("MIDI piano/guitarra")
+        name.setObjectName("CreditsTitle")
+        text.addWidget(name)
+        for caption, value in (
+            ("AUTOR, CONCEPTO Y DIRECCIÓN MUSICAL", "Jaime Jaramillo Arias"),
+            ("SELLO", "Jaramillo Music Lab"),
+            ("PLATAFORMA", "macOS · Windows · MIDI"),
+            ("VERSIÓN", "1.0"),
+        ):
+            caption_label = QLabel(caption)
+            caption_label.setObjectName("EyebrowLabel")
+            value_label = QLabel(value)
+            value_label.setObjectName("CardTitle")
+            text.addWidget(caption_label)
+            text.addWidget(value_label)
+        website = QPushButton("◉  jaramillomusiclab.com")
+        website.clicked.connect(
+            lambda: __import__("webbrowser").open("https://jaramillomusiclab.com")
+        )
+        text.addWidget(website)
+        text.addStretch()
+        hero_layout.addLayout(text, stretch=1)
+        hero.setLayout(hero_layout)
+        layout.addWidget(hero)
+
+        footer = QWidget(page)
+        footer.setObjectName("CreditsCard")
+        footer_layout = QVBoxLayout()
+        footer_layout.setContentsMargins(18, 16, 18, 16)
+        description = QLabel(
+            "Una herramienta creada para estudiar, visualizar y comprender "
+            "armonía directamente desde el instrumento."
+        )
+        description.setObjectName("CardTitle")
+        copyright_label = QLabel(
+            "© 2026 Jaime Jaramillo Arias. Todos los derechos reservados."
+        )
+        copyright_label.setObjectName("SecondaryText")
+        footer_layout.addWidget(description)
+        footer_layout.addWidget(copyright_label)
+        footer.setLayout(footer_layout)
+        layout.addWidget(footer)
+        layout.addStretch()
+        page.setLayout(layout)
+        return page
+
+    def _move_ipad_widget(self, widget: Optional[QWidget], layout: QVBoxLayout) -> None:
+        if widget is None:
+            return
+        host = layout.parentWidget()
+        if host is None:
+            return
+        widget.setParent(host)
+        layout.addWidget(widget)
+        widget.show()
+
+    def _show_ipad_destination(self, destination: str) -> None:
+        stack = getattr(self, "ipad_workspace_stack", None)
+        pages = getattr(self, "ipad_workspace_pages", {})
+        if not isinstance(stack, QStackedWidget) or not pages:
+            return
+
+        if destination in ("live", "chords", "scales"):
+            stack.setCurrentWidget(pages["play"])
+            self._move_ipad_widget(
+                getattr(self, "_ipad_chord_widget", None),
+                self.ipad_play_chord_layout,
+            )
+            self._move_ipad_widget(
+                getattr(self, "_ipad_instrument_stack", None),
+                self.ipad_play_instrument_layout,
+            )
+            self._move_ipad_widget(
+                getattr(self, "_ipad_keyboard_nav", None),
+                self.ipad_play_nav_layout,
+            )
+            inspector = destination != "live"
+            self.ipad_play_inspector_host.setVisible(inspector)
+            self.ipad_inline_instrument_selector.setVisible(inspector)
+            self.ipad_header_instrument_selector.setVisible(not inspector)
+            self.ipad_play_inspector_button.setVisible(inspector)
+            if inspector:
+                self._move_ipad_widget(
+                    getattr(self, "_ipad_display_panel", None),
+                    self.ipad_play_inspector_layout,
+                )
+            self.ipad_play_title_label.setText(
+                {
+                    "live": "Tocar en vivo",
+                    "chords": "Tocar · Acordes",
+                    "scales": "Tocar · Escalas",
+                }[destination]
+            )
+        elif destination == "study":
+            stack.setCurrentWidget(pages["study"])
+            self._move_ipad_widget(
+                getattr(self, "_ipad_chord_widget", None),
+                self.ipad_study_chord_layout,
+            )
+            self._move_ipad_widget(
+                getattr(self, "_ipad_instrument_stack", None),
+                self.ipad_study_instrument_layout,
+            )
+            self._move_ipad_widget(
+                getattr(self, "_ipad_keyboard_nav", None),
+                self.ipad_study_nav_layout,
+            )
+            self._move_ipad_widget(
+                getattr(self, "_ipad_display_panel", None),
+                self.ipad_study_inspector_layout,
+            )
+            self._sync_ipad_study_summary()
+        elif destination in pages:
+            stack.setCurrentWidget(pages[destination])
+
+        self._set_single_navigation_mode(destination)
+        self._sync_study_shortcut_state()
+
+    def _toggle_ipad_navigation(self) -> None:
+        rail = getattr(self, "single_navigation_rail", None)
+        if isinstance(rail, QWidget):
+            rail.setVisible(not rail.isVisible())
+
+    def _toggle_ipad_inspector(self) -> None:
+        mode = getattr(self, "_single_navigation_mode", "live")
+        if mode == "study":
+            host = getattr(self, "ipad_study_inspector_host", None)
+        else:
+            host = getattr(self, "ipad_play_inspector_host", None)
+        if isinstance(host, QWidget):
+            host.setVisible(not host.isVisible())
+
+    def _sync_ipad_study_summary(self) -> None:
+        if not hasattr(self, "ipad_study_name_label"):
+            return
+        name = str(getattr(self, "study_name_edit", QLineEdit()).text() or "Sin ejercicio")
+        if name == "Nueva grabación" and not self.study_notes:
+            name = "Sin ejercicio"
+        self.ipad_study_name_label.setText(name)
+        duration_seconds = max(0, int(total_duration_ms(self.study_notes) / 1000))
+        self.ipad_study_summary_text.setText(
+            f"{len(self.study_notes)} notas · {len(self.study_steps)} pasos · "
+            f"{duration_seconds // 60:02d}:{duration_seconds % 60:02d}"
+        )
+        current = 0 if not self.study_steps else self.study_active_step_index + 1
+        self.ipad_study_step_pill.setText(
+            f"⚑  Paso {current} de {len(self.study_steps)}"
+        )
+        self._refresh_ipad_study_step_strip()
+
+    def _refresh_ipad_study_step_strip(self) -> None:
+        layout = getattr(self, "ipad_study_step_layout", None)
+        if not isinstance(layout, QHBoxLayout):
+            return
+        while layout.count():
+            item = layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.hide()
+                widget.setParent(None)
+                widget.deleteLater()
+
+        if not self.study_steps:
+            empty = QLabel("Carga o graba un ejercicio para ver su secuencia")
+            empty.setObjectName("SecondaryText")
+            layout.addWidget(empty)
+            layout.addStretch()
+            return
+
+        palette = self._current_skin_palette()
+        active_button = None
+        self.ipad_study_step_buttons = []
+        for index, _step in enumerate(self.study_steps):
+            button = QPushButton(str(index + 1))
+            button.setObjectName("StudyStepButton")
+            button.setFixedSize(44, 44)
+            button.setToolTip(f"Ir al paso {index + 1}")
+            button.setAccessibleName(f"Ir al paso {index + 1}")
+            button.clicked.connect(
+                lambda _checked=False, selected=index: self._study_select_step_from_combo(
+                    selected
+                )
+            )
+            if index == self.study_active_step_index:
+                background = palette["accent"]
+                foreground = palette["canvas"]
+                border = palette["accent"]
+                active_button = button
+            elif index < self.study_active_step_index or index in self.study_completed_steps:
+                background = "#183C30"
+                foreground = "#DDF8EC"
+                border = "#286A52"
+            else:
+                background = palette["raised"]
+                foreground = "#F4F4F5"
+                border = "#34373E"
+            button.setStyleSheet(
+                "QPushButton {"
+                f" color: {foreground}; background-color: {background};"
+                f" border: 1px solid {border}; border-radius: 22px;"
+                " padding: 0; font-size: 15px; font-weight: 750;"
+                "}"
+                "QPushButton:hover { border: 2px solid #F4F4F5; }"
+            )
+            layout.addWidget(button)
+            self.ipad_study_step_buttons.append(button)
+        layout.addStretch()
+        if active_button is not None:
+            QTimer.singleShot(
+                0,
+                lambda button=active_button: self.ipad_study_step_strip.ensureWidgetVisible(
+                    button,
+                    18,
+                    0,
+                ),
+            )
+
+    def _sync_ipad_settings_controls(self) -> None:
+        combo = getattr(self, "ipad_settings_start_combo", None)
+        if isinstance(combo, QComboBox):
+            combo.blockSignals(True)
+            self._select_combo_value(
+                combo,
+                int(self.start_combo.currentData() or DEFAULT_START_NOTE),
+            )
+            combo.blockSignals(False)
+        spin = getattr(self, "ipad_settings_octaves_spin", None)
+        if isinstance(spin, QSpinBox):
+            spin.blockSignals(True)
+            spin.setValue(int(self.octaves_spin.value()))
+            spin.blockSignals(False)
+        labels = getattr(self, "ipad_settings_labels_checkbox", None)
+        if isinstance(labels, QCheckBox):
+            labels.blockSignals(True)
+            labels.setChecked(bool(self.keyboard_labels_action.isChecked()))
+            labels.blockSignals(False)
+        circles = getattr(self, "ipad_settings_circle_slider", None)
+        if isinstance(circles, QSlider):
+            circles.blockSignals(True)
+            circles.setValue(int(self.display_scale_circle_size_percent))
+            circles.blockSignals(False)
+        circle_value = getattr(self, "ipad_settings_circle_value", None)
+        if isinstance(circle_value, QLabel):
+            circle_value.setText(f"{int(self.display_scale_circle_size_percent)}%")
+        instrument_scale = getattr(
+            self, "ipad_settings_instrument_scale_slider", None
+        )
+        if isinstance(instrument_scale, QSlider):
+            instrument_scale.blockSignals(True)
+            instrument_scale.setValue(int(self.ipad_instrument_scale_percent))
+            instrument_scale.blockSignals(False)
+        instrument_scale_value = getattr(
+            self, "ipad_settings_instrument_scale_value", None
+        )
+        if isinstance(instrument_scale_value, QLabel):
+            instrument_scale_value.setText(
+                f"{int(self.ipad_instrument_scale_percent)}%"
+            )
+        student_opacity = getattr(
+            self, "ipad_settings_student_opacity_slider", None
+        )
+        if isinstance(student_opacity, QSlider):
+            student_opacity.blockSignals(True)
+            student_opacity.setValue(int(self.study_student_opacity_percent))
+            student_opacity.blockSignals(False)
+        student_opacity_value = getattr(
+            self, "ipad_settings_student_opacity_value", None
+        )
+        if isinstance(student_opacity_value, QLabel):
+            student_opacity_value.setText(
+                f"{int(self.study_student_opacity_percent)}%"
+            )
+        label_scale = getattr(self, "ipad_settings_label_scale_slider", None)
+        label_scale_percent = max(
+            75,
+            min(
+                200,
+                int(
+                    round(
+                        float(self.interval_label_settings.get("font_size", 14))
+                        / 14.0
+                        * 100.0
+                    )
+                ),
+            ),
+        )
+        if isinstance(label_scale, QSlider):
+            label_scale.blockSignals(True)
+            label_scale.setValue(label_scale_percent)
+            label_scale.blockSignals(False)
+        label_scale_value = getattr(
+            self, "ipad_settings_label_scale_value", None
+        )
+        if isinstance(label_scale_value, QLabel):
+            label_scale_value.setText(f"{label_scale_percent}%")
+        chord_size = getattr(self, "ipad_settings_chord_size_spin", None)
+        if isinstance(chord_size, QSpinBox):
+            chord_size.blockSignals(True)
+            chord_size.setValue(int(self.font_size_spin.value()))
+            chord_size.blockSignals(False)
+        white_position = getattr(
+            self, "ipad_settings_white_position_combo", None
+        )
+        if isinstance(white_position, QComboBox):
+            white_position.blockSignals(True)
+            self._select_combo_value(
+                white_position,
+                str(
+                    self.interval_label_settings.get(
+                        "y_anchor_mode_white", "bottom25"
+                    )
+                ),
+            )
+            white_position.blockSignals(False)
+        black_position = getattr(
+            self, "ipad_settings_black_position_combo", None
+        )
+        if isinstance(black_position, QComboBox):
+            black_position.blockSignals(True)
+            self._select_combo_value(
+                black_position,
+                str(
+                    self.interval_label_settings.get(
+                        "y_anchor_mode_black", "center"
+                    )
+                ),
+            )
+            black_position.blockSignals(False)
+        frame_opacity = max(
+            20,
+            min(
+                100,
+                int(
+                    round(
+                        float(
+                            self.interval_label_settings.get(
+                                "frame_fill_opacity", 0.6
+                            )
+                        )
+                        * 100.0
+                    )
+                ),
+            ),
+        )
+        frame_slider = getattr(
+            self, "ipad_settings_frame_opacity_slider", None
+        )
+        if isinstance(frame_slider, QSlider):
+            frame_slider.blockSignals(True)
+            frame_slider.setValue(frame_opacity)
+            frame_slider.blockSignals(False)
+        frame_value = getattr(self, "ipad_settings_frame_opacity_value", None)
+        if isinstance(frame_value, QLabel):
+            frame_value.setText(f"{frame_opacity}%")
+        presentation = getattr(self, "ipad_settings_presentation_checkbox", None)
+        if isinstance(presentation, QCheckBox):
+            presentation.blockSignals(True)
+            presentation.setChecked(bool(self._presentation_mode_enabled))
+            presentation.blockSignals(False)
+        focus = getattr(self, "ipad_settings_focus_checkbox", None)
+        if isinstance(focus, QCheckBox):
+            focus.blockSignals(True)
+            focus.setChecked(bool(self.ipad_focus_mode_enabled))
+            focus.blockSignals(False)
+        midi_thru = getattr(self, "ipad_settings_midi_thru_checkbox", None)
+        if isinstance(midi_thru, QCheckBox):
+            midi_thru.blockSignals(True)
+            midi_thru.setChecked(bool(self.live_midi_thru_enabled))
+            midi_thru.blockSignals(False)
+        midi_label = getattr(self, "ipad_settings_midi_inputs", None)
+        if isinstance(midi_label, QLabel):
+            selected = str(self.input_combo.currentText() or "Sin entradas")
+            midi_label.setText(f"Entradas\n{selected}")
+        midi_output = getattr(self, "ipad_settings_midi_output", None)
+        output_count = len(getattr(self, "midi_outputs", []))
+        if isinstance(midi_output, QLabel):
+            midi_output.setText(
+                "Salida MIDI\n"
+                + (
+                    f"{output_count} salida{'s' if output_count != 1 else ''} conectada"
+                    if output_count
+                    else "Sin salidas"
+                )
+            )
+        midi_status = getattr(self, "ipad_settings_midi_status", None)
+        if isinstance(midi_status, QLabel):
+            midi_status.setText(
+                "Uso de la salida\n"
+                + (
+                    "Solo al reproducir ejercicios"
+                    if output_count
+                    else "Sin salidas disponibles"
+                )
+            )
+        skin_combo = getattr(self, "ipad_settings_skin_combo", None)
+        if isinstance(skin_combo, QComboBox):
+            skin_combo.blockSignals(True)
+            self._select_combo_value(skin_combo, self.app_skin_key)
+            skin_combo.blockSignals(False)
+        self._sync_ipad_skin_buttons()
+        self._sync_midi_device_status()
+
+    @staticmethod
+    def _midi_names_text(names: List[str]) -> str:
+        clean_names = [str(name).strip() for name in names if str(name).strip()]
+        return ", ".join(clean_names) if clean_names else "Ninguno"
+
+    def _sync_midi_device_status(self) -> None:
+        available_inputs = list(getattr(self, "midi_input_names_available", []))
+        connected_inputs = list(getattr(self, "midi_input_names_connected", []))
+        available_outputs = list(getattr(self, "midi_output_names_available", []))
+        connected_outputs = list(getattr(self, "midi_output_names_connected", []))
+        input_errors = dict(getattr(self, "midi_input_errors", {}))
+        output_errors = dict(getattr(self, "midi_output_errors", {}))
+
+        playback_owns_midi = self._desired_midi_route() == "output"
+        guided = bool(
+            getattr(self, "_study_section_active", False)
+            and self.study_mode == "guided"
+        )
+        if playback_owns_midi:
+            policy = "IN cerrado · OUT activo para la reproducción"
+        elif guided:
+            policy = "IN activo · OUT cerrado en modo Guiado"
+        elif getattr(self, "_study_section_active", False):
+            policy = "IN activo · OUT cerrado hasta iniciar la reproducción"
+        else:
+            policy = "IN activo · OUT cerrado en esta vista"
+
+        input_summary = (
+            f"MIDI IN · {len(connected_inputs)} de {len(available_inputs)} conectadas\n"
+            f"{self._midi_names_text(connected_inputs)}"
+        )
+        if input_errors:
+            input_summary += f"\nFallidas: {self._midi_names_text(list(input_errors))}"
+        output_summary = (
+            "MIDI OUT automático · "
+            f"{len(connected_outputs)} de {len(available_outputs)} conectadas\n"
+            f"{self._midi_names_text(connected_outputs)}"
+        )
+        if output_errors:
+            output_summary += f"\nFallidas: {self._midi_names_text(list(output_errors))}"
+
+        input_label = getattr(self, "input_status_label", None)
+        if isinstance(input_label, QLabel):
+            input_label.setText(input_summary)
+        output_label = getattr(self, "output_status_label", None)
+        if isinstance(output_label, QLabel):
+            output_label.setText(output_summary)
+        policy_label = getattr(self, "midi_policy_label", None)
+        if isinstance(policy_label, QLabel):
+            policy_label.setText(policy)
+
+        ipad_input = getattr(self, "ipad_settings_midi_inputs", None)
+        if isinstance(ipad_input, QLabel):
+            ipad_input.setText(input_summary)
+        ipad_output = getattr(self, "ipad_settings_midi_output", None)
+        if isinstance(ipad_output, QLabel):
+            ipad_output.setText(output_summary)
+        ipad_policy = getattr(self, "ipad_settings_midi_status", None)
+        if isinstance(ipad_policy, QLabel):
+            ipad_policy.setText(policy)
+
+        for button in getattr(self, "ipad_midi_status_buttons", []):
+            if isinstance(button, QPushButton):
+                button.setText(self._ipad_midi_status_text())
+                button.setToolTip(policy)
+
+    def _sync_ipad_skin_buttons(self) -> None:
+        selected = str(getattr(self, "app_skin_key", "classic"))
+        for skin_key, button in getattr(self, "ipad_skin_buttons", {}).items():
+            if not isinstance(button, QPushButton):
+                continue
+            palette = IPAD_SKIN_PALETTES.get(
+                skin_key, IPAD_SKIN_PALETTES["classic"]
+            )
+            button.blockSignals(True)
+            button.setChecked(skin_key == selected)
+            button.blockSignals(False)
+            border = palette["accent"] if skin_key == selected else "#3A3D43"
+            border_width = 2 if skin_key == selected else 1
+            button.setStyleSheet(
+                "QPushButton {"
+                f" color: #F4F4F5; background-color: {palette['raised']};"
+                f" border: {border_width}px solid {border};"
+                " border-radius: 10px; padding: 7px 5px;"
+                f" border-top-color: {palette['accent']};"
+                " font-weight: 650;"
+                "}"
+                "QPushButton:hover { color: #FFFFFF; }"
+            )
+
+    def _ipad_settings_start_changed(self, index: int) -> None:
+        combo = getattr(self, "ipad_settings_start_combo", None)
+        if not isinstance(combo, QComboBox):
+            return
+        self.start_combo.blockSignals(True)
+        self._select_combo_value(self.start_combo, combo.itemData(index))
+        self.start_combo.blockSignals(False)
+        self.range_changed()
+
+    def _ipad_settings_octaves_changed(self, value: int) -> None:
+        self.octaves_spin.blockSignals(True)
+        self.octaves_spin.setValue(int(value))
+        self.octaves_spin.blockSignals(False)
+        self.range_changed()
+
+    def _ipad_settings_skin_combo_changed(self, index: int) -> None:
+        combo = getattr(self, "ipad_settings_skin_combo", None)
+        if isinstance(combo, QComboBox):
+            self._apply_app_skin(str(combo.itemData(index) or "classic"))
+
+    def _ipad_settings_chord_size_changed(self, value: int) -> None:
+        self.font_size_spin.blockSignals(True)
+        self.font_size_spin.setValue(int(value))
+        self.font_size_spin.blockSignals(False)
+        self._apply_chord_font()
+        self._write_preferences(False)
+
+    def _ipad_settings_instrument_scale_changed(self, value: int) -> None:
+        self.ipad_instrument_scale_percent = max(80, min(120, int(value)))
+        minimum_height = max(
+            144, int(round(180 * self.ipad_instrument_scale_percent / 100.0))
+        )
+        self.piano.setMinimumHeight(minimum_height)
+        self.fretboard_widget.setMinimumHeight(minimum_height)
+        label = getattr(self, "ipad_settings_instrument_scale_value", None)
+        if isinstance(label, QLabel):
+            label.setText(f"{self.ipad_instrument_scale_percent}%")
+        self._write_preferences(False)
+
+    def _ipad_settings_label_scale_changed(self, value: int) -> None:
+        percent = max(75, min(200, int(value)))
+        self.interval_label_settings["font_size"] = max(
+            6, int(round(14.0 * percent / 100.0))
+        )
+        self._apply_interval_settings_to_piano()
+        self._save_interval_settings()
+        label = getattr(self, "ipad_settings_label_scale_value", None)
+        if isinstance(label, QLabel):
+            label.setText(f"{percent}%")
+
+    def _ipad_settings_circle_size_changed(self, value: int) -> None:
+        self.display_scale_circle_size_percent = int(value)
+        self.piano.set_scale_circle_size_factor(int(value) / 100.0)
+        self.fretboard_widget.set_marker_size_factor(int(value) / 100.0)
+        label = getattr(self, "ipad_settings_circle_value", None)
+        if isinstance(label, QLabel):
+            label.setText(f"{int(value)}%")
+        self._schedule_visual_state_save()
+
+    def _ipad_settings_student_opacity_changed(self, value: int) -> None:
+        self.study_student_opacity_percent = max(0, min(100, int(value)))
+        self.piano.set_study_student_opacity(
+            self.study_student_opacity_percent / 100.0
+        )
+        label = getattr(
+            self, "ipad_settings_student_opacity_value", None
+        )
+        if isinstance(label, QLabel):
+            label.setText(f"{self.study_student_opacity_percent}%")
+        self._schedule_visual_state_save()
+
+    def _ipad_settings_interval_position_changed(self, is_black: bool) -> None:
+        combo = (
+            getattr(self, "ipad_settings_black_position_combo", None)
+            if is_black
+            else getattr(self, "ipad_settings_white_position_combo", None)
+        )
+        if not isinstance(combo, QComboBox):
+            return
+        mode = str(combo.currentData() or "bottom25")
+        key = "y_anchor_mode_black" if is_black else "y_anchor_mode_white"
+        percent_key = "y_percent_black" if is_black else "y_percent_white"
+        self.interval_label_settings[key] = mode
+        self.interval_label_settings[percent_key] = (
+            50.0 if mode == "center" else 87.5
+        )
+        self._apply_interval_settings_to_piano()
+        self._save_interval_settings()
+
+    def _ipad_settings_frame_opacity_changed(self, value: int) -> None:
+        opacity = max(20, min(100, int(value)))
+        self.interval_label_settings["frame_fill_opacity"] = opacity / 100.0
+        self._apply_interval_settings_to_piano()
+        self._save_interval_settings()
+        label = getattr(self, "ipad_settings_frame_opacity_value", None)
+        if isinstance(label, QLabel):
+            label.setText(f"{opacity}%")
+
+    def _ipad_settings_live_thru_changed(self, enabled: bool) -> None:
+        self.live_midi_thru_enabled = bool(enabled)
+        self._write_preferences(False)
+
+    def _ipad_settings_focus_changed(self, enabled: bool) -> None:
+        self.ipad_focus_mode_enabled = bool(enabled)
+        rail = getattr(self, "single_navigation_rail", None)
+        if isinstance(rail, QWidget):
+            rail.setVisible(not self.ipad_focus_mode_enabled)
+        self._write_preferences(False)
+
+    def _reset_scale_role_overrides(self) -> None:
+        self.scale_role_overrides = {}
+        self._update_display_overlays(show_status=False)
+        self._write_preferences(False)
+        self._show_status_message("Categorías de color de escalas restauradas.")
+
+    def _reset_ipad_visual_preferences(self) -> None:
+        self._apply_app_skin("classic", persist=False)
+        self.ipad_instrument_scale_percent = 100
+        self.piano.setMinimumHeight(180)
+        self.fretboard_widget.setMinimumHeight(180)
+        self.display_scale_circle_size_percent = 100
+        self.piano.set_scale_circle_size_factor(1.0)
+        self.fretboard_widget.set_marker_size_factor(1.0)
+        self.study_student_opacity_percent = 5
+        self.piano.set_study_student_opacity(0.05)
+        self.interval_label_settings.update(
+            {
+                "font_size": 14,
+                "y_anchor_mode_white": "bottom25",
+                "y_percent_white": 87.5,
+                "y_anchor_mode_black": "center",
+                "y_percent_black": 50.0,
+                "frame_fill_opacity": 0.88,
+            }
+        )
+        self._apply_interval_settings_to_piano()
+        self._save_interval_settings()
+        self.chord_text_color = QColor(Qt.GlobalColor.white)
+        self.chord_window.set_chord_color(self.chord_text_color)
+        self.font_size_spin.setValue(108)
+        self._apply_chord_font()
+        self._sync_ipad_settings_controls()
+        self._write_preferences(False)
+        self._show_status_message("Valores visuales restaurados.")
+
     def _color_to_stylesheet(self, color: QColor) -> str:
         return f"rgba({color.red()}, {color.green()}, {color.blue()}, {color.alpha()})"
 
     def _build_scale_role_palette(self) -> QWidget:
         panel = QWidget()
-        layout = QGridLayout() if IS_WINDOWS else QHBoxLayout()
+        layout = QGridLayout()
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
         for index, role in enumerate(("root", "stable", "tension", "critical")):
@@ -5633,14 +7975,8 @@ class ControlWindow(ResponsiveWidthWidget):
             item_layout.addWidget(button)
             item_layout.addWidget(text_label)
             item.setLayout(item_layout)
-            if IS_WINDOWS:
-                layout.addWidget(item, index // 2, index % 2)
-            else:
-                layout.addWidget(item)
-        if IS_WINDOWS:
-            layout.setColumnStretch(2, 1)
-        else:
-            layout.addStretch()
+            layout.addWidget(item, index // 2, index % 2)
+        layout.setColumnStretch(2, 1)
         panel.setLayout(layout)
         self._sync_scale_palette_buttons()
         return panel
@@ -5686,7 +8022,7 @@ class ControlWindow(ResponsiveWidthWidget):
         button = QPushButton(text)
         button.setObjectName("GlassSegmentButton")
         button.setCheckable(True)
-        button.setMinimumWidth(126)
+        button.setMinimumWidth(82)
         button.clicked.connect(lambda _checked=False, selected_index=index: self._set_display_panel_section(selected_index))
         return button
 
@@ -5703,9 +8039,18 @@ class ControlWindow(ResponsiveWidthWidget):
             self.piano.set_study_input_enabled(False)
             self.piano.set_study_wrong_notes(set())
             self.piano.set_study_student_notes(set())
+            self.piano.set_study_held_notes(set())
             self.fretboard_widget.set_study_wrong_notes(set())
+            self.fretboard_widget.set_study_fingering_labels({})
+            self.fretboard_widget.set_study_labels_only(False)
         stack.setCurrentIndex(index)
         self._display_panel_section_index = index
+        title = getattr(self, "display_panel_title", None)
+        eyebrow = getattr(self, "display_panel_eyebrow", None)
+        if isinstance(title, QLabel):
+            title.setText({0: "Acordes", 1: "Escalas", 2: "Controles"}[index])
+        if isinstance(eyebrow, QLabel):
+            eyebrow.setText("SESIÓN" if index == 2 else "INSPECTOR")
         for button_index, button in enumerate(buttons):
             if isinstance(button, QPushButton):
                 button.blockSignals(True)
@@ -5714,12 +8059,17 @@ class ControlWindow(ResponsiveWidthWidget):
         if index == 2:
             self._study_section_active = True
             self.piano.set_study_input_enabled(True)
+            self.fretboard_widget.set_study_labels_only(True)
             self._study_update_expected_overlay()
             self._refresh_staff_for_current_notes()
         elif previous_index == 2:
             self._update_display_overlays(show_status=False)
             self._refresh_staff_for_current_notes()
+        self._set_single_navigation_mode(
+            {0: "chords", 1: "scales", 2: "study"}.get(index, "live")
+        )
         self._sync_study_shortcut_state()
+        self._apply_midi_routing_policy()
 
     def _build_instrument_view_button(self, text: str, mode: str) -> QPushButton:
         button = QPushButton(text)
@@ -5735,25 +8085,32 @@ class ControlWindow(ResponsiveWidthWidget):
         return button
 
     def _build_study_page(self, parent: QWidget) -> QWidget:
-        page = QWidget(parent)
+        page = ResponsiveWidthWidget(parent)
         page.setObjectName("PanelPage")
         layout = QVBoxLayout()
-        layout.setContentsMargins(14, 4, 14, 4)
+        layout.setContentsMargins(8, 4, 8, 4)
         layout.setSpacing(5)
 
-        identity_row = QHBoxLayout()
+        identity_row = QVBoxLayout()
         identity_row.setSpacing(7)
         identity_row.addWidget(QLabel("Ejercicio"))
         self.study_name_edit = QLineEdit("Nueva grabación")
         self.study_name_edit.setMaxLength(80)
-        self.study_name_edit.setMinimumWidth(170)
-        identity_row.addWidget(self.study_name_edit, stretch=2)
-        identity_row.addWidget(QLabel("Biblioteca"))
+        self.study_name_edit.setMinimumWidth(0)
+        identity_row.addWidget(self.study_name_edit)
+        library_row = QHBoxLayout()
+        library_row.setSpacing(7)
+        library_row.addWidget(QLabel("Biblioteca"))
         self.study_library_combo = QComboBox()
-        self.study_library_combo.setMinimumWidth(145)
-        identity_row.addWidget(self.study_library_combo, stretch=1)
+        self.study_library_combo.setMinimumWidth(0)
+        self.study_library_combo.setMinimumContentsLength(8)
+        self.study_library_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
+        library_row.addWidget(self.study_library_combo, stretch=1)
         self.study_delete_button = QPushButton("Limpiar")
-        identity_row.addWidget(self.study_delete_button)
+        library_row.addWidget(self.study_delete_button)
+        identity_row.addLayout(library_row)
         self.study_new_button = QPushButton("Nuevo")
         self.study_import_button = QPushButton("Importar archivo")
         self.study_import_folder_button = QPushButton("Importar carpeta")
@@ -5776,7 +8133,8 @@ class ControlWindow(ResponsiveWidthWidget):
             button.setToolTip(tooltip)
             button.setAccessibleName(tooltip)
             button.setFixedSize(34, 30)
-        identity_row.addSpacing(4)
+        action_row = QHBoxLayout()
+        action_row.setSpacing(6)
         for button in (
             self.study_new_button,
             self.study_import_button,
@@ -5785,15 +8143,19 @@ class ControlWindow(ResponsiveWidthWidget):
             self.study_save_copy_button,
             self.study_export_button,
         ):
-            identity_row.addWidget(button)
+            action_row.addWidget(button)
+        action_row.addStretch()
+        identity_row.addLayout(action_row)
         layout.addLayout(identity_row)
 
         self.study_summary_label = QLabel("0 notas  |  0 pasos  |  0:00")
         self.study_summary_label.setObjectName("StudySummary")
 
-        transport_row = QHBoxLayout()
+        transport_row = QVBoxLayout()
         transport_row.setSpacing(7)
         transport_row.addWidget(QLabel("Modo"))
+        mode_row = QHBoxLayout()
+        mode_row.setSpacing(7)
         self.study_mode_buttons = []
         for label, mode in (
             ("Ritmo original", "original"),
@@ -5808,74 +8170,78 @@ class ControlWindow(ResponsiveWidthWidget):
                 )
             )
             self.study_mode_buttons.append((mode, button))
-            transport_row.addWidget(button)
-        transport_row.addSpacing(8)
+            mode_row.addWidget(button)
+        transport_row.addLayout(mode_row)
+
+        playback_row = QHBoxLayout()
+        playback_row.setSpacing(7)
         self.study_record_button = QPushButton("Grabar")
         self.study_record_button.setObjectName("RecordButton")
         self.study_play_button = QPushButton("Reproducir")
         self.study_play_button.setObjectName("PrimaryButton")
         self.study_stop_button = QPushButton("Detener")
-        transport_row.addWidget(self.study_record_button)
-        transport_row.addWidget(self.study_play_button)
-        transport_row.addWidget(self.study_stop_button)
-        transport_row.addStretch()
+        playback_row.addWidget(self.study_record_button)
+        playback_row.addWidget(self.study_play_button)
+        playback_row.addWidget(self.study_stop_button)
+        transport_row.addLayout(playback_row)
         transport_row.addWidget(self.study_summary_label)
         layout.addLayout(transport_row)
 
-        step_row = QHBoxLayout()
+        step_row = QGridLayout()
         step_row.setSpacing(7)
-        step_row.addWidget(QLabel("Secuencia"))
+        step_row.addWidget(QLabel("Secuencia"), 0, 0, 1, 3)
         self.study_previous_button = QPushButton("←")
         self.study_previous_button.setToolTip("Paso anterior")
         self.study_previous_button.setFixedWidth(42)
         self.study_step_combo = QComboBox()
-        self.study_step_combo.setMinimumWidth(180)
+        self.study_step_combo.setMinimumWidth(0)
+        self.study_step_combo.setMinimumContentsLength(6)
+        self.study_step_combo.setSizeAdjustPolicy(
+            QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon
+        )
         self.study_next_button = QPushButton("→")
         self.study_next_button.setToolTip("Paso siguiente")
         self.study_next_button.setFixedWidth(42)
         self.study_audition_button = QPushButton("Escuchar paso")
-        step_row.addWidget(self.study_previous_button)
-        step_row.addWidget(self.study_step_combo, stretch=1)
-        step_row.addWidget(self.study_next_button)
-        step_row.addWidget(self.study_audition_button)
-        step_row.addStretch()
+        step_row.addWidget(self.study_previous_button, 1, 0)
+        step_row.addWidget(self.study_step_combo, 1, 1)
+        step_row.addWidget(self.study_next_button, 1, 2)
+        step_row.addWidget(self.study_audition_button, 2, 0, 1, 3)
         self.study_status_label = QLabel("Listo para tocar")
         self.study_status_label.setObjectName("StudyStatus")
-        self.study_status_label.setAlignment(
-            Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
-        )
-        step_row.addWidget(self.study_status_label, stretch=2)
+        self.study_status_label.setWordWrap(True)
+        step_row.addWidget(self.study_status_label, 3, 0, 1, 3)
         layout.addLayout(step_row)
 
-        settings_row = QHBoxLayout()
+        settings_row = QGridLayout()
         settings_row.setSpacing(7)
-        settings_row.addWidget(QLabel("Velocidad"))
+        settings_row.addWidget(QLabel("Velocidad"), 0, 0)
         self.study_speed_slider = QSlider(Qt.Orientation.Horizontal)
+        self.study_speed_slider.setMinimumWidth(0)
         self.study_speed_slider.setRange(5, 20)
         self.study_speed_slider.setValue(10)
-        self.study_speed_slider.setFixedWidth(120)
         self.study_speed_label = QLabel("1.0x")
-        self.study_speed_label.setFixedWidth(38)
-        settings_row.addWidget(self.study_speed_slider)
-        settings_row.addWidget(self.study_speed_label)
-        settings_row.addWidget(QLabel("Ventana de acorde"))
+        self.study_speed_label.setFixedWidth(36)
+        settings_row.addWidget(self.study_speed_slider, 0, 1)
+        settings_row.addWidget(self.study_speed_label, 0, 2)
+        settings_row.addWidget(QLabel("Tolerancia"), 1, 0)
         self.study_tolerance_slider = QSlider(Qt.Orientation.Horizontal)
+        self.study_tolerance_slider.setMinimumWidth(0)
         self.study_tolerance_slider.setRange(20, 150)
         self.study_tolerance_slider.setSingleStep(5)
         self.study_tolerance_slider.setValue(70)
-        self.study_tolerance_slider.setFixedWidth(120)
         self.study_tolerance_label = QLabel("70 ms")
-        self.study_tolerance_label.setFixedWidth(50)
-        settings_row.addWidget(self.study_tolerance_slider)
-        settings_row.addWidget(self.study_tolerance_label)
-        settings_row.addWidget(QLabel("Tempo"))
+        self.study_tolerance_label.setFixedWidth(46)
+        settings_row.addWidget(self.study_tolerance_slider, 1, 1)
+        settings_row.addWidget(self.study_tolerance_label, 1, 2)
+        settings_row.addWidget(QLabel("Tempo"), 2, 0)
         self.study_bpm_spin = QSpinBox()
         self.study_bpm_spin.setRange(30, 260)
         self.study_bpm_spin.setValue(120)
         self.study_bpm_spin.setSuffix(" BPM")
-        self.study_bpm_spin.setFixedWidth(94)
-        settings_row.addWidget(self.study_bpm_spin)
-        settings_row.addWidget(QLabel("Transp."))
+        self.study_bpm_spin.setFixedWidth(86)
+        settings_row.addWidget(self.study_bpm_spin, 2, 1)
+        settings_row.addWidget(QLabel("Transp."), 3, 0)
         self.study_transpose_spin = QSpinBox()
         self.study_transpose_spin.setRange(-24, 24)
         self.study_transpose_spin.setSingleStep(1)
@@ -5883,8 +8249,7 @@ class ControlWindow(ResponsiveWidthWidget):
         self.study_transpose_spin.setSuffix(" st")
         self.study_transpose_spin.setFixedWidth(76)
         self.study_transpose_spin.setToolTip("Transposición de estudio en semitonos")
-        settings_row.addWidget(self.study_transpose_spin)
-        settings_row.addStretch()
+        settings_row.addWidget(self.study_transpose_spin, 3, 1)
         layout.addLayout(settings_row)
 
         page.setLayout(layout)
@@ -5965,41 +8330,31 @@ class ControlWindow(ResponsiveWidthWidget):
         panel = ResponsiveWidthWidget()
         panel.setObjectName("DisplayPanel")
         layout = QVBoxLayout()
-        layout.setContentsMargins(10, 8, 10, 10)
-        layout.setSpacing(8)
+        layout.setContentsMargins(12, 12, 12, 12)
+        layout.setSpacing(12)
 
-        header_row = QHBoxLayout()
-        title = QLabel("Midi Piano Jaramillo")
-        title.setObjectName("PanelTitle")
-        subtitle = QLabel("consola de visualización")
-        subtitle.setObjectName("PanelCaption")
-        header_row.addWidget(title)
-        header_row.addWidget(subtitle)
-        header_row.addStretch()
-        self.instrument_view_buttons = [
-            ("piano", self._build_instrument_view_button("PIANO", "piano")),
-            ("guitar", self._build_instrument_view_button("GUITARRA", "guitar")),
-        ]
-        for _mode, button in self.instrument_view_buttons:
-            header_row.addWidget(button)
-        layout.addLayout(header_row)
+        inspector_header = QHBoxLayout()
+        inspector_header.setSpacing(8)
+        inspector_titles = QVBoxLayout()
+        inspector_titles.setSpacing(2)
+        self.display_panel_eyebrow = QLabel("INSPECTOR")
+        self.display_panel_eyebrow.setObjectName("EyebrowLabel")
+        self.display_panel_title = QLabel("Acordes")
+        self.display_panel_title.setObjectName("PanelTitle")
+        inspector_titles.addWidget(self.display_panel_eyebrow)
+        inspector_titles.addWidget(self.display_panel_title)
+        inspector_header.addLayout(inspector_titles)
+        inspector_header.addStretch()
+        inspector_icon = QLabel("☷")
+        inspector_icon.setObjectName("InspectorIcon")
+        inspector_header.addWidget(inspector_icon)
+        layout.addLayout(inspector_header)
+        self.instrument_view_buttons = []
 
         self.display_panel_status_strip = self._build_compact_status_label()
         self.display_panel_status_strip.hide()
 
-        section_row = QHBoxLayout()
-        section_row.setContentsMargins(0, 2, 0, 2)
-        section_row.setSpacing(8)
-        section_row.addStretch()
-        self.display_panel_section_buttons = [
-            self._build_panel_section_button("ACORDES", 0),
-            self._build_panel_section_button("ESCALAS", 1),
-            self._build_panel_section_button("ESTUDIO", 2),
-        ]
-        for button in self.display_panel_section_buttons:
-            section_row.addWidget(button)
-        section_row.addStretch()
-        layout.addLayout(section_row)
+        self.display_panel_section_buttons = []
 
         self.display_panel_section_stack = QStackedWidget(panel)
         self.display_panel_section_stack.setObjectName("DisplayPanelStack")
@@ -6009,13 +8364,14 @@ class ControlWindow(ResponsiveWidthWidget):
         chord_page_layout = QVBoxLayout()
         chord_page_layout.setContentsMargins(14, 10, 14, 10)
         chord_page_layout.setSpacing(7)
-        chord_primary_row = QHBoxLayout()
-        chord_primary_row.setSpacing(9)
+        chord_primary_row = QGridLayout()
+        chord_primary_row.setHorizontalSpacing(9)
+        chord_primary_row.setVerticalSpacing(7)
         self.display_panel_chord_checkbox = QCheckBox("Mostrar acorde")
         self.display_panel_root_combo = QComboBox()
-        self.display_panel_root_combo.setFixedWidth(86)
+        self.display_panel_root_combo.setMinimumWidth(86)
         self.display_panel_chord_combo = QComboBox(panel)
-        self.display_panel_chord_combo.setMinimumWidth(230)
+        self.display_panel_chord_combo.setMinimumWidth(180)
         self.display_panel_chord_combo.setMinimumContentsLength(18)
         self.display_panel_chord_combo.setMaxVisibleItems(18)
         self.display_panel_chord_combo.setToolTip("Seleccionar y activar un acorde pregrabado")
@@ -6028,23 +8384,22 @@ class ControlWindow(ResponsiveWidthWidget):
         self.display_panel_drop_combo.addItem("Drop 2", "drop2")
         self.display_panel_drop_combo.addItem("Drop 3", "drop3")
         self.display_panel_drop_combo.addItem("Drop 2-4", "drop2-4")
-        chord_primary_row.addWidget(self.display_panel_chord_checkbox)
-        chord_primary_row.addSpacing(10)
-        chord_primary_row.addWidget(QLabel("Fundamental"))
-        chord_primary_row.addWidget(self.display_panel_root_combo)
-        chord_primary_row.addWidget(QLabel("Acorde"))
-        chord_primary_row.addWidget(self.display_panel_chord_combo)
-        chord_primary_row.addStretch()
+        self.display_panel_chord_checkbox.hide()
+        chord_primary_row.addWidget(QLabel("Fundamental"), 0, 0, 1, 2)
+        chord_primary_row.addWidget(self.display_panel_root_combo, 1, 0, 1, 2)
+        chord_primary_row.addWidget(QLabel("Tipo de acorde"), 2, 0, 1, 2)
+        chord_primary_row.addWidget(self.display_panel_chord_combo, 3, 0, 1, 2)
         chord_page_layout.addLayout(chord_primary_row)
 
-        chord_secondary_row = QHBoxLayout()
-        chord_secondary_row.setSpacing(9)
-        chord_secondary_row.addWidget(QLabel("Inversión"))
-        chord_secondary_row.addWidget(self.display_panel_inversion_spin)
-        chord_secondary_row.addWidget(QLabel("Drop"))
-        chord_secondary_row.addWidget(self.display_panel_drop_combo)
-        chord_secondary_row.addStretch()
+        chord_secondary_row = QGridLayout()
+        chord_secondary_row.setHorizontalSpacing(9)
+        chord_secondary_row.setVerticalSpacing(7)
+        chord_secondary_row.addWidget(QLabel("Inversión"), 0, 0)
+        chord_secondary_row.addWidget(self.display_panel_inversion_spin, 0, 1)
+        chord_secondary_row.addWidget(QLabel("Distribución"), 1, 0, 1, 2)
+        chord_secondary_row.addWidget(self.display_panel_drop_combo, 2, 0, 1, 2)
         chord_page_layout.addLayout(chord_secondary_row)
+        chord_page_layout.addStretch()
         chord_page.setLayout(chord_page_layout)
 
         scale_page = QWidget(panel)
@@ -6052,32 +8407,42 @@ class ControlWindow(ResponsiveWidthWidget):
         scale_page_layout = QVBoxLayout()
         scale_page_layout.setContentsMargins(14, 10, 14, 10)
         scale_page_layout.setSpacing(7)
-        scale_primary_row = QHBoxLayout()
-        scale_primary_row.setSpacing(9)
+        scale_primary_row = QGridLayout()
+        scale_primary_row.setHorizontalSpacing(9)
+        scale_primary_row.setVerticalSpacing(7)
         self.display_panel_scale_checkbox = QCheckBox("Mostrar escala")
         self.display_panel_scale_root_combo = QComboBox()
-        self.display_panel_scale_root_combo.setFixedWidth(86)
+        self.display_panel_scale_root_combo.setMinimumWidth(86)
         self.display_panel_scale_combo = QComboBox(panel)
-        self.display_panel_scale_combo.setMinimumWidth(300)
+        self.display_panel_scale_combo.setMinimumWidth(180)
         self.display_panel_scale_combo.setMinimumContentsLength(26)
         self.display_panel_scale_combo.setMaxVisibleItems(18)
         self.display_panel_scale_combo.setToolTip("Seleccionar y activar una escala pregrabada")
-        scale_primary_row.addWidget(self.display_panel_scale_checkbox)
-        scale_primary_row.addSpacing(10)
-        scale_primary_row.addWidget(QLabel("Fundamental"))
-        scale_primary_row.addWidget(self.display_panel_scale_root_combo)
-        scale_primary_row.addWidget(QLabel("Escala"))
-        scale_primary_row.addWidget(self.display_panel_scale_combo)
-        scale_primary_row.addStretch()
+        self.display_panel_scale_checkbox.hide()
+        scale_primary_row.addWidget(QLabel("Fundamental"), 0, 0, 1, 2)
+        scale_primary_row.addWidget(self.display_panel_scale_root_combo, 1, 0, 1, 2)
+        scale_primary_row.addWidget(QLabel("Escala"), 2, 0, 1, 2)
+        scale_primary_row.addWidget(self.display_panel_scale_combo, 3, 0, 1, 2)
         scale_page_layout.addLayout(scale_primary_row)
         scale_page_layout.addWidget(self._build_scale_role_palette())
+        scale_page_layout.addStretch()
         scale_page.setLayout(scale_page_layout)
 
         study_page = self._build_study_page(panel)
+        study_scroll = QScrollArea(panel)
+        study_scroll.setObjectName("PanelPageScroll")
+        study_scroll.setWidgetResizable(True)
+        study_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        study_scroll.setWidget(study_page)
+        study_scroll.setStyleSheet(
+            "QScrollArea#PanelPageScroll { border: none; background: transparent; }"
+        )
 
         self.display_panel_section_stack.addWidget(chord_page)
         self.display_panel_section_stack.addWidget(scale_page)
-        self.display_panel_section_stack.addWidget(study_page)
+        self.display_panel_section_stack.addWidget(study_scroll)
         layout.addWidget(self.display_panel_section_stack)
         self._set_display_panel_section(0)
 
@@ -6443,6 +8808,8 @@ class ControlWindow(ResponsiveWidthWidget):
             button.blockSignals(True)
             button.setChecked(mode == self.study_mode)
             button.blockSignals(False)
+        self._sync_ipad_study_summary()
+        self._apply_midi_routing_policy()
 
     def _study_refresh_library_ui(self) -> None:
         if not hasattr(self, "study_library_combo"):
@@ -6973,6 +9340,10 @@ class ControlWindow(ResponsiveWidthWidget):
         source_id = str(source_id)
         note = int(note)
         channel = int(channel)
+        is_carryover_attack = (
+            source_id in self._study_guided_carryover_sources
+            or note in self._study_guided_carryover_notes
+        )
         if source_id in self._study_input_sources:
             self._study_input_note_off(source_id)
         self._study_guided_carryover_sources.discard(source_id)
@@ -6993,7 +9364,7 @@ class ControlWindow(ResponsiveWidthWidget):
             self.note_activation_order.remove(note)
         self.note_activation_order.append(note)
         self._study_sync_virtual_notes()
-        self._study_evaluate_guided(note)
+        self._study_evaluate_guided(None if is_carryover_attack else note)
         self._refresh_staff_for_current_notes()
 
     def _study_input_note_off(self, source_id: str) -> None:
@@ -7003,6 +9374,12 @@ class ControlWindow(ResponsiveWidthWidget):
         self._study_guided_carryover_sources.discard(source_id)
         if active is None:
             return
+        released_note = int(active[0])
+        if not any(
+            int(note) == released_note
+            for note, _channel in self._study_input_sources.values()
+        ):
+            self._study_guided_carryover_notes.discard(released_note)
         if self.study_transport == "recording":
             elapsed = max(
                 0.0,
@@ -7036,9 +9413,13 @@ class ControlWindow(ResponsiveWidthWidget):
 
     def _study_mark_pressed_notes_as_guided_carryover(self) -> None:
         self._study_guided_carryover_sources = set(self._study_input_sources)
+        self._study_guided_carryover_notes = {
+            int(note) for note, _channel in self._study_input_sources.values()
+        }
 
     def _study_clear_guided_carryover(self) -> None:
         self._study_guided_carryover_sources.clear()
+        self._study_guided_carryover_notes.clear()
 
     def _study_process_midi_message(self, input_id: int, message) -> None:
         if not self._study_section_active and self.study_transport == "idle":
@@ -7058,7 +9439,14 @@ class ControlWindow(ResponsiveWidthWidget):
                     )
                     for source_id in deferred:
                         self._study_input_note_off(source_id)
+            elif control == 121:
+                self._study_sustained_channels.discard(channel_key)
+                deferred = self._study_deferred_note_offs.pop(channel_key, set())
+                for source_id in deferred:
+                    self._study_input_note_off(source_id)
             elif control in (120, 123):
+                self._study_sustained_channels.discard(channel_key)
+                self._study_deferred_note_offs.pop(channel_key, None)
                 prefix = f"midi:{input_id}:{channel}:"
                 for source_id in list(self._study_input_sources):
                     if source_id.startswith(prefix):
@@ -7103,10 +9491,15 @@ class ControlWindow(ResponsiveWidthWidget):
             self.study_guided_attacked.add(int(attacked_note))
         active_source_ids = set(self._study_input_sources)
         self._study_guided_carryover_sources.intersection_update(active_source_ids)
+        active_notes = {
+            int(note) for note, _channel in self._study_input_sources.values()
+        }
+        self._study_guided_carryover_notes.intersection_update(active_notes)
         pressed = {
             note
             for source_id, (note, _channel) in self._study_input_sources.items()
             if source_id not in self._study_guided_carryover_sources
+            and int(note) not in self._study_guided_carryover_notes
         }
         pressed -= active_expected - expected
         progress = evaluate_guided_progress(
@@ -7129,6 +9522,8 @@ class ControlWindow(ResponsiveWidthWidget):
         next_index = completed_index + 1
         self.study_guided_attacked.clear()
         self.study_wrong_notes.clear()
+        self.piano.set_study_wrong_notes(set())
+        self.fretboard_widget.set_study_wrong_notes(set())
         self._study_mark_pressed_notes_as_guided_carryover()
         if next_index >= len(self.study_steps):
             self.study_transport = "idle"
@@ -7172,6 +9567,7 @@ class ControlWindow(ResponsiveWidthWidget):
             self._study_refresh_ui()
             return
 
+        self._clear_live_midi_state()
         speed = self.study_speed_slider.value() / 10.0
         events = build_original_timeline(notes, speed)
         if not events:
@@ -7190,6 +9586,7 @@ class ControlWindow(ResponsiveWidthWidget):
         if step is None:
             return
         self._study_stop_playback(keep_status=True)
+        self._clear_live_midi_state()
         playback_notes = step.note_events or tuple(
             StudyNote(note=note, start_ms=step.start_ms, duration_ms=step.duration_ms)
             for note in step.notes
@@ -7204,6 +9601,7 @@ class ControlWindow(ResponsiveWidthWidget):
                     int(note.velocity),
                     int(note.channel),
                     note.staff,
+                    note.fingering,
                 )
             )
             events.append(
@@ -7214,6 +9612,7 @@ class ControlWindow(ResponsiveWidthWidget):
                     0,
                     int(note.channel),
                     note.staff,
+                    note.fingering,
                 )
             )
         events.sort(
@@ -7286,6 +9685,9 @@ class ControlWindow(ResponsiveWidthWidget):
                 f"playback:{self._study_playback_run}:{event_index}:{event.note}"
             )
             self._study_playback_voices.setdefault(key, []).append(voice_id)
+            self._study_playback_fingering_voices.setdefault(key, []).append(
+                str(getattr(event, "fingering", "") or "").strip()
+            )
             self._study_playback_counts[event.note] = (
                 self._study_playback_counts.get(event.note, 0) + 1
             )
@@ -7303,8 +9705,11 @@ class ControlWindow(ResponsiveWidthWidget):
             self.note_activation_order.append(event.note)
             return
         queue = self._study_playback_voices.get(key, [])
+        fingering_queue = self._study_playback_fingering_voices.get(key, [])
         if queue:
             queue.pop(0)
+            if fingering_queue:
+                fingering_queue.pop(0)
             self._send_study_midi_message(
                 "note_off",
                 event.note,
@@ -7313,6 +9718,7 @@ class ControlWindow(ResponsiveWidthWidget):
             )
         if not queue:
             self._study_playback_voices.pop(key, None)
+            self._study_playback_fingering_voices.pop(key, None)
         count = self._study_playback_counts.get(event.note, 0) - 1
         color_queue = self._study_playback_color_voices.get(event.note, [])
         if color_queue:
@@ -7341,6 +9747,7 @@ class ControlWindow(ResponsiveWidthWidget):
         self._study_playback_events = []
         self._study_playback_index = 0
         self._study_playback_voices.clear()
+        self._study_playback_fingering_voices.clear()
         self._study_playback_counts.clear()
         self._study_playback_color_voices.clear()
         self._study_playback_note_colors.clear()
@@ -7426,6 +9833,18 @@ class ControlWindow(ResponsiveWidthWidget):
                 labels[int(note)] = fingering
         return labels
 
+    def _study_visible_fingering_labels(self) -> Dict[int, str]:
+        if not self._study_section_active:
+            return {}
+        labels = self._study_fingering_labels_for_current_step()
+        for (_channel, note), fingerings in self._study_playback_fingering_voices.items():
+            for fingering in reversed(fingerings):
+                value = str(fingering or "").strip()
+                if value:
+                    labels[int(note)] = value
+                    break
+        return labels
+
     def _study_color_for_staff(
         self,
         staff: Optional[int],
@@ -7457,6 +9876,11 @@ class ControlWindow(ResponsiveWidthWidget):
             expected = set(step.active_notes or step.notes)
         else:
             expected = set()
+        held_notes = (
+            expected.difference(step.notes)
+            if step is not None and self.study_mode == "guided"
+            else set()
+        )
         self.study_expected_notes = expected
         metadata = self._study_note_metadata_for_step(step)
         overlays = {
@@ -7472,19 +9896,6 @@ class ControlWindow(ResponsiveWidthWidget):
             else None
         )
         interval_labels: Dict[int, str] = {}
-        if root_pc is not None:
-            root_candidates = sorted(note for note in expected if note % 12 == root_pc)
-            root_note = root_candidates[0] if root_candidates else min(expected)
-            present = {(note - root_note) % 12 for note in expected}
-            chord_name = str(principal_match.get("nombre") or "")
-            for note in expected:
-                label = interval_label_for_context(
-                    (note - root_note) % 12,
-                    present,
-                    chord_name,
-                )
-                if label:
-                    interval_labels[note] = label
         for note, event in metadata.items():
             if note not in expected:
                 continue
@@ -7495,7 +9906,9 @@ class ControlWindow(ResponsiveWidthWidget):
         self.piano.set_display_chord_notes(overlays)
         self.piano.set_display_scale_notes({})
         self.piano.set_display_scale_label("")
+        self.piano.set_interval_labels(interval_labels)
         self.piano.set_study_wrong_notes(self.study_wrong_notes)
+        self.piano.set_study_held_notes(held_notes)
         self.fretboard_widget.set_display_overlays(
             overlays,
             {},
@@ -7503,6 +9916,7 @@ class ControlWindow(ResponsiveWidthWidget):
             root_pc,
             root_label,
         )
+        self.fretboard_widget.set_study_fingering_labels(interval_labels)
         self.fretboard_widget.set_study_wrong_notes(self.study_wrong_notes)
         self._refresh_staff_for_current_notes()
 
@@ -7511,6 +9925,7 @@ class ControlWindow(ResponsiveWidthWidget):
             return
         self._study_shutdown_done = True
         self._study_stop_all(keep_status=True)
+        self._close_midi_inputs()
         self._close_midi_outputs()
 
     def closeEvent(self, event) -> None:  # noqa: N802 - Qt API
@@ -8332,6 +10747,9 @@ class ControlWindow(ResponsiveWidthWidget):
             return
         self.display_scale_circle_size_percent = int(value)
         self.piano.set_scale_circle_size_factor(self.display_scale_circle_size_percent / 100.0)
+        self.fretboard_widget.set_marker_size_factor(
+            self.display_scale_circle_size_percent / 100.0
+        )
         self._show_status_message(f"Tamaño de círculos de escala: {self.display_scale_circle_size_percent}%")
         self._schedule_visual_state_save()
 
@@ -8925,6 +11343,12 @@ class ControlWindow(ResponsiveWidthWidget):
             ],
             "font_family": self.font_combo.currentFont().family(),
             "font_size": int(self.font_size_spin.value()),
+            "app_skin": str(self.app_skin_key),
+            "instrument_scale_percent": int(self.ipad_instrument_scale_percent),
+            "study_student_opacity_percent": int(
+                self.study_student_opacity_percent
+            ),
+            "focus_mode_enabled": bool(self.ipad_focus_mode_enabled),
             "keyboard_labels_visible": bool(self.keyboard_labels_action.isChecked()),
             "chord_text_color": self.chord_text_color.name(),
             "chord_background": self.chord_bg_color.name(),
@@ -8982,6 +11406,35 @@ class ControlWindow(ResponsiveWidthWidget):
 
     def _apply_appearance_payload(self, prefs: Dict[str, object]) -> None:
         self.piano.set_base_color(QColor(240, 154, 0))
+
+        app_skin = prefs.get("app_skin")
+        if isinstance(app_skin, str):
+            self._apply_app_skin(
+                app_skin,
+                persist=False,
+                refresh_styles=False,
+            )
+
+        instrument_scale = prefs.get("instrument_scale_percent")
+        if isinstance(instrument_scale, int):
+            self.ipad_instrument_scale_percent = max(
+                80, min(120, int(instrument_scale))
+            )
+            minimum_height = max(
+                144,
+                int(round(180 * self.ipad_instrument_scale_percent / 100.0)),
+            )
+            self.piano.setMinimumHeight(minimum_height)
+            self.fretboard_widget.setMinimumHeight(minimum_height)
+
+        student_opacity = prefs.get("study_student_opacity_percent")
+        if isinstance(student_opacity, (int, float)):
+            self.study_student_opacity_percent = max(
+                0, min(100, int(round(float(student_opacity))))
+            )
+            self.piano.set_study_student_opacity(
+                self.study_student_opacity_percent / 100.0
+            )
 
         chord_rgba = prefs.get("chord_color_rgba")
         if isinstance(chord_rgba, list) and len(chord_rgba) == 4 and all(isinstance(x, int) for x in chord_rgba):
@@ -9045,6 +11498,9 @@ class ControlWindow(ResponsiveWidthWidget):
         if isinstance(size_percent, int):
             self.display_scale_circle_size_percent = max(50, min(200, size_percent))
             self.piano.set_scale_circle_size_factor(self.display_scale_circle_size_percent / 100.0)
+            self.fretboard_widget.set_marker_size_factor(
+                self.display_scale_circle_size_percent / 100.0
+            )
 
         scale_colors = prefs.get("display_scale_colors")
         if isinstance(scale_colors, dict):
@@ -9136,6 +11592,11 @@ class ControlWindow(ResponsiveWidthWidget):
             self.keyboard_labels_action.setChecked(keyboard_labels)
             self.piano.set_keyboard_labels_visible(keyboard_labels)
 
+        focus_mode = prefs.get("focus_mode_enabled")
+        if isinstance(focus_mode, bool):
+            self.ipad_focus_mode_enabled = focus_mode
+            self.single_navigation_rail.setVisible(not focus_mode)
+
         self._update_display_overlays()
 
     def _preferences_payload(self):
@@ -9158,6 +11619,13 @@ class ControlWindow(ResponsiveWidthWidget):
             "capture_window_ms": int(self.capture_window_spin.value()),
             "font_family": self.font_combo.currentFont().family(),
             "font_size": int(self.font_size_spin.value()),
+            "app_skin": str(self.app_skin_key),
+            "instrument_scale_percent": int(self.ipad_instrument_scale_percent),
+            "study_student_opacity_percent": int(
+                self.study_student_opacity_percent
+            ),
+            "focus_mode_enabled": bool(self.ipad_focus_mode_enabled),
+            "live_midi_thru_enabled": bool(self.live_midi_thru_enabled),
             "always_on_top": False,
             "keyboard_labels_visible": bool(self.keyboard_labels_action.isChecked()),
             "chord_text_color": self.chord_text_color.name(),
@@ -9343,6 +11811,43 @@ class ControlWindow(ResponsiveWidthWidget):
         if isinstance(octaves, int):
             self.octaves_spin.setValue(max(1, min(7, octaves)))
 
+        app_skin = prefs.get("app_skin")
+        if isinstance(app_skin, str):
+            self._apply_app_skin(
+                app_skin,
+                persist=False,
+                refresh_styles=False,
+            )
+
+        instrument_scale = prefs.get("instrument_scale_percent")
+        if isinstance(instrument_scale, int):
+            self.ipad_instrument_scale_percent = max(
+                80, min(120, int(instrument_scale))
+            )
+            minimum_height = max(
+                144,
+                int(round(180 * self.ipad_instrument_scale_percent / 100.0)),
+            )
+            self.piano.setMinimumHeight(minimum_height)
+            self.fretboard_widget.setMinimumHeight(minimum_height)
+
+        student_opacity = prefs.get("study_student_opacity_percent")
+        if isinstance(student_opacity, (int, float)):
+            self.study_student_opacity_percent = max(
+                0, min(100, int(round(float(student_opacity))))
+            )
+            self.piano.set_study_student_opacity(
+                self.study_student_opacity_percent / 100.0
+            )
+
+        focus_mode = prefs.get("focus_mode_enabled")
+        if isinstance(focus_mode, bool):
+            self.ipad_focus_mode_enabled = focus_mode
+
+        live_thru = prefs.get("live_midi_thru_enabled")
+        if isinstance(live_thru, bool):
+            self.live_midi_thru_enabled = live_thru
+
         self.piano.set_base_color(QColor(240, 154, 0))
 
         chord_rgba = prefs.get("chord_color_rgba")
@@ -9414,6 +11919,9 @@ class ControlWindow(ResponsiveWidthWidget):
         if isinstance(size_percent, int):
             self.display_scale_circle_size_percent = max(50, min(200, size_percent))
             self.piano.set_scale_circle_size_factor(self.display_scale_circle_size_percent / 100.0)
+            self.fretboard_widget.set_marker_size_factor(
+                self.display_scale_circle_size_percent / 100.0
+            )
 
         role_overrides = prefs.get("scale_role_overrides")
         if isinstance(role_overrides, dict):
@@ -9476,6 +11984,9 @@ class ControlWindow(ResponsiveWidthWidget):
             self._apply_staff_settings()
 
         self.set_view_mode(DEFAULT_VIEW_MODE, persist=False)
+        self.single_navigation_rail.setVisible(
+            not self.ipad_focus_mode_enabled
+        )
         saved_instrument_view = prefs.get("instrument_view")
         if saved_instrument_view in ("piano", "guitar"):
             self._set_instrument_view(
@@ -9690,6 +12201,7 @@ class ControlWindow(ResponsiveWidthWidget):
 
     def refresh_inputs(self):
         current_name = self.input_combo.currentData()
+        self.midi_input_errors = {}
         self.input_combo.blockSignals(True)
         self.input_combo.clear()
         try:
@@ -9698,7 +12210,7 @@ class ControlWindow(ResponsiveWidthWidget):
                 mido.set_backend("mido.backends.rtmidi")
             except Exception:
                 pass
-            names = mido.get_input_names()
+            names = list(dict.fromkeys(mido.get_input_names()))
         except ModuleNotFoundError:
             if not self._midi_backend_error_shown:
                 self._midi_backend_error_shown = True
@@ -9708,11 +12220,14 @@ class ControlWindow(ResponsiveWidthWidget):
                     "Si es la app empaquetada, recompílala incluyendo mido.backends.rtmidi."
                 )
             names = []
+            self.midi_input_errors["Backend MIDI"] = "python-rtmidi no disponible"
         except Exception as e:
             if not self._midi_backend_error_shown:
                 self._midi_backend_error_shown = True
                 self._show_status_message(f"Error MIDI: no se pudieron listar los dispositivos MIDI: {e}")
             names = []
+            self.midi_input_errors["Enumeración MIDI IN"] = str(e)
+        self.midi_input_names_available = [str(name) for name in names]
 
         if not names:
             self.input_combo.addItem("No hay dispositivos MIDI", None)
@@ -9733,6 +12248,7 @@ class ControlWindow(ResponsiveWidthWidget):
 
         self.change_input()
         self._refresh_midi_outputs()
+        self._sync_midi_device_status()
 
     def _clear_live_midi_state(self) -> None:
         had_notes = bool(self.active_notes or self.sustained_notes)
@@ -9744,6 +12260,7 @@ class ControlWindow(ResponsiveWidthWidget):
         self.active_notes.clear()
         self.sustained_notes.clear()
         self._held_note_sources.clear()
+        self._sustained_note_sources.clear()
         self._sustain_sources.clear()
         self.note_activation_order.clear()
         self.sustain_on = False
@@ -9751,6 +12268,93 @@ class ControlWindow(ResponsiveWidthWidget):
         self.piano.clear_sustained()
         if had_notes:
             self._refresh_staff_for_current_notes()
+
+    @staticmethod
+    def _midi_source_matches(
+        source: Tuple[int, int],
+        input_id: int,
+        channel: Optional[int] = None,
+    ) -> bool:
+        return (
+            int(source[0]) == int(input_id)
+            and (channel is None or int(source[1]) == int(channel))
+        )
+
+    def _release_midi_source(
+        self,
+        input_id: int,
+        channel: Optional[int] = None,
+    ) -> bool:
+        changed = False
+        for note, sources in list(self._held_note_sources.items()):
+            remaining = {
+                source
+                for source in sources
+                if not self._midi_source_matches(source, input_id, channel)
+            }
+            if remaining:
+                self._held_note_sources[note] = remaining
+                continue
+            self._held_note_sources.pop(note, None)
+            self.active_notes.discard(note)
+            self.piano.set_pressed(note, False)
+            changed = True
+
+        for note, sources in list(self._sustained_note_sources.items()):
+            remaining = {
+                source
+                for source in sources
+                if not self._midi_source_matches(source, input_id, channel)
+            }
+            if remaining:
+                self._sustained_note_sources[note] = remaining
+                continue
+            self._sustained_note_sources.pop(note, None)
+            self.sustained_notes.discard(note)
+            self.piano.set_sustained(note, False)
+            changed = True
+
+        self._sustain_sources = {
+            source
+            for source in self._sustain_sources
+            if not self._midi_source_matches(source, input_id, channel)
+        }
+        self.sustain_on = bool(self._sustain_sources)
+
+        prefix = f"midi:{int(input_id)}:"
+        for source_id in list(self._study_input_sources):
+            if not source_id.startswith(prefix):
+                continue
+            if channel is not None and not source_id.startswith(
+                f"{prefix}{int(channel)}:"
+            ):
+                continue
+            self._study_input_note_off(source_id)
+        self._study_sustained_channels = {
+            source
+            for source in self._study_sustained_channels
+            if not self._midi_source_matches(source, input_id, channel)
+        }
+        self._study_deferred_note_offs = {
+            source: deferred
+            for source, deferred in self._study_deferred_note_offs.items()
+            if not self._midi_source_matches(source, input_id, channel)
+        }
+        return changed
+
+    def _release_sustain_source(self, source: Tuple[int, int]) -> bool:
+        changed = False
+        self._sustain_sources.discard(source)
+        self.sustain_on = bool(self._sustain_sources)
+        for note, sources in list(self._sustained_note_sources.items()):
+            sources.discard(source)
+            if sources:
+                continue
+            self._sustained_note_sources.pop(note, None)
+            self.sustained_notes.discard(note)
+            self.piano.set_sustained(note, False)
+            changed = True
+        return changed
 
     def _close_midi_inputs(self) -> None:
         ports = []
@@ -9771,24 +12375,69 @@ class ControlWindow(ResponsiveWidthWidget):
 
         self.midi_in = None
         self.midi_inputs = []
+        self.midi_input_names_connected = []
         self._clear_live_midi_state()
 
-    def _close_midi_outputs(self) -> None:
+    def _close_midi_outputs(self, send_panic: bool = True) -> None:
         for port in list(getattr(self, "midi_outputs", [])):
+            if send_panic:
+                output_failed = False
+                for channel in range(16):
+                    for control, value in ((64, 0), (123, 0)):
+                        try:
+                            port.send(
+                                mido.Message(
+                                    "control_change",
+                                    channel=channel,
+                                    control=control,
+                                    value=value,
+                                )
+                            )
+                        except Exception:
+                            output_failed = True
+                            break
+                    if output_failed:
+                        break
             try:
                 port.close()
             except Exception:
                 pass
         self.midi_outputs = []
+        self.midi_output_names_connected = []
+
+    def _desired_midi_route(self) -> str:
+        return (
+            "output"
+            if (
+                getattr(self, "_study_section_active", False)
+                and self.study_mode == "original"
+                and self.study_transport in ("original", "preview")
+            )
+            else "input"
+        )
+
+    def _open_midi_outputs(self) -> None:
+        self.midi_output_errors = {}
+        outputs = []
+        connected_names = []
+        for name in self.midi_output_names_available:
+            try:
+                outputs.append(mido.open_output(name))
+                connected_names.append(str(name))
+            except Exception as exc:
+                self.midi_output_errors[str(name)] = str(exc)
+        self.midi_outputs = outputs
+        self.midi_output_names_connected = connected_names
 
     def _refresh_midi_outputs(self) -> None:
         self._close_midi_outputs()
+        self.midi_output_errors = {}
         try:
             try:
                 mido.set_backend("mido.backends.rtmidi")
             except Exception:
                 pass
-            names = mido.get_output_names()
+            names = list(dict.fromkeys(mido.get_output_names()))
         except Exception as exc:
             if not self._study_midi_output_error_shown:
                 self._study_midi_output_error_shown = True
@@ -9796,14 +12445,66 @@ class ControlWindow(ResponsiveWidthWidget):
                     f"No se pudieron listar las salidas MIDI: {exc}"
                 )
             names = []
+            self.midi_output_errors["Enumeración MIDI OUT"] = str(exc)
+        self.midi_output_names_available = [str(name) for name in names]
+        if self._desired_midi_route() == "output":
+            self._open_midi_outputs()
+            self._midi_route_mode = "output"
+        self._sync_midi_device_status()
 
-        outputs = []
-        for name in names:
-            try:
-                outputs.append(mido.open_output(name))
-            except Exception:
-                continue
-        self.midi_outputs = outputs
+    def _open_selected_midi_inputs(self) -> None:
+        self.midi_input_errors = {}
+        selected = self.input_combo.currentData()
+        if not selected:
+            return
+        try:
+            if selected == self._all_inputs_value:
+                opened = []
+                connected_names = []
+                for name in self.midi_input_names_available:
+                    try:
+                        opened.append(mido.open_input(name))
+                        connected_names.append(str(name))
+                    except Exception as exc:
+                        self.midi_input_errors[str(name)] = str(exc)
+                self.midi_inputs = opened
+                self.midi_input_names_connected = connected_names
+                self.midi_in = opened[0] if opened else None
+            else:
+                self.midi_in = mido.open_input(selected)
+                self.midi_inputs = [self.midi_in]
+                self.midi_input_names_connected = [str(selected)]
+        except Exception as exc:
+            self.midi_input_errors[str(selected)] = str(exc)
+            self.midi_in = None
+            self.midi_inputs = []
+            self.midi_input_names_connected = []
+
+    def _apply_midi_routing_policy(self) -> None:
+        if self._midi_route_transition:
+            return
+        self._midi_route_transition = True
+        try:
+            desired = self._desired_midi_route()
+            route_changed = desired != self._midi_route_mode
+            if desired == "output":
+                if self.midi_inputs or self.midi_in is not None:
+                    self._close_midi_inputs()
+                if route_changed and not self.midi_outputs:
+                    self._open_midi_outputs()
+            else:
+                if self.midi_outputs:
+                    self._close_midi_outputs(send_panic=False)
+                if route_changed and not self.midi_inputs:
+                    self._open_selected_midi_inputs()
+            self._midi_route_mode = desired
+        finally:
+            self._midi_route_transition = False
+        self._sync_midi_device_status()
+
+    def _send_live_midi_thru_message(self, message) -> None:
+        # External MIDI output belongs exclusively to exercise playback.
+        return
 
     def _send_study_midi_message(
         self,
@@ -9812,7 +12513,12 @@ class ControlWindow(ResponsiveWidthWidget):
         velocity: int = 0,
         channel: int = 0,
     ) -> None:
-        if not self.midi_outputs:
+        if (
+            not self.midi_outputs
+            or not self._study_section_active
+            or self.study_mode != "original"
+            or self.study_transport not in ("original", "preview")
+        ):
             return
         message_type = "note_on" if event_type == "note_on" else "note_off"
         message = mido.Message(
@@ -9824,37 +12530,25 @@ class ControlWindow(ResponsiveWidthWidget):
         for output in list(self.midi_outputs):
             try:
                 output.send(message)
-            except Exception:
+            except Exception as exc:
+                failed_name = str(getattr(output, "name", "Salida MIDI"))
+                self.midi_output_errors[failed_name] = str(exc)
                 try:
                     output.close()
                 except Exception:
                     pass
                 if output in self.midi_outputs:
                     self.midi_outputs.remove(output)
+                if failed_name in self.midi_output_names_connected:
+                    self.midi_output_names_connected.remove(failed_name)
+                self._sync_midi_device_status()
 
     def change_input(self):
         self._close_midi_inputs()
-
-        selected = self.input_combo.currentData()
-        if not selected:
-            return
-        try:
-            if selected == self._all_inputs_value:
-                names = mido.get_input_names()
-                opened = []
-                for name in names:
-                    try:
-                        opened.append(mido.open_input(name))
-                    except Exception:
-                        continue
-                self.midi_inputs = opened
-                self.midi_in = opened[0] if opened else None
-            else:
-                self.midi_in = mido.open_input(selected)
-                self.midi_inputs = [self.midi_in]
-        except Exception:
-            self.midi_in = None
-            self.midi_inputs = []
+        if self._desired_midi_route() == "input":
+            self._open_selected_midi_inputs()
+            self._midi_route_mode = "input"
+        self._sync_midi_device_status()
 
     def range_changed(self, *_args, fit_window: bool = False):
         start = self.start_combo.currentData()
@@ -9866,6 +12560,7 @@ class ControlWindow(ResponsiveWidthWidget):
         if fit_window:
             self._fit_keyboard_window_to_available_width()
         self._update_display_overlays_with_keyboard_status()
+        self._sync_ipad_settings_controls()
 
     def _fit_keyboard_window_to_available_width(self):
         if self.view_mode == "single":
@@ -9981,6 +12676,7 @@ class ControlWindow(ResponsiveWidthWidget):
         if not self.custom_chords:
             label = QLabel("No hay acordes aprendidos.")
             self.learned_chords_layout.addWidget(label)
+            self._refresh_ipad_dictionary()
             return
 
         for idx, chord in enumerate(self.custom_chords):
@@ -10003,6 +12699,7 @@ class ControlWindow(ResponsiveWidthWidget):
             container = QWidget()
             container.setLayout(row)
             self.learned_chords_layout.addWidget(container)
+        self._refresh_ipad_dictionary()
 
     def _edit_chord_labels(self):
         notes = set(self.active_notes) | set(self.sustained_notes)
@@ -10103,6 +12800,8 @@ class ControlWindow(ResponsiveWidthWidget):
             self.note_activation_order,
             self._study_playback_note_colors,
         )
+        visible_fingerings = self._study_visible_fingering_labels()
+        self.fretboard_widget.set_study_fingering_labels(visible_fingerings)
         self._update_interval_labels(recognition_notes, chord_info)
 
     def _sync_note_activation_order(self, notes: Set[int]) -> None:
@@ -10296,18 +12995,46 @@ class ControlWindow(ResponsiveWidthWidget):
     def _update_interval_labels(self, notas: Set[int], chord_info: Optional[Dict]):
         fingering_labels = {}
         if self._study_section_active:
-            fingering_labels = {
-                note: label
-                for note, label in self._study_fingering_labels_for_current_step().items()
-                if note in notas
-            }
+            fingering_labels = self._study_visible_fingering_labels()
+            self.piano.set_interval_labels(fingering_labels)
+            return
         if not notas:
             self.piano.set_interval_labels(dict(self.display_chord_interval_labels))
             return
 
+        ordered_notes = sorted(int(note) for note in notas)
+        if len(ordered_notes) == 1:
+            labels = {ordered_notes[0]: midi_to_name(ordered_notes[0])}
+            labels.update(fingering_labels)
+            self.piano.set_interval_labels(labels)
+            return
+
+        if len(ordered_notes) == 2:
+            lower, upper = ordered_notes
+            labels = {
+                lower: "f",
+                upper: simple_interval_name(upper - lower),
+            }
+            labels.update(fingering_labels)
+            self.piano.set_interval_labels(labels)
+            return
+
         principal_match = chord_info.get("principal_match") if chord_info else None
         if not principal_match:
-            self.piano.set_interval_labels(fingering_labels)
+            reference_note = ordered_notes[0]
+            present_intervals = {
+                (note - reference_note) % 12 for note in ordered_notes
+            }
+            labels = {
+                note: interval_label_for_context(
+                    (note - reference_note) % 12,
+                    present_intervals,
+                )
+                for note in ordered_notes
+            }
+            labels = {note: label for note, label in labels.items() if label}
+            labels.update(fingering_labels)
+            self.piano.set_interval_labels(labels)
             return
 
         root_pc = principal_match.get("root")
@@ -10517,33 +13244,51 @@ class ControlWindow(ResponsiveWidthWidget):
             inputs = [self.midi_in]
         if not inputs:
             return
-        try:
-            changed = False
-            new_note_on = False
-            for midi_input in inputs:
+        changed = False
+        new_note_on = False
+        failed_inputs = []
+        for midi_input in inputs:
+            try:
                 for msg in midi_input.iter_pending():
+                    if (
+                        self._study_section_active
+                        and self.study_transport in ("original", "preview")
+                    ):
+                        continue
                     self._study_process_midi_message(id(midi_input), msg)
+                    self._send_live_midi_thru_message(msg)
                     source = (
                         id(midi_input),
                         int(getattr(msg, "channel", 0) or 0),
                     )
-                    # Pedal de sustain (CC 64)
-                    if msg.type == "control_change" and getattr(msg, "control", None) == 64:
-                        sustain_was_on = self.sustain_on
-                        if msg.value >= 64:
+                    if msg.type == "control_change":
+                        control = int(getattr(msg, "control", -1))
+                        value = int(getattr(msg, "value", 0))
+                        if control == 64 and value >= 64:
                             self._sustain_sources.add(source)
-                        else:
-                            self._sustain_sources.discard(source)
-                        self.sustain_on = bool(self._sustain_sources)
-                        if sustain_was_on and not self.sustain_on:
-                            if self.sustained_notes:
-                                for n in list(self.sustained_notes):
-                                    self.piano.set_sustained(n, False)
-                                self.sustained_notes.clear()
-                                changed = True
+                            self.sustain_on = True
+                        elif control == 64:
+                            changed = self._release_sustain_source(source) or changed
+                        elif control in (120, 123):
+                            changed = (
+                                self._release_midi_source(source[0], source[1])
+                                or changed
+                            )
+                        elif control == 121:
+                            changed = self._release_sustain_source(source) or changed
                     elif msg.type in ("note_on", "note_off"):
-                        note = msg.note
+                        note = int(msg.note)
                         if msg.type == "note_on" and msg.velocity > 0:
+                            sustained_sources = self._sustained_note_sources.get(
+                                note, set()
+                            )
+                            sustained_sources.discard(source)
+                            if sustained_sources:
+                                self._sustained_note_sources[note] = sustained_sources
+                            else:
+                                self._sustained_note_sources.pop(note, None)
+                                self.sustained_notes.discard(note)
+                                self.piano.set_sustained(note, False)
                             note_sources = self._held_note_sources.setdefault(note, set())
                             was_held = bool(note_sources)
                             note_sources.add(source)
@@ -10553,42 +13298,57 @@ class ControlWindow(ResponsiveWidthWidget):
                             if note in self.note_activation_order:
                                 self.note_activation_order.remove(note)
                             self.note_activation_order.append(note)
-                            # Si estaba en sustain, lo quitamos de ahí
-                            if note in self.sustained_notes:
-                                self.sustained_notes.discard(note)
-                                self.piano.set_sustained(note, False)
                             new_note_on = True
                         else:
                             note_sources = self._held_note_sources.get(note, set())
                             note_sources.discard(source)
+                            if source in self._sustain_sources and not self._study_section_active:
+                                self._sustained_note_sources.setdefault(
+                                    note, set()
+                                ).add(source)
+                                self.sustained_notes.add(note)
                             if note_sources:
+                                self._held_note_sources[note] = note_sources
+                                changed = True
                                 continue
                             self._held_note_sources.pop(note, None)
                             self.piano.set_pressed(note, False)
-                            if self.sustain_on:
-                                self.active_notes.discard(note)
-                                if self._study_section_active:
-                                    self.sustained_notes.discard(note)
-                                    self.piano.set_sustained(note, False)
-                                else:
-                                    self.sustained_notes.add(note)
-                                    self.piano.set_sustained(note, True)
+                            self.active_notes.discard(note)
+                            if self._sustained_note_sources.get(note):
+                                self.piano.set_sustained(note, True)
                             else:
-                                self.active_notes.discard(note)
                                 self.sustained_notes.discard(note)
                                 self.piano.set_sustained(note, False)
                         changed = True
-            if changed:
-                notas_para_acorde = set(self.active_notes) | set(self.sustained_notes)
-                self._refresh_staff_for_current_notes()
-                if self.learning_chord:
-                    if self.learning_waiting_first_note and new_note_on and notas_para_acorde:
-                        self._begin_capture_window(notas_para_acorde)
-                    elif self.capture_timer.isActive():
-                        self._absorb_capture_notes(notas_para_acorde)
-        except Exception:
-            # no queremos que un error de MIDI tumbe la interfaz
-            pass
+            except Exception as exc:
+                failed_inputs.append((midi_input, exc))
+                changed = self._release_midi_source(id(midi_input)) or changed
+
+        for failed_input, exc in failed_inputs:
+            failed_name = str(getattr(failed_input, "name", "Entrada MIDI"))
+            self.midi_input_errors[failed_name] = str(exc)
+            try:
+                failed_input.close()
+            except Exception:
+                pass
+            self.midi_inputs = [
+                port for port in self.midi_inputs if port is not failed_input
+            ]
+            if failed_name in self.midi_input_names_connected:
+                self.midi_input_names_connected.remove(failed_name)
+            if self.midi_in is failed_input:
+                self.midi_in = self.midi_inputs[0] if self.midi_inputs else None
+        if failed_inputs:
+            self._sync_midi_device_status()
+
+        if changed:
+            notas_para_acorde = set(self.active_notes) | set(self.sustained_notes)
+            self._refresh_staff_for_current_notes()
+            if self.learning_chord:
+                if self.learning_waiting_first_note and new_note_on and notas_para_acorde:
+                    self._begin_capture_window(notas_para_acorde)
+                elif self.capture_timer.isActive():
+                    self._absorb_capture_notes(notas_para_acorde)
 
 
 

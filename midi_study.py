@@ -75,6 +75,7 @@ class PlaybackEvent:
     velocity: int
     channel: int
     staff: Optional[int] = None
+    fingering: str = ""
 
 
 @dataclass(frozen=True)
@@ -287,6 +288,7 @@ def build_original_timeline(
                     note.velocity,
                     note.channel,
                     note.staff,
+                    note.fingering,
                 ),
             )
         )
@@ -301,6 +303,7 @@ def build_original_timeline(
                     0,
                     note.channel,
                     note.staff,
+                    note.fingering,
                 ),
             )
         )

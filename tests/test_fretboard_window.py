@@ -72,21 +72,26 @@ class TestFretboardWindow(unittest.TestCase):
             widget.alt_label.font().pointSize(),
         )
 
-    def test_embedded_fretboard_maps_image_to_full_widget_width(self) -> None:
+    def test_embedded_fretboard_preserves_source_aspect_ratio(self) -> None:
         widget = FretboardWidget()
-        widget.resize(1200, 240)
+        widget.resize(1200, 320)
         widget.set_embedded_mode(True)
 
+        target = widget._embedded_target_rect()
         top_left = widget._embedded_map_point(0.0, widget.EMBEDDED_SOURCE_TOP)
         bottom_right = widget._embedded_map_point(
             widget.IMAGE_WIDTH,
             widget.EMBEDDED_SOURCE_TOP + widget.EMBEDDED_SOURCE_HEIGHT,
         )
 
-        self.assertAlmostEqual(top_left.x(), 0.0)
-        self.assertAlmostEqual(top_left.y(), 0.0)
-        self.assertAlmostEqual(bottom_right.x(), 1200.0)
-        self.assertAlmostEqual(bottom_right.y(), 240.0)
+        self.assertAlmostEqual(
+            target.width() / target.height(),
+            widget.IMAGE_WIDTH / widget.EMBEDDED_SOURCE_HEIGHT,
+        )
+        self.assertAlmostEqual(top_left.x(), target.left())
+        self.assertAlmostEqual(top_left.y(), target.top())
+        self.assertAlmostEqual(bottom_right.x(), target.right())
+        self.assertAlmostEqual(bottom_right.y(), target.bottom())
 
     def test_middle_c_is_drawn_only_once_in_first_position(self) -> None:
         widget = FretboardWidget()

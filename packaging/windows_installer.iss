@@ -1,5 +1,5 @@
 #define MyAppName "MIDI Piano Jaramillo"
-#define MyAppVersion "2026.07.21"
+#define MyAppVersion "2026.07.25"
 #define MyAppPublisher "Midi Piano Jaramillo"
 #define MyAppExeName "MIDI Piano Jaramillo.exe"
 

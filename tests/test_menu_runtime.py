@@ -11,10 +11,10 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 from PyQt6.QtCore import QEvent, QTimer, Qt
 from PyQt6.QtGui import QColor, QKeyEvent
-from PyQt6.QtWidgets import QApplication, QDialog, QWidget
+from PyQt6.QtWidgets import QApplication, QDialog, QScrollArea, QWidget
 
 import main
-from midi_study import StudyLibrary, StudyNote, write_midi_file
+from midi_study import PlaybackEvent, StudyLibrary, StudyNote, write_midi_file
 from main import CHORD_PATTERNS, ChordWindow, ControlWindow, FretboardWidget, PianoWindow, StaffWindow
 
 
@@ -66,6 +66,17 @@ class FakeMidiOutput:
 
     def close(self) -> None:
         self.close_count += 1
+
+
+class FailingMidiPort(FakeMidiPort):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail = False
+
+    def iter_pending(self):
+        if self.fail:
+            raise RuntimeError("Puerto MIDI desconectado")
+        return super().iter_pending()
 
 
 class TestMenuRuntime(unittest.TestCase):
@@ -142,6 +153,19 @@ class TestMenuRuntime(unittest.TestCase):
         self.assertGreaterEqual(self.controls.chord_menu.minimumWidth(), 666)
         self.assertGreaterEqual(self.controls.scale_menu.minimumWidth(), 626)
 
+    def test_ipad_skin_changes_shell_without_changing_keyboard_or_window_size(self) -> None:
+        original_color = QColor(self.controls.piano.base_color)
+        original_size = self.piano.size()
+
+        self.controls._apply_app_skin("midnight", persist=False)
+        combined = self.piano._combined_container
+        self.assertIsNotNone(combined)
+        self.assertIn("#090611", combined.styleSheet())
+        self.assertEqual(self.controls.piano.base_color, original_color)
+        self.assertEqual(self.piano.size(), original_size)
+
+        self.controls._apply_app_skin("classic", persist=False)
+
     def test_study_shortcuts_are_bound_to_transport_and_sequence(self) -> None:
         shortcuts = self.controls._shortcut_definitions()
         self.assertEqual(shortcuts["study_play_stop"][1], "Space")
@@ -176,6 +200,31 @@ class TestMenuRuntime(unittest.TestCase):
             Qt.KeyboardModifier.NoModifier,
         )
         self.assertTrue(controls.eventFilter(controls.study_name_edit, release_event))
+        controls._study_stop_playback(keep_status=True)
+        controls._set_display_panel_section(0)
+
+    def test_study_ipad_sequence_lists_and_selects_every_step(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls.study_notes = [
+            StudyNote(60, 0, 160, 96, 0),
+            StudyNote(64, 620, 160, 96, 0),
+            StudyNote(67, 1240, 160, 96, 0),
+        ]
+        controls.study_selected_channels = {0}
+        controls._study_rebuild_steps()
+        controls._sync_ipad_study_summary()
+        self.app.processEvents()
+
+        self.assertEqual(len(controls.ipad_study_step_buttons), 3)
+        self.assertEqual(
+            [button.text() for button in controls.ipad_study_step_buttons],
+            ["1", "2", "3"],
+        )
+        controls.ipad_study_step_buttons[1].click()
+        controls.study_playback_timer.stop()
+        self.assertEqual(controls.study_active_step_index, 1)
+        self.assertEqual(controls.study_expected_notes, {64})
         controls._study_stop_playback(keep_status=True)
         controls._set_display_panel_section(0)
 
@@ -233,6 +282,297 @@ class TestMenuRuntime(unittest.TestCase):
         piano.set_pressed(60, False)
         self.assertNotIn(60, piano.pressed_notes)
         self.controls.range_changed(fit_window=False)
+
+    def test_all_notes_off_releases_live_keys(self) -> None:
+        controls = self.controls
+        controls._clear_live_midi_state()
+        port = FakeMidiPort()
+        controls.midi_in = port
+        controls.midi_inputs = [port]
+        port.messages.extend(
+            [
+                main.mido.Message("note_on", note=60, velocity=100, channel=2),
+                main.mido.Message(
+                    "control_change",
+                    control=123,
+                    value=0,
+                    channel=2,
+                ),
+            ]
+        )
+
+        controls.poll_midi()
+
+        self.assertFalse(controls.active_notes)
+        self.assertFalse(controls.sustained_notes)
+        self.assertFalse(controls.piano.pressed_notes)
+        controls._close_midi_inputs()
+
+    def test_disconnected_input_releases_its_notes(self) -> None:
+        controls = self.controls
+        controls._clear_live_midi_state()
+        port = FailingMidiPort()
+        controls.midi_in = port
+        controls.midi_inputs = [port]
+        port.messages.append(
+            main.mido.Message("note_on", note=67, velocity=100, channel=0)
+        )
+        controls.poll_midi()
+        self.assertIn(67, controls.active_notes)
+
+        port.fail = True
+        controls.poll_midi()
+
+        self.assertFalse(controls.active_notes)
+        self.assertFalse(controls.piano.pressed_notes)
+        self.assertNotIn(port, controls.midi_inputs)
+        self.assertEqual(port.close_count, 1)
+
+    def test_closing_outputs_sends_sustain_off_and_all_notes_off(self) -> None:
+        controls = self.controls
+        output = FakeMidiOutput()
+        controls.midi_outputs = [output]
+
+        controls._close_midi_outputs()
+
+        self.assertEqual(output.close_count, 1)
+        self.assertFalse(controls.midi_outputs)
+        self.assertEqual(len(output.messages), 32)
+        controls_by_channel = {
+            channel: {
+                message.control
+                for message in output.messages
+                if message.channel == channel
+            }
+            for channel in range(16)
+        }
+        self.assertTrue(
+            all(controls_set == {64, 123} for controls_set in controls_by_channel.values())
+        )
+
+    def test_midi_output_is_reserved_for_exercise_playback(self) -> None:
+        controls = self.controls
+        output = FakeMidiOutput()
+        controls._set_display_panel_section(0)
+
+        controls._send_live_midi_thru_message(
+            main.mido.Message("note_on", note=60, velocity=90)
+        )
+        self.assertFalse(output.messages)
+
+        controls._set_display_panel_section(2)
+        controls.study_mode = "guided"
+        controls.study_transport = "guided"
+        controls.midi_outputs = [output]
+        controls._send_study_midi_message("note_on", 60, 90, 0)
+        self.assertFalse(output.messages)
+
+        controls.study_transport = "preview"
+        controls._send_study_midi_message("note_on", 60, 90, 0)
+        self.assertFalse(output.messages)
+
+        controls.study_mode = "original"
+        controls.study_transport = "original"
+        controls._midi_route_mode = "output"
+        controls._send_study_midi_message("note_on", 60, 90, 0)
+        self.assertEqual(len(output.messages), 1)
+        controls.midi_outputs = []
+        controls._midi_route_mode = None
+        controls._set_display_panel_section(0)
+
+    def test_midi_panel_reports_connected_inputs_and_outputs(self) -> None:
+        controls = self.controls
+        input_port = FakeMidiPort()
+        output_port = FakeMidiOutput()
+        with patch.object(
+            main.mido,
+            "set_backend",
+            return_value=None,
+        ), patch.object(
+            main.mido,
+            "get_input_names",
+            return_value=["Entrada prueba"],
+        ), patch.object(
+            main.mido,
+            "get_output_names",
+            return_value=["Salida prueba"],
+        ), patch.object(
+            main.mido,
+            "open_input",
+            return_value=input_port,
+        ), patch.object(
+            main.mido,
+            "open_output",
+            return_value=output_port,
+        ):
+            controls.refresh_inputs()
+
+        self.assertEqual(
+            controls.midi_input_names_connected,
+            ["Entrada prueba"],
+        )
+        self.assertEqual(
+            controls.midi_output_names_available,
+            ["Salida prueba"],
+        )
+        self.assertFalse(controls.midi_output_names_connected)
+        self.assertIn("1 de 1 conectadas", controls.input_status_label.text())
+        self.assertIn("MIDI OUT automático", controls.output_status_label.text())
+        self.assertIn("0 de 1 conectadas", controls.output_status_label.text())
+        self.assertIn("1 IN · OUT off", controls._ipad_midi_status_text())
+        controls._close_midi_inputs()
+        controls.midi_outputs = []
+        controls.midi_output_names_connected = []
+
+    def test_midi_ports_are_physically_exclusive_by_mode(self) -> None:
+        controls = self.controls
+        first_input = FakeMidiPort()
+        restored_input = FakeMidiPort()
+        output = FakeMidiOutput()
+        with patch.object(
+            main.mido,
+            "set_backend",
+            return_value=None,
+        ), patch.object(
+            main.mido,
+            "get_input_names",
+            return_value=["Entrada prueba"],
+        ), patch.object(
+            main.mido,
+            "get_output_names",
+            return_value=["Salida prueba"],
+        ), patch.object(
+            main.mido,
+            "open_input",
+            side_effect=[first_input, restored_input],
+        ), patch.object(
+            main.mido,
+            "open_output",
+            return_value=output,
+        ):
+            controls._set_display_panel_section(0)
+            controls.refresh_inputs()
+            self.assertEqual(controls.midi_inputs, [first_input])
+            self.assertFalse(controls.midi_outputs)
+
+            controls._set_display_panel_section(2)
+            controls.study_mode = "original"
+            controls.study_transport = "original"
+            controls._apply_midi_routing_policy()
+            self.assertFalse(controls.midi_inputs)
+            self.assertEqual(controls.midi_outputs, [output])
+            self.assertEqual(first_input.close_count, 1)
+
+            controls.study_mode = "guided"
+            controls.study_transport = "guided"
+            controls._apply_midi_routing_policy()
+            self.assertEqual(controls.midi_inputs, [restored_input])
+            self.assertFalse(controls.midi_outputs)
+            self.assertEqual(output.close_count, 1)
+
+        controls._close_midi_inputs()
+        controls._midi_route_mode = None
+        controls._set_display_panel_section(0)
+
+    def test_study_transport_switches_ports_from_input_to_output_and_back(self) -> None:
+        controls = self.controls
+        first_input = FakeMidiPort()
+        restored_input = FakeMidiPort()
+        output = FakeMidiOutput()
+        with patch.object(
+            main.mido,
+            "set_backend",
+            return_value=None,
+        ), patch.object(
+            main.mido,
+            "get_input_names",
+            return_value=["Entrada prueba"],
+        ), patch.object(
+            main.mido,
+            "get_output_names",
+            return_value=["Salida prueba"],
+        ), patch.object(
+            main.mido,
+            "open_input",
+            side_effect=[first_input, restored_input],
+        ), patch.object(
+            main.mido,
+            "open_output",
+            return_value=output,
+        ):
+            controls._set_display_panel_section(2)
+            controls.refresh_inputs()
+            controls.study_notes = [StudyNote(60, 0, 240)]
+            controls.study_selected_channels = {0}
+            controls._study_rebuild_steps()
+            controls._study_set_mode("original")
+
+            self.assertEqual(controls.midi_inputs, [first_input])
+            self.assertFalse(controls.midi_outputs)
+
+            controls._study_start_playback()
+            self.assertEqual(controls.study_transport, "original")
+            self.assertFalse(controls.midi_inputs)
+            self.assertEqual(controls.midi_outputs, [output])
+
+            controls._study_stop_playback()
+            self.assertEqual(controls.study_transport, "idle")
+            self.assertEqual(controls.midi_inputs, [restored_input])
+            self.assertFalse(controls.midi_outputs)
+
+            controls._study_set_mode("guided")
+            self.assertEqual(controls.study_transport, "guided")
+            self.assertEqual(controls.midi_inputs, [restored_input])
+            self.assertFalse(controls.midi_outputs)
+
+        controls._close_midi_inputs()
+        controls._midi_route_mode = None
+        controls._set_display_panel_section(0)
+
+    def test_study_playback_consumes_midi_input_without_visual_attack(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls._clear_live_midi_state()
+        port = FakeMidiPort()
+        controls.midi_in = port
+        controls.midi_inputs = [port]
+        controls.study_transport = "original"
+        port.messages.append(
+            main.mido.Message("note_on", note=69, velocity=100, channel=0)
+        )
+
+        controls.poll_midi()
+
+        self.assertFalse(controls.active_notes)
+        self.assertNotIn(69, controls.piano.pressed_notes)
+        self.assertFalse(port.messages)
+        controls.study_transport = "idle"
+        controls.midi_in = None
+        controls.midi_inputs = []
+        controls._set_display_panel_section(0)
+
+    def test_live_labels_follow_note_interval_and_recognized_chord(self) -> None:
+        controls = self.controls
+        controls._clear_live_midi_state()
+
+        controls.active_notes = {66}
+        controls._refresh_staff_for_current_notes()
+        self.assertEqual(controls.chord_window.display_widget.main_label.text(), "F#4")
+        self.assertEqual(controls.piano.interval_labels, {66: "F#4"})
+
+        controls.active_notes = {66, 70}
+        controls._refresh_staff_for_current_notes()
+        self.assertEqual(controls.chord_window.display_widget.main_label.text(), "3M")
+        self.assertEqual(controls.piano.interval_labels, {66: "f", 70: "3M"})
+
+        controls.active_notes = {62, 66, 69}
+        controls._refresh_staff_for_current_notes()
+        self.assertEqual(controls.chord_window.display_widget.main_label.text(), "D")
+        self.assertEqual(
+            controls.piano.interval_labels,
+            {62: "f", 66: "3M", 69: "5j"},
+        )
+        controls._clear_live_midi_state()
 
     def test_saved_preferences_and_learned_chords_are_loaded(self) -> None:
         self.assertEqual(self.controls.start_combo.currentData(), 48)
@@ -304,21 +644,27 @@ class TestMenuRuntime(unittest.TestCase):
         self.assertFalse(hasattr(controls, "study_load_button"))
         self.assertFalse(hasattr(controls, "study_channels_button"))
         self.assertEqual(controls.chord_window.display_widget.main_label.text(), "C")
-        self.assertEqual(controls.piano.interval_labels.get(64), "3M")
-        self.assertEqual(controls.piano.interval_labels.get(67), "5j")
+        self.assertFalse(controls.piano.interval_labels)
         page = controls.display_panel_section_stack.currentWidget()
-        for child in page.findChildren(QWidget):
-            if not child.isVisible():
-                continue
-            self.assertLessEqual(child.geometry().right(), page.rect().right() + 1)
-            self.assertLessEqual(child.geometry().bottom(), page.rect().bottom() + 1)
+        if isinstance(page, QScrollArea):
+            self.assertFalse(page.horizontalScrollBar().isVisible())
+            self.assertLessEqual(
+                page.widget().minimumSizeHint().width(),
+                page.viewport().width() + 1,
+            )
+        else:
+            for child in page.findChildren(QWidget):
+                if not child.isVisible():
+                    continue
+                self.assertLessEqual(child.geometry().right(), page.rect().right() + 1)
+                self.assertLessEqual(child.geometry().bottom(), page.rect().bottom() + 1)
 
         controls._set_instrument_view("guitar", persist=False, show_status=False)
         self.app.processEvents()
         self.assertIs(window.instrument_stack.currentWidget(), controls.fretboard_widget)
         self.assertEqual(set(controls.fretboard_widget.display_chord_notes), {60, 64, 67})
-        self.assertEqual(controls.fretboard_widget.display_interval_labels.get(64), "3M")
-        self.assertEqual(controls.fretboard_widget.display_interval_labels.get(67), "5j")
+        self.assertFalse(controls.fretboard_widget.display_interval_labels)
+        self.assertEqual(controls.fretboard_widget._marker_label(64), "")
 
         controls._set_instrument_view("piano", persist=False, show_status=False)
         controls._set_display_panel_section(0)
@@ -389,7 +735,7 @@ class TestMenuRuntime(unittest.TestCase):
         controls = self.controls
         controls._set_display_panel_section(2)
         controls.study_notes = [
-            StudyNote(60, 0, 900),
+            StudyNote(60, 0, 300),
             StudyNote(67, 600, 300),
         ]
         controls.study_selected_channels = {0}
@@ -400,13 +746,72 @@ class TestMenuRuntime(unittest.TestCase):
         self.assertEqual(controls.study_active_step_index, 1)
         self.assertFalse(controls.study_wrong_notes)
 
+        # A mirrored MIDI port may deliver the same held pitch just after
+        # the step advances. It still belongs to the previous step.
+        controls._study_input_note_on(60, 90, "test:60:duplicate", 0)
+        self.assertFalse(controls.study_wrong_notes)
+        self.assertFalse(controls.piano.study_wrong_notes)
+
+        controls._study_input_note_off("test:60")
+        controls._study_input_note_off("test:60:duplicate")
+        controls._study_input_note_on(60, 90, "test:60:new-attack", 0)
+        self.assertEqual(controls.study_wrong_notes, {60})
+        controls._study_input_note_off("test:60:new-attack")
+
         controls._study_input_note_on(67, 90, "test:67", 0)
         self.assertEqual(controls.study_transport, "idle")
         self.assertFalse(controls.study_wrong_notes)
 
-        for note in (60, 67):
-            controls._study_input_note_off(f"test:{note}")
+        controls._study_input_note_off("test:67")
         controls._set_display_panel_section(0)
+
+    def test_study_guided_carryover_must_be_released_before_scoring_again(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls.study_notes = [
+            StudyNote(60, 0, 120),
+            StudyNote(60, 600, 120),
+        ]
+        controls.study_selected_channels = {0}
+        controls._study_rebuild_steps()
+        controls._study_set_mode("guided")
+
+        controls._study_input_note_on(60, 90, "test:60:first-port", 0)
+        self.assertEqual(controls.study_active_step_index, 1)
+
+        controls._study_input_note_on(60, 90, "test:60:late-mirror", 0)
+        self.assertEqual(controls.study_active_step_index, 1)
+        self.assertEqual(controls.study_transport, "guided")
+        self.assertFalse(controls.study_wrong_notes)
+
+        controls._study_input_note_off("test:60:first-port")
+        controls._study_input_note_off("test:60:late-mirror")
+        controls._study_input_note_on(60, 90, "test:60:second-attack", 0)
+        self.assertEqual(controls.study_transport, "idle")
+        controls._study_input_note_off("test:60:second-attack")
+        controls._set_display_panel_section(0)
+
+    def test_study_guided_marks_notes_that_continue_without_a_new_attack(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls.study_notes = [
+            StudyNote(60, 0, 900),
+            StudyNote(64, 600, 240),
+        ]
+        controls.study_selected_channels = {0}
+        controls._study_rebuild_steps()
+        controls._study_set_mode("guided")
+
+        self.assertFalse(controls.piano.study_held_notes)
+        controls._study_input_note_on(60, 90, "test:60", 0)
+
+        self.assertEqual(controls.study_active_step_index, 1)
+        self.assertEqual(controls.study_expected_notes, {60, 64})
+        self.assertEqual(controls.piano.study_held_notes, {60})
+
+        controls._study_input_note_off("test:60")
+        controls._set_display_panel_section(0)
+        self.assertFalse(controls.piano.study_held_notes)
 
     def test_study_student_input_uses_subtle_gray_instead_of_orange(self) -> None:
         controls = self.controls
@@ -422,11 +827,35 @@ class TestMenuRuntime(unittest.TestCase):
             (color.red(), color.green(), color.blue()),
             (240, 154, 0),
         )
-        self.assertLess(color.alpha(), 160)
-        self.assertLess(controls.piano._study_student_overlay_color(False).alpha(), 80)
+        self.assertEqual(controls.study_student_opacity_percent, 5)
+        self.assertEqual(color.alpha(), 13)
+        self.assertEqual(
+            controls.piano._study_student_overlay_color(False).alpha(),
+            13,
+        )
+        self.assertEqual(
+            controls.piano._study_student_overlay_color(True).alpha(),
+            13,
+        )
+
+        controls.ipad_settings_student_opacity_slider.setValue(18)
+        self.assertEqual(controls.study_student_opacity_percent, 18)
+        self.assertEqual(
+            controls.piano._study_student_overlay_color(False).alpha(),
+            46,
+        )
+        self.assertEqual(
+            controls._preferences_payload()["study_student_opacity_percent"],
+            18,
+        )
+        self.assertEqual(
+            controls.ipad_settings_student_opacity_value.text(),
+            "18%",
+        )
 
         controls._study_input_note_off("midi:1:0:60")
         controls.piano.set_pressed(60, False)
+        controls.ipad_settings_student_opacity_slider.setValue(5)
         controls._set_display_panel_section(0)
 
     def test_study_import_folder_uses_midi_file_names(self) -> None:
@@ -551,6 +980,74 @@ class TestMenuRuntime(unittest.TestCase):
         self.assertEqual(controls.piano.display_chord_notes[48].green(), 199)
         controls._set_display_panel_section(0)
 
+    def test_musicxml_fingering_remains_visible_during_original_playback(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls.study_notes = [
+            StudyNote(60, 0, 300, 96, 0, staff=1, fingering="3")
+        ]
+        controls._study_rebuild_steps()
+        controls.study_transport = "original"
+        controls._study_dispatch_playback_event(
+            PlaybackEvent("note_on", 0, 60, 96, 0, 1, "3"),
+            0,
+        )
+        controls._study_sync_virtual_notes()
+        controls._refresh_staff_for_current_notes()
+
+        self.assertEqual(controls.piano.interval_labels.get(60), "3")
+        self.assertEqual(
+            controls.fretboard_widget.study_fingering_labels.get(60),
+            "3",
+        )
+        controls._study_stop_all(keep_status=True)
+        controls._set_display_panel_section(0)
+
+    def test_study_hides_all_key_labels_except_fingerings(self) -> None:
+        controls = self.controls
+        controls._set_display_panel_section(2)
+        controls.study_notes = [
+            StudyNote(60, 0, 300, 96, 0, staff=1, fingering="2"),
+            StudyNote(64, 0, 300, 96, 0, staff=1),
+        ]
+        controls.study_selected_channels = {0}
+        controls._study_rebuild_steps()
+        controls._study_set_mode("guided")
+
+        self.assertEqual(controls.piano.interval_labels, {60: "2"})
+        self.assertEqual(
+            controls.fretboard_widget.display_interval_labels,
+            {60: "2"},
+        )
+        self.assertEqual(controls.fretboard_widget._marker_label(60), "2")
+        self.assertEqual(controls.fretboard_widget._marker_label(64), "")
+
+        controls.piano.set_keyboard_labels_visible(False)
+        self.assertTrue(controls.piano._should_draw_interval_labels())
+        controls._study_input_note_on(67, 90, "test:wrong-note", 0)
+        self.assertEqual(controls.piano.interval_labels, {60: "2"})
+        self.assertEqual(
+            controls.fretboard_widget.study_fingering_labels,
+            {60: "2"},
+        )
+        controls._study_input_note_off("test:wrong-note")
+
+        controls._study_set_mode("original")
+        controls.study_transport = "original"
+        controls._study_dispatch_playback_event(
+            PlaybackEvent("note_on", 0, 64, 96, 0, 1, ""),
+            0,
+        )
+        controls._study_sync_virtual_notes()
+        controls._refresh_staff_for_current_notes()
+        self.assertEqual(controls.piano.interval_labels, {60: "2"})
+        self.assertEqual(controls.fretboard_widget._marker_label(64), "")
+
+        controls._study_stop_all(keep_status=True)
+        controls._set_display_panel_section(0)
+        self.assertFalse(controls.piano._should_draw_interval_labels())
+        controls.piano.set_keyboard_labels_visible(True)
+
     def test_study_transposition_rebuilds_visible_steps_and_overlays(self) -> None:
         controls = self.controls
         controls._set_display_panel_section(2)
@@ -577,9 +1074,10 @@ class TestMenuRuntime(unittest.TestCase):
         controls._study_rebuild_steps()
         controls._study_set_mode("original")
         output = FakeMidiOutput()
-        controls.midi_outputs = [output]
 
         controls._study_start_playback()
+        controls.midi_outputs = [output]
+        controls.midi_output_names_connected = ["Salida prueba"]
         controls.study_playback_timer.stop()
         controls._study_playback_started_at = time.monotonic() * 1000.0 - 10
         controls._study_poll_playback()
@@ -609,9 +1107,10 @@ class TestMenuRuntime(unittest.TestCase):
         controls._study_rebuild_steps()
         controls._study_set_mode("original")
         output = FakeMidiOutput()
-        controls.midi_outputs = [output]
 
         controls._study_start_playback()
+        controls.midi_outputs = [output]
+        controls.midi_output_names_connected = ["Salida prueba"]
         controls.study_playback_timer.stop()
         controls._study_playback_started_at = time.monotonic() * 1000.0 - 10
         controls._study_poll_playback()
@@ -689,9 +1188,10 @@ class TestMenuRuntime(unittest.TestCase):
         controls._study_rebuild_steps()
         controls._study_set_mode("original")
         output = FakeMidiOutput()
-        controls.midi_outputs = [output]
 
         controls._study_move_step(1)
+        controls.midi_outputs = [output]
+        controls.midi_output_names_connected = ["Salida prueba"]
         controls.study_playback_timer.stop()
         controls._study_playback_started_at = time.monotonic() * 1000.0 - 30
         controls._study_poll_playback()

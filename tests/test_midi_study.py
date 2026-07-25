@@ -126,7 +126,7 @@ class MidiStudyEngineTests(unittest.TestCase):
 
     def test_builds_original_timeline_with_source_timing(self):
         notes = [
-            StudyNote(60, 100, 400, 96, 0, staff=1),
+            StudyNote(60, 100, 400, 96, 0, staff=1, fingering="2"),
             StudyNote(64, 145, 360, 90, 0, staff=2),
             StudyNote(67, 520, 250, 88, 1),
         ]
@@ -136,6 +136,7 @@ class MidiStudyEngineTests(unittest.TestCase):
         self.assertEqual(original[-1].event_type, "note_off")
         self.assertEqual(original[0].velocity, 96)
         self.assertEqual(original[0].staff, 1)
+        self.assertEqual(original[0].fingering, "2")
         second_note_on = next(
             event
             for event in original
