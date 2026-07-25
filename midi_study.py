@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import tempfile
+import unicodedata
 import uuid
 import zipfile
 from dataclasses import asdict, dataclass
@@ -79,6 +81,24 @@ class PlaybackEvent:
 
 
 @dataclass(frozen=True)
+class StudyControlEvent:
+    at_ms: float
+    control: int
+    value: int
+    channel: int = 0
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(float(self.at_ms)) or float(self.at_ms) < 0:
+            raise ValueError("El tiempo del control MIDI debe ser positivo.")
+        if not 0 <= int(self.control) <= 127:
+            raise ValueError("El control MIDI debe estar entre 0 y 127.")
+        if not 0 <= int(self.value) <= 127:
+            raise ValueError("El valor MIDI debe estar entre 0 y 127.")
+        if not 0 <= int(self.channel) <= 15:
+            raise ValueError("El canal MIDI debe estar entre 1 y 16.")
+
+
+@dataclass(frozen=True)
 class GuidedProgress:
     matched_notes: Tuple[int, ...]
     wrong_notes: Tuple[int, ...]
@@ -91,6 +111,7 @@ class ImportedMidi:
     bpm: int
     channels: Tuple[int, ...]
     warnings: Tuple[str, ...]
+    control_events: Tuple[StudyControlEvent, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -120,6 +141,22 @@ def normalize_notes(notes: Sequence[StudyNote]) -> List[StudyNote]:
             fingering=str(note.fingering or ""),
         )
         for note in notes
+    ]
+
+
+def normalize_control_events(
+    events: Sequence[StudyControlEvent],
+    origin_ms: float = 0.0,
+) -> List[StudyControlEvent]:
+    origin = max(0.0, float(origin_ms))
+    return [
+        StudyControlEvent(
+            at_ms=max(0.0, float(event.at_ms) - origin),
+            control=int(event.control),
+            value=int(event.value),
+            channel=int(event.channel),
+        )
+        for event in events
     ]
 
 
@@ -270,17 +307,36 @@ def _validate_speed(speed_factor: float) -> float:
 
 
 def build_original_timeline(
-    notes: Sequence[StudyNote], speed_factor: float = 1.0
+    notes: Sequence[StudyNote],
+    speed_factor: float = 1.0,
+    control_events: Sequence[StudyControlEvent] = (),
 ) -> List[PlaybackEvent]:
     speed = _validate_speed(speed_factor)
     events: List[Tuple[float, int, PlaybackEvent]] = []
-    for note in normalize_notes(notes):
+    normalized_notes = normalize_notes(notes)
+    origin = min((float(note.start_ms) for note in notes), default=0.0)
+    for control_event in normalize_control_events(control_events, origin):
+        at_ms = float(control_event.at_ms) / speed
+        events.append(
+            (
+                at_ms,
+                0,
+                PlaybackEvent(
+                    "control_change",
+                    at_ms,
+                    control_event.control,
+                    control_event.value,
+                    control_event.channel,
+                ),
+            )
+        )
+    for note in normalized_notes:
         start = float(note.start_ms) / speed
-        duration = max(MIN_NOTE_DURATION_MS, float(note.duration_ms) / speed)
+        duration = max(1.0, float(note.duration_ms) / speed)
         events.append(
             (
                 start,
-                1,
+                2,
                 PlaybackEvent(
                     "note_on",
                     start,
@@ -295,7 +351,7 @@ def build_original_timeline(
         events.append(
             (
                 start + duration,
-                0,
+                1,
                 PlaybackEvent(
                     "note_off",
                     start + duration,
@@ -307,7 +363,7 @@ def build_original_timeline(
                 ),
             )
         )
-    events.sort(key=lambda item: (item[0], item[1], item[2].note, item[2].channel))
+    events.sort(key=lambda item: (item[0], item[1]))
     return [event for _time, _priority, event in events]
 
 
@@ -328,6 +384,7 @@ def read_midi_file(path: Path | str) -> ImportedMidi:
     elapsed_seconds = 0.0
     active: Dict[Tuple[int, int], List[Tuple[float, int]]] = {}
     notes: List[StudyNote] = []
+    control_events: List[StudyControlEvent] = []
     warnings: List[str] = []
 
     for message in mido.merge_tracks(midi.tracks):
@@ -338,6 +395,18 @@ def read_midi_file(path: Path | str) -> ImportedMidi:
             tempo = int(message.tempo)
             if first_bpm is None:
                 first_bpm = max(30, min(260, int(round(mido.tempo2bpm(tempo)))))
+            continue
+        if message.type == "control_change":
+            if int(message.control) == 64:
+                continue
+            control_events.append(
+                StudyControlEvent(
+                    at_ms=elapsed_seconds * 1000.0,
+                    control=int(message.control),
+                    value=int(message.value),
+                    channel=int(getattr(message, "channel", 0)),
+                )
+            )
             continue
         if message.type not in ("note_on", "note_off"):
             continue
@@ -389,12 +458,15 @@ def read_midi_file(path: Path | str) -> ImportedMidi:
                 )
             )
 
+    origin_ms = min((float(note.start_ms) for note in notes), default=0.0)
     normalized = tuple(normalize_notes(notes))
+    normalized_controls = tuple(normalize_control_events(control_events, origin_ms))
     return ImportedMidi(
         notes=normalized,
         bpm=first_bpm or 120,
         channels=tuple(channels_for_notes(normalized)),
         warnings=tuple(warnings),
+        control_events=normalized_controls,
     )
 
 
@@ -896,6 +968,7 @@ def write_midi_file(
     notes: Sequence[StudyNote],
     bpm: int = 120,
     track_name: str = "Estudio MIDI",
+    control_events: Sequence[StudyControlEvent] = (),
 ) -> None:
     tempo_bpm = max(30, min(260, int(bpm)))
     ticks_per_beat = 480
@@ -903,10 +976,32 @@ def write_midi_file(
     midi = mido.MidiFile(type=0, ticks_per_beat=ticks_per_beat)
     track = mido.MidiTrack()
     midi.tracks.append(track)
-    track.append(mido.MetaMessage("track_name", name=str(track_name)[:80], time=0))
+    safe_track_name = (
+        unicodedata.normalize("NFC", str(track_name))[:80]
+        .encode("latin-1", errors="replace")
+        .decode("latin-1")
+    )
+    track.append(mido.MetaMessage("track_name", name=safe_track_name, time=0))
     track.append(mido.MetaMessage("set_tempo", tempo=tempo, time=0))
 
     timed_messages: List[Tuple[int, int, mido.Message]] = []
+    for event in normalize_control_events(control_events):
+        event_tick = int(
+            round(mido.second2tick(event.at_ms / 1000.0, ticks_per_beat, tempo))
+        )
+        timed_messages.append(
+            (
+                event_tick,
+                0,
+                mido.Message(
+                    "control_change",
+                    control=int(event.control),
+                    value=int(event.value),
+                    channel=int(event.channel),
+                    time=0,
+                ),
+            )
+        )
     for note in normalize_notes(notes):
         start_tick = int(
             round(mido.second2tick(note.start_ms / 1000.0, ticks_per_beat, tempo))
@@ -924,7 +1019,7 @@ def write_midi_file(
         timed_messages.append(
             (
                 start_tick,
-                1,
+                2,
                 mido.Message(
                     "note_on",
                     note=int(note.note),
@@ -937,7 +1032,7 @@ def write_midi_file(
         timed_messages.append(
             (
                 max(start_tick + 1, end_tick),
-                0,
+                1,
                 mido.Message(
                     "note_off",
                     note=int(note.note),
@@ -948,7 +1043,7 @@ def write_midi_file(
             )
         )
 
-    timed_messages.sort(key=lambda item: (item[0], item[1], item[2].note))
+    timed_messages.sort(key=lambda item: (item[0], item[1]))
     previous_tick = 0
     for tick, _priority, message in timed_messages:
         message.time = max(0, tick - previous_tick)
@@ -972,6 +1067,23 @@ class StudyLibrary:
     def _notes_path(self, exercise_id: str) -> Path:
         return self.root / f"{exercise_id}.notes.json"
 
+    def _controls_path(self, exercise_id: str) -> Path:
+        return self.root / f"{exercise_id}.controls.json"
+
+    @staticmethod
+    def _name_sort_key(metadata: ExerciseMetadata) -> Tuple[Tuple[int, object], ...]:
+        normalized = unicodedata.normalize("NFKD", str(metadata.name).casefold())
+        normalized = "".join(
+            character
+            for character in normalized
+            if not unicodedata.combining(character)
+        )
+        return tuple(
+            (0, int(part)) if part.isdigit() else (1, part)
+            for part in re.split(r"(\d+)", normalized)
+            if part
+        )
+
     def list_exercises(self) -> List[ExerciseMetadata]:
         exercises: List[ExerciseMetadata] = []
         for path in self.root.glob("*.json"):
@@ -982,7 +1094,7 @@ class StudyLibrary:
                     exercises.append(metadata)
             except (OSError, ValueError, TypeError, json.JSONDecodeError):
                 continue
-        return sorted(exercises, key=lambda item: item.updated_at, reverse=True)
+        return sorted(exercises, key=self._name_sort_key)
 
     def load_exercise(
         self, exercise_id: str
@@ -1016,11 +1128,28 @@ class StudyLibrary:
                     if isinstance(item, dict)
                 ]
                 normalized = tuple(normalize_notes(notes))
+                controls: Tuple[StudyControlEvent, ...] = ()
+                controls_path = self._controls_path(exercise_id)
+                if controls_path.is_file():
+                    raw_controls = json.loads(
+                        controls_path.read_text(encoding="utf-8")
+                    )
+                    controls = tuple(
+                        StudyControlEvent(
+                            at_ms=float(item["at_ms"]),
+                            control=int(item["control"]),
+                            value=int(item["value"]),
+                            channel=int(item.get("channel", 0)),
+                        )
+                        for item in raw_controls
+                        if isinstance(item, dict)
+                    )
                 return metadata, ImportedMidi(
                     notes=normalized,
                     bpm=int(metadata.bpm),
                     channels=tuple(channels_for_notes(normalized)),
                     warnings=(),
+                    control_events=controls,
                 )
             except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
                 pass
@@ -1033,6 +1162,7 @@ class StudyLibrary:
         bpm: int,
         exercise_id: Optional[str] = None,
         created_at: Optional[str] = None,
+        control_events: Sequence[StudyControlEvent] = (),
     ) -> ExerciseMetadata:
         normalized = normalize_notes(notes)
         if not normalized:
@@ -1041,7 +1171,10 @@ class StudyLibrary:
         identifier = str(exercise_id or uuid.uuid4())
         metadata = ExerciseMetadata(
             exercise_id=identifier,
-            name=(str(name).strip() or "Nueva grabación")[:80],
+            name=(
+                unicodedata.normalize("NFC", str(name).strip())
+                or "Nueva grabación"
+            )[:80],
             created_at=created_at or now,
             updated_at=now,
             bpm=max(30, min(260, int(bpm))),
@@ -1054,15 +1187,25 @@ class StudyLibrary:
             temporary_midi = temporary_root / "exercise.mid"
             temporary_json = temporary_root / "exercise.json"
             temporary_notes = temporary_root / "exercise.notes.json"
+            temporary_controls = temporary_root / "exercise.controls.json"
             write_midi_file(
                 temporary_midi,
                 normalized,
                 metadata.bpm,
                 metadata.name,
+                control_events,
             )
             temporary_notes.write_text(
                 json.dumps(
                     [asdict(note) for note in normalized],
+                    ensure_ascii=False,
+                    indent=2,
+                ),
+                encoding="utf-8",
+            )
+            temporary_controls.write_text(
+                json.dumps(
+                    [asdict(event) for event in normalize_control_events(control_events)],
                     ensure_ascii=False,
                     indent=2,
                 ),
@@ -1074,6 +1217,7 @@ class StudyLibrary:
             )
             temporary_midi.replace(self._midi_path(identifier))
             temporary_notes.replace(self._notes_path(identifier))
+            temporary_controls.replace(self._controls_path(identifier))
             temporary_json.replace(self._metadata_path(identifier))
         return metadata
 
@@ -1082,6 +1226,7 @@ class StudyLibrary:
             self._metadata_path(exercise_id),
             self._midi_path(exercise_id),
             self._notes_path(exercise_id),
+            self._controls_path(exercise_id),
         ):
             try:
                 path.unlink()

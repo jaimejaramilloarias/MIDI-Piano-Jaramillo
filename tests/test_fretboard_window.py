@@ -88,6 +88,12 @@ class TestFretboardWindow(unittest.TestCase):
             target.width() / target.height(),
             widget.IMAGE_WIDTH / widget.EMBEDDED_SOURCE_HEIGHT,
         )
+        self.assertAlmostEqual(target.width(), widget.width())
+        self.assertLessEqual(target.height(), widget.height())
+        self.assertEqual(
+            widget.heightForWidth(widget.width()),
+            widget.embedded_height_for_width(widget.width()),
+        )
         self.assertAlmostEqual(top_left.x(), target.left())
         self.assertAlmostEqual(top_left.y(), target.top())
         self.assertAlmostEqual(bottom_right.x(), target.right())

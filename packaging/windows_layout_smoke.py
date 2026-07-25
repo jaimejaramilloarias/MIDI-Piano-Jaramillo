@@ -341,6 +341,12 @@ def main_smoke(output_dir: Path) -> int:
         checks["fretboard_preserves_image_aspect"] = abs(
             fretboard_target.width() / fretboard_target.height() - expected_aspect
         ) < 0.01
+        checks["fretboard_background_uses_full_width"] = abs(
+            fretboard_target.width() - fretboard.width()
+        ) <= 2
+        checks["fretboard_background_fits_vertically"] = (
+            fretboard_target.height() <= fretboard.height() + 1
+        )
         checks["fretboard_target_is_centered"] = (
             abs(fretboard_target.center().x() - fretboard.rect().center().x()) <= 1
             and abs(fretboard_target.center().y() - fretboard.rect().center().y()) <= 1

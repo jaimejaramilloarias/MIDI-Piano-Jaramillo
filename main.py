@@ -63,6 +63,7 @@ from midi_study import (
     ExerciseMetadata,
     PlaybackEvent,
     ImportedMidi,
+    StudyControlEvent,
     StudyLibrary,
     StudyNote,
     StudyStep,
@@ -72,6 +73,7 @@ from midi_study import (
     filter_notes_by_channels,
     group_notes_into_steps,
     normalize_notes,
+    normalize_control_events,
     read_study_file,
     transpose_notes,
     total_duration_ms,
@@ -2784,6 +2786,21 @@ class FretboardWidget(QWidget):
         self.embedded_mode = bool(enabled)
         self.update()
 
+    @classmethod
+    def embedded_height_for_width(cls, width: float) -> int:
+        return max(
+            1,
+            int(round(float(width) * cls.EMBEDDED_SOURCE_HEIGHT / cls.IMAGE_WIDTH)),
+        )
+
+    def hasHeightForWidth(self) -> bool:
+        return bool(self.embedded_mode)
+
+    def heightForWidth(self, width: int) -> int:
+        if not self.embedded_mode:
+            return super().heightForWidth(width)
+        return self.embedded_height_for_width(width)
+
     def set_marker_size_factor(self, factor: float) -> None:
         self.marker_size_factor = max(0.6, min(1.6, float(factor)))
         self.update()
@@ -3540,14 +3557,11 @@ class FretboardWidget(QWidget):
     def _embedded_target_rect(self) -> QRectF:
         available_width = max(1.0, float(self.width()))
         available_height = max(1.0, float(self.height()))
-        scale = min(
-            available_width / self.IMAGE_WIDTH,
-            available_height / self.EMBEDDED_SOURCE_HEIGHT,
-        )
-        drawn_width = self.IMAGE_WIDTH * scale
+        scale = available_width / self.IMAGE_WIDTH
+        drawn_width = available_width
         drawn_height = self.EMBEDDED_SOURCE_HEIGHT * scale
         return QRectF(
-            (available_width - drawn_width) / 2.0,
+            0.0,
             (available_height - drawn_height) / 2.0,
             drawn_width,
             drawn_height,
@@ -4675,6 +4689,7 @@ class ControlWindow(ResponsiveWidthWidget):
         self.study_exercise_id: Optional[str] = None
         self.study_created_at: Optional[str] = None
         self.study_notes: List[StudyNote] = []
+        self.study_control_events: List[StudyControlEvent] = []
         self.study_selected_channels: Set[int] = set()
         self.study_steps: List[StudyStep] = []
         self.study_mode = "original"
@@ -4702,6 +4717,8 @@ class ControlWindow(ResponsiveWidthWidget):
         self._study_playback_events: List[PlaybackEvent] = []
         self._study_playback_index = 0
         self._study_playback_started_at = 0.0
+        self._study_last_visual_refresh_at = -1000.0
+        self._study_visual_dirty = False
         self._study_playback_run = 0
         self._study_playback_voices: Dict[Tuple[int, int], List[str]] = {}
         self._study_playback_fingering_voices: Dict[
@@ -4727,7 +4744,7 @@ class ControlWindow(ResponsiveWidthWidget):
         self._all_inputs_value = "__all_midi_inputs__"
         self.study_playback_timer = QTimer(self)
         self.study_playback_timer.setTimerType(Qt.TimerType.PreciseTimer)
-        self.study_playback_timer.setInterval(5)
+        self.study_playback_timer.setInterval(2)
         self.study_playback_timer.timeout.connect(self._study_poll_playback)
         self._seed_bundled_study_exercises()
         self._visual_state_save_timer = QTimer(self)
@@ -7428,11 +7445,13 @@ class ControlWindow(ResponsiveWidthWidget):
 
         self._set_single_navigation_mode(destination)
         self._sync_study_shortcut_state()
+        QTimer.singleShot(0, self._update_embedded_instrument_height)
 
     def _toggle_ipad_navigation(self) -> None:
         rail = getattr(self, "single_navigation_rail", None)
         if isinstance(rail, QWidget):
             rail.setVisible(not rail.isVisible())
+            QTimer.singleShot(0, self._update_embedded_instrument_height)
 
     def _toggle_ipad_inspector(self) -> None:
         mode = getattr(self, "_single_navigation_mode", "live")
@@ -7442,6 +7461,7 @@ class ControlWindow(ResponsiveWidthWidget):
             host = getattr(self, "ipad_play_inspector_host", None)
         if isinstance(host, QWidget):
             host.setVisible(not host.isVisible())
+            QTimer.singleShot(0, self._update_embedded_instrument_height)
 
     def _sync_ipad_study_summary(self) -> None:
         if not hasattr(self, "ipad_study_name_label"):
@@ -8297,6 +8317,7 @@ class ControlWindow(ResponsiveWidthWidget):
             return
         self.instrument_view = mode
         self.piano_window.set_instrument_view(mode)
+        QTimer.singleShot(0, self._update_embedded_instrument_height)
 
         for button_mode, button in getattr(self, "instrument_view_buttons", []):
             button.blockSignals(True)
@@ -8325,6 +8346,25 @@ class ControlWindow(ResponsiveWidthWidget):
                 else "Vista de piano activada.",
                 timeout_ms=2200,
             )
+
+    def _update_embedded_instrument_height(self) -> None:
+        stack = getattr(self, "_ipad_instrument_stack", None)
+        if not isinstance(stack, QStackedWidget):
+            return
+        minimum_height = 180
+        if self.instrument_view == "guitar":
+            width = stack.contentsRect().width()
+            if width <= 1:
+                host = stack.parentWidget()
+                width = host.contentsRect().width() if host is not None else 0
+            if width > 1:
+                minimum_height = max(
+                    minimum_height,
+                    FretboardWidget.embedded_height_for_width(width),
+                )
+        if stack.minimumHeight() != minimum_height:
+            stack.setMinimumHeight(minimum_height)
+            stack.updateGeometry()
 
     def _build_display_panel(self) -> QWidget:
         panel = ResponsiveWidthWidget()
@@ -8715,6 +8755,24 @@ class ControlWindow(ResponsiveWidthWidget):
         )
         return transpose_notes(filtered, self._study_transpose_value())
 
+    def _study_filtered_control_events(self) -> List[StudyControlEvent]:
+        selected_channels = set(self.study_selected_channels)
+        selected_notes = [
+            note
+            for note in self.study_notes
+            if not selected_channels or int(note.channel) in selected_channels
+        ]
+        origin_ms = min(
+            (float(note.start_ms) for note in selected_notes),
+            default=0.0,
+        )
+        controls = [
+            event
+            for event in self.study_control_events
+            if not selected_channels or int(event.channel) in selected_channels
+        ]
+        return normalize_control_events(controls, origin_ms)
+
     @staticmethod
     def _study_default_channels(imported: ImportedMidi) -> Set[int]:
         channels = set(imported.channels)
@@ -8740,6 +8798,7 @@ class ControlWindow(ResponsiveWidthWidget):
         existing = self.study_library.list_exercises()
         existing_by_name = {exercise.name: exercise for exercise in existing}
         existing_by_id = {exercise.exercise_id: exercise for exercise in existing}
+        bundled_ids: Set[str] = set()
         for study_path in sorted(root.iterdir()):
             if (
                 not study_path.is_file()
@@ -8756,6 +8815,7 @@ class ControlWindow(ResponsiveWidthWidget):
                     continue
                 digest = hashlib.sha1(study_path.name.encode("utf-8")).hexdigest()[:16]
                 bundled_id = f"bundled-{digest}"
+                bundled_ids.add(bundled_id)
                 previous = existing_by_id.get(bundled_id) or existing_by_name.get(name)
                 exercise_id = previous.exercise_id if previous else bundled_id
                 metadata = self.study_library.save_exercise(
@@ -8764,11 +8824,18 @@ class ControlWindow(ResponsiveWidthWidget):
                     int(imported.bpm),
                     exercise_id=exercise_id,
                     created_at=previous.created_at if previous else None,
+                    control_events=imported.control_events,
                 )
                 existing_by_name[name] = metadata
                 existing_by_id[exercise_id] = metadata
             except Exception:
                 continue
+        for exercise in existing:
+            if (
+                exercise.exercise_id.startswith("bundled-")
+                and exercise.exercise_id not in bundled_ids
+            ):
+                self.study_library.delete_exercise(exercise.exercise_id)
 
     def _study_set_status(self, text: str) -> None:
         self.study_status_label.setText(str(text))
@@ -9054,6 +9121,7 @@ class ControlWindow(ResponsiveWidthWidget):
         self.study_exercise_id = None
         self.study_created_at = None
         self.study_notes = []
+        self.study_control_events = []
         self.study_selected_channels.clear()
         self.study_steps = []
         self.study_active_step_index = 0
@@ -9086,6 +9154,7 @@ class ControlWindow(ResponsiveWidthWidget):
         self.study_exercise_id = None
         self.study_created_at = None
         self.study_notes = list(imported.notes)
+        self.study_control_events = list(imported.control_events)
         self.study_selected_channels = self._study_default_channels(imported)
         self._study_reset_transpose()
         self.study_name_edit.setText(self._study_name_from_path(path))
@@ -9132,6 +9201,7 @@ class ControlWindow(ResponsiveWidthWidget):
                     self._study_name_from_path(study_path),
                     notes,
                     int(imported.bpm),
+                    control_events=imported.control_events,
                 )
                 saved_payloads.append((metadata, notes, imported))
             except Exception:
@@ -9146,6 +9216,7 @@ class ControlWindow(ResponsiveWidthWidget):
         self.study_exercise_id = metadata.exercise_id
         self.study_created_at = metadata.created_at
         self.study_notes = list(notes)
+        self.study_control_events = list(imported.control_events)
         self.study_selected_channels = set(channels_for_notes(notes))
         self._study_reset_transpose()
         self.study_name_edit.setText(metadata.name)
@@ -9180,6 +9251,7 @@ class ControlWindow(ResponsiveWidthWidget):
                 int(self.study_bpm_spin.value()),
                 exercise_id=exercise_id,
                 created_at=created_at,
+                control_events=self._study_filtered_control_events(),
             )
         except Exception as exc:
             self._show_status_message(f"No se pudo guardar el ejercicio: {exc}")
@@ -9206,6 +9278,7 @@ class ControlWindow(ResponsiveWidthWidget):
         self.study_exercise_id = metadata.exercise_id
         self.study_created_at = metadata.created_at
         self.study_notes = list(imported.notes)
+        self.study_control_events = list(imported.control_events)
         self.study_selected_channels = set(imported.channels)
         self._study_reset_transpose()
         self.study_name_edit.setText(metadata.name)
@@ -9231,6 +9304,7 @@ class ControlWindow(ResponsiveWidthWidget):
         self.study_exercise_id = None
         self.study_created_at = None
         self.study_notes = []
+        self.study_control_events = []
         self.study_selected_channels.clear()
         self.study_steps = []
         self.study_active_step_index = 0
@@ -9265,6 +9339,7 @@ class ControlWindow(ResponsiveWidthWidget):
                 notes,
                 int(self.study_bpm_spin.value()),
                 self.study_name_edit.text(),
+                self._study_filtered_control_events(),
             )
         except Exception as exc:
             self._show_status_message(f"No se pudo exportar el MIDI: {exc}")
@@ -9279,6 +9354,7 @@ class ControlWindow(ResponsiveWidthWidget):
         self.study_exercise_id = None
         self.study_created_at = None
         self.study_notes = []
+        self.study_control_events = []
         self.study_selected_channels.clear()
         self.study_steps = []
         self.study_active_step_index = 0
@@ -9315,6 +9391,7 @@ class ControlWindow(ResponsiveWidthWidget):
         for source_id in list(self._study_recording_open):
             self._study_close_recorded_note(source_id, elapsed)
         self.study_notes = normalize_notes(self._study_recorded_notes)
+        self.study_control_events = []
         self.study_selected_channels = set(channels_for_notes(self.study_notes))
         self._study_reset_transpose()
         self.study_transport = "idle"
@@ -9569,17 +9646,23 @@ class ControlWindow(ResponsiveWidthWidget):
 
         self._clear_live_midi_state()
         speed = self.study_speed_slider.value() / 10.0
-        events = build_original_timeline(notes, speed)
+        events = build_original_timeline(
+            notes,
+            speed,
+            self._study_filtered_control_events(),
+        )
         if not events:
             return
         self._study_playback_run += 1
         self._study_playback_events = events
         self._study_playback_index = 0
-        self._study_playback_started_at = time.monotonic() * 1000.0 + 30.0
         self.study_transport = self.study_mode
         self._study_set_status("Reproduciendo")
-        self.study_playback_timer.start()
         self._study_refresh_ui()
+        self._study_playback_started_at = time.monotonic() * 1000.0 + 80.0
+        self._study_last_visual_refresh_at = -1000.0
+        self._study_visual_dirty = True
+        self.study_playback_timer.start()
 
     def _study_audition_step(self) -> None:
         step = self._study_current_step()
@@ -9626,14 +9709,16 @@ class ControlWindow(ResponsiveWidthWidget):
         self._study_playback_run += 1
         self._study_playback_events = events
         self._study_playback_index = 0
-        self._study_playback_started_at = time.monotonic() * 1000.0 + 20.0
         self.study_transport = "preview"
         self._study_update_expected_overlay()
         self._study_set_status(
             "Escuchando " + " + ".join(midi_to_name(note) for note in step.notes)
         )
-        self.study_playback_timer.start()
         self._study_refresh_ui()
+        self._study_playback_started_at = time.monotonic() * 1000.0 + 80.0
+        self._study_last_visual_refresh_at = -1000.0
+        self._study_visual_dirty = True
+        self.study_playback_timer.start()
 
     def _study_poll_playback(self) -> None:
         if not self._study_playback_events:
@@ -9647,25 +9732,37 @@ class ControlWindow(ResponsiveWidthWidget):
                 break
             event_index = self._study_playback_index
             self._study_playback_index += 1
-            self._study_dispatch_playback_event(event, event_index)
-            changed = True
+            changed = (
+                self._study_dispatch_playback_event(event, event_index)
+                or changed
+            )
 
+        step_changed = False
         if self.study_transport == "original" and self.study_steps:
             speed = self.study_speed_slider.value() / 10.0
-            step_index = 0
-            for index, step in enumerate(self.study_steps):
-                if step.start_ms / speed <= elapsed:
-                    step_index = index
-                else:
-                    break
+            step_index = self.study_active_step_index
+            while (
+                step_index + 1 < len(self.study_steps)
+                and self.study_steps[step_index + 1].start_ms / speed <= elapsed
+            ):
+                step_index += 1
             if step_index != self.study_active_step_index:
                 self.study_active_step_index = step_index
                 self._study_sync_step_combo()
-                changed = True
+                step_changed = True
         if changed:
+            self._study_visual_dirty = True
+        visual_refresh_due = (
+            elapsed - self._study_last_visual_refresh_at >= 16.0
+            or self._study_playback_index >= len(self._study_playback_events)
+        )
+        if self._study_visual_dirty and visual_refresh_due:
+            self._study_last_visual_refresh_at = elapsed
+            self._study_visual_dirty = False
             self._study_sync_virtual_notes()
             self._refresh_staff_for_current_notes()
-            self._study_refresh_ui()
+        if step_changed:
+            self._sync_ipad_study_summary()
         if (
             self._study_playback_index >= len(self._study_playback_events)
             and elapsed > self._study_playback_events[-1].at_ms + 50.0
@@ -9678,7 +9775,14 @@ class ControlWindow(ResponsiveWidthWidget):
 
     def _study_dispatch_playback_event(
         self, event: PlaybackEvent, event_index: int
-    ) -> None:
+    ) -> bool:
+        if event.event_type == "control_change":
+            self._send_study_midi_control(
+                event.note,
+                event.velocity,
+                event.channel,
+            )
+            return False
         key = (int(event.channel), int(event.note))
         if event.event_type == "note_on":
             voice_id = (
@@ -9703,7 +9807,7 @@ class ControlWindow(ResponsiveWidthWidget):
             if event.note in self.note_activation_order:
                 self.note_activation_order.remove(event.note)
             self.note_activation_order.append(event.note)
-            return
+            return True
         queue = self._study_playback_voices.get(key, [])
         fingering_queue = self._study_playback_fingering_voices.get(key, [])
         if queue:
@@ -9733,6 +9837,7 @@ class ControlWindow(ResponsiveWidthWidget):
                 self._study_playback_note_colors[event.note] = QColor(color_queue[-1])
             else:
                 self._study_playback_note_colors.pop(event.note, None)
+        return True
 
     def _study_stop_playback(
         self,
@@ -9746,6 +9851,7 @@ class ControlWindow(ResponsiveWidthWidget):
                 self._send_study_midi_message("note_off", note, 0, channel)
         self._study_playback_events = []
         self._study_playback_index = 0
+        self._study_visual_dirty = False
         self._study_playback_voices.clear()
         self._study_playback_fingering_voices.clear()
         self._study_playback_counts.clear()
@@ -10479,6 +10585,8 @@ class ControlWindow(ResponsiveWidthWidget):
             self.piano_window,
             self.chord_window,
         }:
+            if watched is self.piano_window and event.type() == QEvent.Type.Resize:
+                QTimer.singleShot(0, self._update_embedded_instrument_height)
             if event.type() in {
                 QEvent.Type.Move,
                 QEvent.Type.Resize,
@@ -12513,6 +12621,32 @@ class ControlWindow(ResponsiveWidthWidget):
         velocity: int = 0,
         channel: int = 0,
     ) -> None:
+        message_type = "note_on" if event_type == "note_on" else "note_off"
+        self._send_study_output_message(
+            mido.Message(
+                message_type,
+                note=max(0, min(127, int(note))),
+                velocity=max(0, min(127, int(velocity))),
+                channel=max(0, min(15, int(channel))),
+            )
+        )
+
+    def _send_study_midi_control(
+        self,
+        control: int,
+        value: int,
+        channel: int = 0,
+    ) -> None:
+        self._send_study_output_message(
+            mido.Message(
+                "control_change",
+                control=max(0, min(127, int(control))),
+                value=max(0, min(127, int(value))),
+                channel=max(0, min(15, int(channel))),
+            )
+        )
+
+    def _send_study_output_message(self, message) -> None:
         if (
             not self.midi_outputs
             or not self._study_section_active
@@ -12520,13 +12654,6 @@ class ControlWindow(ResponsiveWidthWidget):
             or self.study_transport not in ("original", "preview")
         ):
             return
-        message_type = "note_on" if event_type == "note_on" else "note_off"
-        message = mido.Message(
-            message_type,
-            note=max(0, min(127, int(note))),
-            velocity=max(0, min(127, int(velocity))),
-            channel=max(0, min(15, int(channel))),
-        )
         for output in list(self.midi_outputs):
             try:
                 output.send(message)

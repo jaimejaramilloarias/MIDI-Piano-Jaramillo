@@ -1,11 +1,13 @@
 import tempfile
 import unittest
+import unicodedata
 from pathlib import Path
 
 import mido
 
 from midi_study import (
     StudyLibrary,
+    StudyControlEvent,
     StudyNote,
     build_original_timeline,
     evaluate_guided_progress,
@@ -145,6 +147,25 @@ class MidiStudyEngineTests(unittest.TestCase):
         self.assertEqual(second_note_on.velocity, 88)
         self.assertEqual(second_note_on.channel, 1)
 
+    def test_original_timeline_preserves_short_durations_and_midi_controls(self):
+        timeline = build_original_timeline(
+            [StudyNote(60, 0, 18, 91, 0)],
+            control_events=[
+                StudyControlEvent(0, 11, 96, 0),
+                StudyControlEvent(22, 11, 48, 0),
+            ],
+        )
+
+        self.assertEqual(
+            [(event.event_type, event.at_ms) for event in timeline],
+            [
+                ("control_change", 0),
+                ("note_on", 0),
+                ("note_off", 18),
+                ("control_change", 22),
+            ],
+        )
+
     def test_reads_musicxml_duration_ties_as_single_note(self):
         sample = """<?xml version="1.0" encoding="UTF-8"?>
 <score-partwise version="4.0">
@@ -246,14 +267,27 @@ class MidiStudyEngineTests(unittest.TestCase):
     def test_bundled_study_exercises_import_from_assets(self):
         root = Path(__file__).resolve().parents[1] / "assets" / "study-exercises"
         expected = {
-            "All the things you are.musicxml",
+            "1 Enlace de triadas diatónicas, por el círculo de quintas.musicxml",
+            "2 Inversiones de las triadas diatónicas.musicxml",
+            "3 Armonización diatónica de la escala descendente en el bajo.musicxml",
+            "4 Armonización diatónica de la escala descendente en la melodía.musicxml",
+            "5 Ejemplo n.1 de regiones tonales (dominantes secundarias).musicxml",
+            "6 Ejemplo n.2 de regiones tonales (dominantes secundarias, acordes disminuidos).musicxml",
+            "7 Ejemplo n.1 de diseño para el bajo.musicxml",
+            "8 Ejemplo n.2 de diseño para el bajo.musicxml",
+            "9 Ejemplo n.1 de diseño para la mano derecha.musicxml",
+            "10 Ejemplo n.2 de diseño para la mano derecha.musicxml",
             "Chopin nocturne Op9 n2.mid",
-            "Esfinges.musicxml",
-            "II-V-I mayor y menor.musicxml",
-            "My Funny Valentine.musicxml",
-            "Sofisticated Lady.musicxml",
+            "Escala de C mayor.musicxml",
+            "II-V con notas guia.musicxml",
+            "Misty 1.musicxml",
+            "Misty 2.musicxml",
         }
-        self.assertEqual({path.name for path in root.iterdir()}, expected)
+        bundled_names = {
+            unicodedata.normalize("NFC", path.name)
+            for path in root.iterdir()
+        }
+        self.assertEqual(bundled_names, expected)
 
         files_with_duration_ties = set()
         for path in sorted(root.iterdir()):
@@ -271,12 +305,21 @@ class MidiStudyEngineTests(unittest.TestCase):
         self.assertEqual(
             files_with_duration_ties,
             {
-                "All the things you are.musicxml",
-                "Esfinges.musicxml",
-                "My Funny Valentine.musicxml",
-                "Sofisticated Lady.musicxml",
+                next(
+                    path.name
+                    for path in root.iterdir()
+                    if unicodedata.normalize("NFC", path.name) == "Misty 1.musicxml"
+                ),
+                next(
+                    path.name
+                    for path in root.iterdir()
+                    if unicodedata.normalize("NFC", path.name) == "Misty 2.musicxml"
+                ),
             },
         )
+        chopin = read_midi_file(root / "Chopin nocturne Op9 n2.mid")
+        self.assertEqual(len(chopin.control_events), 24)
+        self.assertFalse(any(event.control == 64 for event in chopin.control_events))
 
     def test_filters_channels_and_removes_leading_silence(self):
         filtered = filter_notes_by_channels(self.notes, {1})
@@ -384,6 +427,28 @@ class MidiStudyEngineTests(unittest.TestCase):
         self.assertEqual(imported.notes[0].staff, 1)
         self.assertEqual(imported.notes[0].voice, "1")
         self.assertEqual(imported.notes[0].fingering, "2")
+
+    def test_library_preserves_controls_and_lists_names_in_natural_order(self):
+        with tempfile.TemporaryDirectory() as temporary_directory:
+            library = StudyLibrary(Path(temporary_directory))
+            for name in ("10 Décimo", "Alfa", "2 Segundo", "1 Primero"):
+                library.save_exercise(
+                    name,
+                    [StudyNote(60, 0, 100)],
+                    120,
+                    control_events=[StudyControlEvent(0, 11, 96)],
+                )
+
+            self.assertEqual(
+                [item.name for item in library.list_exercises()],
+                ["1 Primero", "2 Segundo", "10 Décimo", "Alfa"],
+            )
+            metadata = library.list_exercises()[0]
+            _saved, imported = library.load_exercise(metadata.exercise_id)
+            self.assertEqual(
+                imported.control_events,
+                (StudyControlEvent(0, 11, 96),),
+            )
 
 
 if __name__ == "__main__":
