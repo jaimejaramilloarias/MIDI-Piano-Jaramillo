@@ -174,7 +174,7 @@ def main_smoke(output_dir: Path) -> int:
             "application": app.font(),
             "main_chord": display.main_label.font(),
             "alternate_chord": display.alt_label.font(),
-            "panel_button": controls.display_panel_section_buttons[0].font(),
+            "inspector_title": controls.display_panel_title.font(),
             "chord_combo": controls.display_panel_chord_combo.font(),
             "study_name": controls.study_name_edit.font(),
             "study_mode": controls.study_mode_buttons[0][1].font(),
