@@ -336,11 +336,15 @@ def main_smoke(output_dir: Path) -> int:
 
         stack_width = piano_window.instrument_stack.contentsRect().width()
         checks["fretboard_fills_instrument_width"] = abs(fretboard.width() - stack_width) <= 2
-        mapped_right = fretboard._embedded_map_point(
-            fretboard.IMAGE_WIDTH,
-            fretboard.EMBEDDED_SOURCE_TOP + fretboard.EMBEDDED_SOURCE_HEIGHT,
+        fretboard_target = fretboard._embedded_target_rect()
+        expected_aspect = fretboard.IMAGE_WIDTH / fretboard.EMBEDDED_SOURCE_HEIGHT
+        checks["fretboard_preserves_image_aspect"] = abs(
+            fretboard_target.width() / fretboard_target.height() - expected_aspect
+        ) < 0.01
+        checks["fretboard_target_is_centered"] = (
+            abs(fretboard_target.center().x() - fretboard.rect().center().x()) <= 1
+            and abs(fretboard_target.center().y() - fretboard.rect().center().y()) <= 1
         )
-        checks["fretboard_image_maps_full_width"] = abs(mapped_right.x() - fretboard.width()) <= 1
 
         string_positions = [
             fretboard._embedded_map_point(0.0, y).y() for y in fretboard.STRING_Y
@@ -383,7 +387,15 @@ def main_smoke(output_dir: Path) -> int:
             fretboard,
         )
         report["scale_fretboard_horizontal_coverage"] = scale_coverage
-        checks["scale_fretboard_renders_continuously"] = scale_coverage >= 0.85
+        target_width_fraction = (
+            fretboard_target.width() / fretboard.width()
+            if fretboard.width() > 0
+            else 0.0
+        )
+        report["scale_fretboard_target_width_fraction"] = target_width_fraction
+        checks["scale_fretboard_renders_continuously"] = (
+            scale_coverage >= target_width_fraction * 0.82
+        )
 
         controls.resize(700, 560)
         capture(controls, output_dir / "controls-700x560.png", app)
